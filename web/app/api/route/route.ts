@@ -22,7 +22,8 @@ export async function GET(req: Request) {
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
 
-    const strategies = (await strategiesFromGraph(ROUTER)) ?? (await cachedStrategies()).strategies;
+    const fromGraph = await strategiesFromGraph(ROUTER);
+    const strategies = fromGraph ?? (await cachedStrategies()).strategies;
     const depths = await measureDepth(strategies, tokenOut);
 
     // Having the token is not the same as being willing to part with it. Probe
@@ -38,7 +39,7 @@ export async function GET(req: Request) {
 
     if (slices.length === 0) {
       return j({
-        source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
+        source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? "rpc-log-paging (index syncing)" : "rpc-log-paging",
         tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
         tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
         amountIn,
@@ -76,7 +77,7 @@ export async function GET(req: Request) {
       single.amountOut > 0n ? ((split.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
-      source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
+      source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? "rpc-log-paging (index syncing)" : "rpc-log-paging",
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       amountIn,

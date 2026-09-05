@@ -71,7 +71,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
         <div className={`${s.mastMeta} label`}>
           <span>Base &middot; chain 8453</span>
           <span>Hook <span className="hex">{short(hook)}</span></span>
-          <span>Index {makers?.source ?? "..."}</span>
+          <span>Index {indexLabel(makers)}</span>
           <span className={s.spin}>{busy ? "reading chain" : "idle"}</span>
         </div>
       </header>
@@ -180,6 +180,17 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
       </div>
     </div>
   );
+}
+
+/** What is answering, and if it is the fallback, how far the index still has to
+ *  go. A subgraph mid-sync answers every query truthfully and uselessly, so the
+ *  distinction belongs on screen rather than buried in a JSON field. */
+function indexLabel(makers: MakersResponse | null): string {
+  if (!makers) return "...";
+  if (!makers.index) return "rpc log paging";
+  if (makers.index.ready) return "aquifer subgraph";
+  const behind = Number(makers.index.behind).toLocaleString();
+  return `rpc fallback — index ${behind} blocks behind`;
 }
 
 /* The proof: the whole thesis in one number, read straight out of PoolManager

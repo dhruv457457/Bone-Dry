@@ -11,6 +11,7 @@ export type MakerRow = {
 
 export type MakersResponse = {
   source: string;
+  index: { head: string; behind: string; ready: boolean } | null;
   token: { address: string; symbol: string; decimals: number };
   indexed: number;
   solvent: number;

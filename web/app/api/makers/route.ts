@@ -1,5 +1,5 @@
 import { cachedStrategies, indexStrategies, measureDepth } from "@/lib/aqua";
-import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
+import { strategiesFromGraph, GRAPH_URL, graphHead, graphBehind } from "@/lib/graph";
 import { ROUTER } from "@/lib/chain";
 import { TOKENS, WETH } from "@/lib/chain";
 import { byDepthDesc } from "@/lib/router";
@@ -33,7 +33,9 @@ export async function GET(req: Request) {
 
     const meta = TOKENS[token.toLowerCase()];
     return j({
-      source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
+      // Say which index actually answered, not which one is configured.
+      source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? "rpc-log-paging (index syncing)" : "rpc-log-paging",
+      index: GRAPH_URL ? { head: graphHead, behind: graphBehind, ready: !!fromGraph } : null,
       // Honest about the fallback's blind spot: log paging only saw this window.
       window: scan?.window ?? null,
       token: { address: token, symbol: meta?.symbol ?? "?", decimals: meta?.decimals ?? 18 },
