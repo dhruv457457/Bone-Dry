@@ -1,5 +1,6 @@
 import { encodeAbiParameters, parseAbiParameters, keccak256, encodePacked, toHex, type Address } from "viem";
 import { client, POOL_MANAGER, USDC, WETH, poolManagerAbi } from "@/lib/chain";
+import { addressParam, uintParam, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
 
 export const dynamic = "force-dynamic";
@@ -17,11 +18,12 @@ const LIQUIDITY_OFFSET = 3n;
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const hook = url.searchParams.get("hook") as Address | null;
-    if (!hook) return fail("hook address required");
+    const raw = url.searchParams.get("hook");
+    if (!raw) return fail("hook address required");
+    const hook = addressParam(raw, raw as Address);
 
-    const fee = Number(url.searchParams.get("fee") ?? 0);
-    const tickSpacing = Number(url.searchParams.get("tickSpacing") ?? 60);
+    const fee = uintParam(url.searchParams.get("fee"), 0, 24, "fee");
+    const tickSpacing = uintParam(url.searchParams.get("tickSpacing"), 60, 23, "tickSpacing");
 
     // WETH (0x42..) sorts below USDC (0x83..)
     const currency0 = WETH;
@@ -44,19 +46,28 @@ export async function GET(req: Request) {
     const sqrtPriceX96 = BigInt(slot0Raw) & ((1n << 160n) - 1n);
     const liquidity = BigInt(liqRaw) & ((1n << 128n) - 1n);
 
+    // An uninitialized pool has zero liquidity for the boring reason that it does
+    // not exist. Claiming that as proof would be dishonest, so `boneDry` requires
+    // the pool to be live AND empty, and the note says which case we are in.
+    const initialized = sqrtPriceX96 > 0n;
+    const boneDry = initialized && liquidity === 0n;
+
     return j({
       poolManager: POOL_MANAGER,
       poolId,
       key: { currency0, currency1, fee, tickSpacing, hooks: hook },
-      initialized: sqrtPriceX96 > 0n,
+      initialized,
       liquidity,
-      boneDry: liquidity === 0n,
-      note:
-        liquidity === 0n
-          ? "This pool holds no liquidity. Any fill against it is sourced from maker wallets at swap time."
+      boneDry,
+      state: !initialized ? "uninitialized" : liquidity === 0n ? "bone-dry" : "conventional",
+      note: !initialized
+        ? "This pool is not initialized on this chain yet, so its zero liquidity proves nothing. Initialize it with the Tap hook and the figure stays zero for a reason."
+        : liquidity === 0n
+          ? "Live pool, zero liquidity. Any fill against it is sourced from maker wallets at swap time."
           : "This pool has conventional liquidity in the PoolManager.",
     });
   } catch (e) {
+    if (e instanceof BadInput) return fail(e.message, 400);
     return fail((e as Error).message, 500);
   }
 }

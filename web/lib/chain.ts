@@ -13,6 +13,11 @@ export const AQUA: Address = "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a";
 export const ROUTER: Address = "0x111111338c5091E8440b67B168bAe16a668AC0De";
 export const POOL_MANAGER: Address = "0x498581fF718922c3f8e6A244956aF099B2652b2b";
 
+/** The Tap hook. Its low bits encode BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA,
+ *  which is why the address is mined rather than chosen. */
+export const HOOK: Address = (process.env.HOOK_ADDRESS ??
+  "0x4444000000000000000000000000000000000088") as Address;
+
 export const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const WETH: Address = "0x4200000000000000000000000000000000000006";
 

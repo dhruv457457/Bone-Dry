@@ -1,9 +1,9 @@
 import { indexStrategies, measureDepth } from "@/lib/aqua";
-import { planRoute, quoteRoute, encodeHookData } from "@/lib/router";
+import { planRoute, quoteRoute, clampToDepth, encodeHookData } from "@/lib/router";
 import { USDC, WETH, TOKENS, ROUTER } from "@/lib/chain";
 import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
+import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
-import type { Address } from "viem";
 
 export const dynamic = "force-dynamic";
 
@@ -17,30 +17,50 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const tokenIn = (url.searchParams.get("tokenIn") ?? USDC) as Address;
-    const tokenOut = (url.searchParams.get("tokenOut") ?? WETH) as Address;
-    const amountIn = BigInt(url.searchParams.get("amountIn") ?? "100000000");
+    const tokenIn = addressParam(url.searchParams.get("tokenIn"), USDC);
+    const tokenOut = addressParam(url.searchParams.get("tokenOut"), WETH);
+    const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
+    distinct(tokenIn, tokenOut);
 
     const strategies = (await strategiesFromGraph(ROUTER)) ?? (await indexStrategies());
     const depths = await measureDepth(strategies, tokenOut);
-    const slices = planRoute(depths, amountIn);
+    const planned = planRoute(depths, amountIn);
+
+    // A solvent maker is not the same as a deliverable quote: the curve is bounded
+    // by the VIRTUAL balance, so a big enough slice quotes out more than the wallet
+    // holds. Cut every slice back to what its maker can actually pay.
+    const { slices, clamped } = await clampToDepth(planned, tokenIn, tokenOut);
 
     if (slices.length === 0) {
       return j({
+        source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
         tokenIn,
         tokenOut,
         amountIn,
         slices: [],
         amountOut: 0n,
+        singleMakerAmountOut: 0n,
+        improvementBps: 0n,
+        makersConsidered: depths.length,
+        makersUsed: 0,
+        makersSkipped: depths.filter((d) => !d.solvent).map((d) => d.maker),
+        clamped,
         hookData: null,
-        reason: "no solvent maker can deliver this token right now",
+        reason:
+          amountIn === 0n
+            ? "nothing to swap"
+            : "no solvent maker can deliver this token right now",
       });
     }
 
+    const filled = slices.reduce((a, s) => a + s.amountIn, 0n);
     const [split, single] = await Promise.all([
       quoteRoute(slices, tokenIn, tokenOut),
-      // what the same swap would fetch from the single deepest maker
-      quoteRoute([{ ...slices[0], amountIn }], tokenIn, tokenOut),
+      // Same comparison the split has to beat: everything through the deepest
+      // maker alone, clamped by the same rule so the baseline is honest too.
+      clampToDepth([{ ...slices[0], amountIn: filled }], tokenIn, tokenOut).then((c) =>
+        quoteRoute(c.slices, tokenIn, tokenOut)
+      ),
     ]);
 
     const improvementBps =
@@ -51,9 +71,14 @@ export async function GET(req: Request) {
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       amountIn,
+      /** what the route can actually absorb — below amountIn when depth ran out */
+      amountFilled: filled,
+      unfilled: amountIn - filled,
       makersConsidered: depths.length,
       makersUsed: slices.length,
       makersSkipped: depths.filter((d) => !d.solvent).map((d) => d.maker),
+      /** makers whose quote exceeded their real depth and had to be cut back */
+      clamped,
       slices: slices.map((s, i) => ({
         maker: s.maker,
         amountIn: s.amountIn,
@@ -66,6 +91,7 @@ export async function GET(req: Request) {
       hookData: encodeHookData(slices),
     });
   } catch (e) {
+    if (e instanceof BadInput) return fail(e.message, 400);
     return fail((e as Error).message, 500);
   }
 }

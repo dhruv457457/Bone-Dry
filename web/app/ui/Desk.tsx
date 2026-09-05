@@ -1,0 +1,300 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import s from "./desk.module.css";
+import { units, compact, toRaw, short, pct } from "@/lib/format";
+import type { MakersResponse, RouteResponse, PoolResponse } from "./types";
+
+type Token = { address: string; symbol: string; decimals: number };
+
+export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: Token }; hook: string }) {
+  const [flipped, setFlipped] = useState(false);
+  const tokenIn = flipped ? tokens.weth : tokens.usdc;
+  const tokenOut = flipped ? tokens.usdc : tokens.weth;
+
+  const [input, setInput] = useState("100");
+  const [route, setRoute] = useState<RouteResponse | null>(null);
+  const [makers, setMakers] = useState<MakersResponse | null>(null);
+  const [pool, setPool] = useState<PoolResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const amountIn = useMemo(() => toRaw(input, tokenIn.decimals), [input, tokenIn.decimals]);
+
+  // One in-flight generation. A slow request that resolves after a newer one
+  // must not overwrite fresher state — the classic async race in a quote box.
+  const gen = useRef(0);
+
+  const load = useCallback(async () => {
+    const mine = ++gen.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const q = `tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}`;
+      const [r, m, p] = await Promise.all([
+        fetch(`/api/route?${q}`).then((x) => x.json() as Promise<RouteResponse>),
+        fetch(`/api/makers?token=${tokenOut.address}`).then((x) => x.json() as Promise<MakersResponse>),
+        fetch(`/api/pool?hook=${hook}`).then((x) => x.json() as Promise<PoolResponse>),
+      ]);
+      if (mine !== gen.current) return;
+      const bad = r.error ?? m.error ?? p.error;
+      if (bad) setError(bad);
+      setRoute(r.error ? null : r);
+      setMakers(m.error ? null : m);
+      setPool(p.error ? null : p);
+    } catch (e) {
+      if (mine === gen.current) setError((e as Error).message);
+    } finally {
+      if (mine === gen.current) setBusy(false);
+    }
+  }, [tokenIn.address, tokenOut.address, amountIn, hook]);
+
+  useEffect(() => {
+    const t = setTimeout(load, 250); // debounce keystrokes
+    return () => clearTimeout(t);
+  }, [load]);
+
+  const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
+  const improvement = Number(route?.improvementBps ?? "0");
+
+  return (
+    <div className={s.shell}>
+      <header className={s.masthead}>
+        <h1 className={s.wordmark}>
+          BONE<em>&middot;</em>DRY
+        </h1>
+        <p className={s.deck}>
+          A Uniswap v4 pool that holds nothing. Every fill is drawn from 1inch Aqua maker
+          wallets at the moment of the swap.
+        </p>
+        <hr className={s.mastRule} />
+        <div className={`${s.mastMeta} label`}>
+          <span>Base &middot; chain 8453</span>
+          <span>Hook {short(hook)}</span>
+          <span>Index {makers?.source ?? "..."}</span>
+          <span className={s.spin}>{busy ? "reading chain" : "idle"}</span>
+        </div>
+      </header>
+
+      <PoolProof pool={pool} />
+
+      <div className={s.cols}>
+        <section className={s.left}>
+          <div className={s.sectionHead}>
+            <h2 className="label">Swap</h2>
+            <span className="label">
+              {route?.makersUsed ?? 0} of {route?.makersConsidered ?? 0} makers
+            </span>
+          </div>
+
+          <div className={s.field}>
+            <span className="label">You pay</span>
+            <div className={s.amountRow}>
+              <input
+                value={input}
+                inputMode="decimal"
+                onChange={(e) => setInput(e.target.value)}
+                aria-label={`Amount of ${tokenIn.symbol} to sell`}
+              />
+              <span className={s.ticker}>{tokenIn.symbol}</span>
+            </div>
+          </div>
+
+          <div className={s.flip}>
+            <button className={s.flipBtn} onClick={() => setFlipped((f) => !f)}>
+              flip direction
+            </button>
+          </div>
+
+          <div className={s.field}>
+            <span className="label">You receive</span>
+            <div
+              className={`${s.readout} ${route && route.amountOut !== "0" ? "" : s.readoutMuted}`}
+            >
+              {route ? units(route.amountOut, tokenOut.decimals, 6) : "--"}{" "}
+              <span className={s.ticker}>{tokenOut.symbol}</span>
+            </div>
+          </div>
+
+          <ul className={s.stats}>
+            <li>
+              <span className="label">Deepest maker alone</span>
+              <span className="num">
+                {route ? units(route.singleMakerAmountOut, tokenOut.decimals, 6) : "--"}
+              </span>
+            </li>
+            <li>
+              <span className="label">Split routing gains</span>
+              <span className={`num ${improvement >= 0 ? s.gain : s.loss}`}>
+                {route ? `${improvement >= 0 ? "+" : ""}${improvement} bps` : "--"}
+              </span>
+            </li>
+            <li>
+              <span className="label">Skipped as insolvent</span>
+              <span className="num">{route?.makersSkipped.length ?? 0}</span>
+            </li>
+            <li>
+              <span className="label">Cut back to real depth</span>
+              <span className={`num ${route?.clamped?.length ? s.loss : ""}`}>
+                {route?.clamped?.length ?? 0}
+              </span>
+            </li>
+            {route && route.unfilled !== "0" && (
+              <li>
+                <span className="label">Unfillable at this size</span>
+                <span className={`num ${s.loss}`}>
+                  {units(route.unfilled, tokenIn.decimals, 2)} {tokenIn.symbol}
+                </span>
+              </li>
+            )}
+            <li>
+              <span className="label">Pool liquidity consumed</span>
+              <span className="num">0</span>
+            </li>
+          </ul>
+
+          <div className={s.actions}>
+            <button onClick={load} disabled={busy}>
+              {busy ? "Reading..." : "Re-quote"}
+            </button>
+          </div>
+
+          {route?.reason && <p className={s.err}>{route.reason}</p>}
+          {error && <p className={s.err}>{error}</p>}
+        </section>
+
+        <section className={s.right}>
+          <div className={s.sectionHead}>
+            <h2 className="label">Maker book &mdash; {tokenOut.symbol}</h2>
+            <span className="label">
+              {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : "..."}
+            </span>
+          </div>
+          <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
+          <HookData route={route} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+/* The proof: the whole thesis in one number, read straight out of PoolManager
+   storage via extsload. Not an indexer, not an event -- the slot itself. */
+function PoolProof({ pool }: { pool: PoolResponse | null }) {
+  // Only a live pool's zero means anything. Colour encodes that distinction:
+  // slate for a proven-empty live pool, red for anything else.
+  const proven = pool?.boneDry === true;
+  return (
+    <div className={s.proof}>
+      <div>
+        <span className="label">
+          Pool liquidity, read from PoolManager storage
+          {pool && !pool.initialized ? " — pool not initialized" : ""}
+        </span>
+        <div className={`${s.proofFig} ${proven ? s.proofDry : s.proofWet}`}>
+          {pool ? pool.liquidity : "--"}
+        </div>
+        <p className={s.proofNote}>
+          {pool?.note ??
+            "Reading slot 6 of the PoolManager for this pool id. A Bone Dry pool never holds a position, so this figure is zero before a swap and zero after one."}
+        </p>
+      </div>
+      <div className={s.proofSide}>
+        <span className="label">Pool id</span>
+        <span className="num">{pool ? short(pool.poolId) : "--"}</span>
+        <span className="label" style={{ marginTop: 8 }}>
+          Initialized
+        </span>
+        <span className="num">{pool ? (pool.initialized ? "yes" : "not yet") : "--"}</span>
+      </div>
+    </div>
+  );
+}
+
+/* The book: five columns because five numbers disagree. `virtual` is what the
+   maker promised Aqua; `depth` is what a fill can actually take. The bar shows
+   the gap directly rather than making the reader subtract. */
+function MakerBook({
+  makers,
+  used,
+  decimals,
+}: {
+  makers: MakersResponse | null;
+  used: Set<string>;
+  decimals: number;
+}) {
+  if (!makers) return <p className={s.empty}>Indexing Aqua registry events...</p>;
+  if (makers.makers.length === 0)
+    return (
+      <p className={s.empty}>
+        No live strategy is shipped to this router yet. Aqua&apos;s balance mapping is not
+        enumerable, so an empty book means the registry has no matching Shipped event &mdash; not
+        that the read failed.
+      </p>
+    );
+
+  const max = makers.makers.reduce((a, m) => (BigInt(m.virtual) > a ? BigInt(m.virtual) : a), 1n);
+
+  return (
+    <div className={s.tableWrap}>
+    <table className={s.table}>
+      <thead>
+        <tr>
+          <th>Maker</th>
+          <th>Promised</th>
+          <th>Wallet</th>
+          <th>Allowance</th>
+          <th>Deliverable</th>
+          <th>Shortfall</th>
+        </tr>
+      </thead>
+      <tbody>
+        {makers.makers.map((m) => {
+          const isUsed = used.has(m.maker.toLowerCase());
+          return (
+            <tr key={`${m.maker}-${m.strategyHash}`} className={isUsed ? s.used : undefined}>
+              <td>
+                <span className="num">{short(m.maker)}</span>
+                <span className={s.bar} aria-hidden>
+                  <span className={s.barFill} style={{ width: `${pct(m.virtual, max)}%` }}>
+                    <span
+                      className={s.barReal}
+                      style={{ width: `${pct(m.depth, m.virtual === "0" ? "1" : m.virtual)}%` }}
+                    />
+                    <span className={s.barGap} style={{ flex: 1 }} />
+                  </span>
+                </span>
+              </td>
+              <td className={`num ${s.dim}`}>{compact(m.virtual, decimals)}</td>
+              <td className={`num ${s.dim}`}>{compact(m.wallet, decimals)}</td>
+              <td className={`num ${s.dim}`}>{compact(m.allowance, decimals)}</td>
+              <td className="num">{compact(m.depth, decimals)}</td>
+              <td className={`num ${m.shortfall !== "0" ? s.loss : s.dim}`}>
+                {m.shortfall === "0" ? "--" : compact(m.shortfall, decimals)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+    </div>
+  );
+}
+
+/* The calldata: shown, not hidden. This blob is the part of the system that
+   cannot live on-chain, and a judge should be able to see and decode it. */
+function HookData({ route }: { route: RouteResponse | null }) {
+  if (!route?.hookData) return null;
+  const bytes = (route.hookData.length - 2) / 2;
+  return (
+    <div className={s.blob}>
+      <div className={s.sectionHead} style={{ border: 0, margin: 0, paddingBottom: 0 }}>
+        <h2 className="label">hookData handed to Tap.beforeSwap</h2>
+        <span className="label">
+          {bytes} bytes &middot; {route.slices.length} strategies
+        </span>
+      </div>
+      <div className={s.blobBody}>{route.hookData}</div>
+    </div>
+  );
+}

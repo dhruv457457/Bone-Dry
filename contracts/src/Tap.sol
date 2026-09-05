@@ -44,6 +44,7 @@ contract Tap is IHooks {
     error NotPoolManager();
     error ExactOutputNotSupported();
     error NoSolventMaker();
+    error AmountOverflowsDelta();
     error HookNotImplemented();
 
     event Filled(address indexed maker, uint256 amountIn, uint256 amountOut);
@@ -119,16 +120,29 @@ contract Tap is IHooks {
             if (slice == 0) continue;
             if (slice > c.remaining) slice = c.remaining;
 
-            (, uint256 out,) =
-                router.swap(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits);
-
-            c.remaining -= slice;
-            c.totalOut += out;
-            emit Filled(orders[i].maker, slice, out);
+            // Depth is a ceiling on the payout, not on the slice. An XYC curve is
+            // bounded by the maker's VIRTUAL balance, so a large enough slice asks
+            // for more than the wallet backs and `pull()` reverts inside the
+            // router. Letting that bubble up would fail the whole swap for every
+            // other maker too, so a maker who cannot deliver is dropped exactly
+            // like one with no depth at all.
+            try router.swap(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
+                uint256, uint256 out, bytes32
+            ) {
+                c.remaining -= slice;
+                c.totalOut += out;
+                emit Filled(orders[i].maker, slice, out);
+            } catch {
+                emit MakerSkipped(orders[i].maker, slice);
+            }
         }
 
         uint256 filledIn = takeIn - c.remaining;
         if (c.totalOut == 0) revert NoSolventMaker();
+
+        // Do not leave a standing allowance behind: only part of `takeIn` may have
+        // been spent, and the next swap sets its own.
+        IERC20Minimal(c.tokenIn).approve(address(router), 0);
 
         // Anything we could not place goes straight back to the PoolManager.
         poolManager.sync(inC);
@@ -138,6 +152,12 @@ contract Tap is IHooks {
         poolManager.sync(outC);
         IERC20Minimal(c.tokenOut).transfer(address(poolManager), c.totalOut);
         poolManager.settle();
+
+        // v4 deltas are int128. Silently wrapping a large fill would hand the
+        // PoolManager a delta of the wrong sign, so refuse instead.
+        if (filledIn > uint256(int256(type(int128).max)) || c.totalOut > uint256(int256(type(int128).max))) {
+            revert AmountOverflowsDelta();
+        }
 
         return (
             IHooks.beforeSwap.selector,

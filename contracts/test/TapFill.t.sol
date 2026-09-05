@@ -150,4 +150,66 @@ contract TapFillTest is BoneDryFork {
         assertGt(gained, 0, "swap should still fill from the solvent maker");
         assertEq(USDC.balanceOf(makers[1]), 10_000e6, "insolvent maker should not have been used");
     }
+
+    /// @dev PARTIAL SOLVENCY — the case the depth filter alone does not catch.
+    ///
+    ///      Maker 1 ships promising 3 WETH and then moves out all but a sliver.
+    ///      Their depth is non-zero, so they survive the filter and get a slice —
+    ///      but the slice is large enough that the XYC curve quotes out more than
+    ///      the sliver, and `pull()` reverts inside the router.
+    ///
+    ///      Before Tap wrapped the fill, that revert took the whole swap down with
+    ///      it, including maker 0's perfectly good liquidity. It must not.
+    function test_makerWhoRevertsMidFill_doesNotKillTheSwap() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+
+        // maker 1 keeps a token dust of inventory: non-zero depth, useless depth
+        vm.prank(makers[1]);
+        WETH.transfer(address(0xDEAD), 3e18 - 1000);
+
+        uint256 depth1 = lens.quotableDepth(makers[1], address(router), strategyHashes[1], address(WETH));
+        assertGt(depth1, 0, "maker 1 must survive the depth filter for this test to mean anything");
+        console.log("maker1 depth (wei)  :", depth1);
+
+        uint256 maker0UsdcBefore = USDC.balanceOf(makers[0]);
+        uint256 gained = _swap(5_000e6, _hookData(2));
+        console.log("swapper WETH gained :", gained);
+
+        assertGt(gained, 0, "one bad maker must not fail the whole swap");
+        assertGt(USDC.balanceOf(makers[0]), maker0UsdcBefore, "solvent maker should still have been filled");
+        assertEq(PM.getLiquidity(key.toId()), 0, "pool still holds nothing");
+    }
+
+    /// @dev The swapper must never be charged for input the hook could not place.
+    ///      Whatever no maker takes goes straight back to the PoolManager.
+    function test_unplaceableInputIsReturned_notKept() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+
+        vm.prank(makers[1]);
+        WETH.transfer(address(0xDEAD), 3e18 - 1000);
+
+        uint256 sell = 5_000e6;
+        deal(address(USDC), swapper, sell);
+        uint256 usdcBefore = USDC.balanceOf(swapper);
+
+        vm.startPrank(swapper, swapper);
+        USDC.approve(address(swapRouter), type(uint256).max);
+        swapRouter.swap(
+            key,
+            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            _hookData(2)
+        );
+        vm.stopPrank();
+
+        uint256 spent = usdcBefore - USDC.balanceOf(swapper);
+        console.log("offered USDC        :", sell);
+        console.log("actually spent USDC :", spent);
+
+        assertLt(spent, sell, "the skipped maker's share should have come back");
+        assertEq(USDC.balanceOf(address(tap)), 0, "hook must not sit on swapper funds");
+        assertEq(WETH.balanceOf(address(tap)), 0, "hook must not sit on maker output");
+    }
 }
