@@ -1,0 +1,22 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+
+# These four are NOT optional. SwapVM dispatch compares internal function
+# pointers, which only resolve correctly under the IR pipeline; and the router
+# guards reentrancy with transient storage, so a pre-Cancun target will not run.
+solc = "0.8.30"
+via_ir = true
+optimizer = true
+optimizer_runs = 700
+evm_version = "cancun"
+
+fs_permissions = [{ access = "read", path = "./fixtures" }]
+
+[profile.default.fuzz]
+runs = 256
+
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"
