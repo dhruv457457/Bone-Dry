@@ -50,6 +50,28 @@ infinite and wallets holding none of it. Every one of those strategies quotes
 depth that cannot be delivered. That is the whole thesis of this project, sitting
 on mainnet, and it took a subgraph to see it.
 
+### The API and the chain agree
+
+The off-chain router and the hook no longer decide the same way. `/api/route`
+bisects each slice down to what a maker can deliver, batching every candidate
+into a single multicall; `Tap` cannot afford that inside a swap, so it quotes
+each slice once and drops any maker whose quote exceeds their depth. Two
+different algorithms — and if they disagree, the number the interface shows is
+not the number the chain will pay.
+
+`test/RouterAgreement.t.sol` replays the exact `hookData` the running API
+emitted against the real PoolManager, using the API's own quote as the
+expectation:
+
+```
+api quoted WETH : 2969705251715010073
+chain paid WETH : 2969693471214161553
+```
+
+0.04 bps apart. The hook takes only the candidate set from calldata and recomputes
+the split from its own `Lens` reading, so it never has to trust the amounts an
+off-chain service hands it.
+
 ### Checked both ways
 
 `Lens.coverage()` computes the same ratio on-chain — but it takes the strategy

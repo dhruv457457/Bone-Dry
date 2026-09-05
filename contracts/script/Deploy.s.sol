@@ -22,6 +22,10 @@ import {Tap} from "../src/Tap.sol";
  *
  *   forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
  */
+interface IExtsload {
+    function extsload(bytes32 slot) external view returns (bytes32);
+}
+
 contract Deploy is Script {
     address constant PM = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
     address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
@@ -30,7 +34,10 @@ contract Deploy is Script {
     uint160 constant FLAGS = 0x88; // BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA
     address constant HOOK = address(uint160(0x4444 << 144) | FLAGS);
 
-    // 1 WETH ≈ 3300 USDC. sqrtPriceX96 for currency1/currency0 at that ratio.
+    /// @dev PoolManager._pools lives at slot 6; slot0 is the first word of the state.
+    uint256 constant POOLS_SLOT = 6;
+
+    // 1 WETH ~ 3300 USDC. sqrtPriceX96 for currency1/currency0 at that ratio.
     uint160 constant SQRT_PRICE = 4543168963294864840402813952; // ~ sqrt(3300e6/1e18) << 96
 
     function run() external {
@@ -56,9 +63,20 @@ contract Deploy is Script {
             hooks: IHooks(HOOK)
         });
 
-        vm.startBroadcast(pk);
-        IPoolManager(PM).initialize(key, SQRT_PRICE);
-        vm.stopBroadcast();
+        // Re-running this script is normal — the hook changes far more often than
+        // the pool does — so initialize only when the pool is not there yet.
+        bytes32 poolId = keccak256(abi.encode(key));
+        bytes32 stateSlot = keccak256(abi.encode(poolId, uint256(POOLS_SLOT)));
+        uint160 sqrtPrice = uint160(uint256(IExtsload(PM).extsload(stateSlot)));
+
+        if (sqrtPrice == 0) {
+            vm.startBroadcast(pk);
+            IPoolManager(PM).initialize(key, SQRT_PRICE);
+            vm.stopBroadcast();
+            console.log("pool initialized");
+        } else {
+            console.log("pool already live, left alone");
+        }
 
         console.log("lens ", address(lens));
         console.log("tap  ", HOOK);
