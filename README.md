@@ -17,8 +17,9 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | ✅ 6/6 tests green |
 | `Lens` — solvency filter, skips makers who can't deliver | ✅ |
 | Multi-maker pro-rata routing | ✅ +28.6% on a 5k swap |
+| Router API — indexes makers, ranks by real depth, emits hookData | ✅ live |
 | `Aquifer` — the subgraph | todo |
-| Next.js app + router API | todo |
+| Frontend | todo |
 
 ## The finding that makes this possible
 
@@ -84,3 +85,43 @@ cd ../contracts && forge test -vv            # fork Base and fill it
 ```bash
 cd contracts && forge install foundry-rs/forge-std --no-git
 ```
+
+## The router API
+
+Aqua's balance mapping is not enumerable — there is no on-chain way to ask who the
+makers are. 1inch say so themselves and recommend building a reference indexer.
+`web/` is that indexer plus the routing service that feeds `Tap` its candidate list.
+
+```
+GET /api/makers                    every live strategy + the only depth worth trusting
+GET /api/route?amountIn=...        the plan, a real quote for it, and encoded hookData
+GET /api/pool?hook=0x...           pool liquidity read straight from PoolManager storage
+```
+
+Against a Base fork with three seeded makers all *claiming* 3 WETH but backed by
+3 / 2 / 0 — plus two genuine mainnet strategies the indexer picked up:
+
+```
+GET /api/makers
+  indexed 5 · solvent 2 · totalDepth 5000000000000000000
+
+  0xf39Fd6e5  virtual 3e18  wallet 3e18  depth 3e18  shortfall 0
+  0x70997970  virtual 3e18  wallet 2e18  depth 2e18  shortfall 1e18
+  0x3C44CdDd  virtual 3e18  wallet 0     depth 0     shortfall 3e18   INSOLVENT
+```
+
+```
+GET /api/route?amountIn=5000000000        (sell 5,000 USDC)
+  makers considered 5 · used 2 · skipped 3
+
+  0xf39Fd6e5   in 3,000 USDC   out 0.692307692307692307 WETH
+  0x70997970   in 2,000 USDC   out 0.500000000000000000 WETH
+
+  split         1.192307692307692307 WETH
+  single maker  1.000000000000000000 WETH
+  improvement   +1923 bps
+```
+
+The `shortfall` column is phantom liquidity, measured. A strategy can quote depth
+its wallet no longer backs; Aqua has no on-chain guard for it, so the router
+carries one.

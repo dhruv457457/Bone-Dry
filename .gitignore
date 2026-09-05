@@ -7,3 +7,7 @@ contracts/broadcast/
 .env
 .env.local
 .DS_Store
+web/.next/
+web/node_modules/
+web/next-env.d.ts
+tsconfig.tsbuildinfo
