@@ -128,3 +128,53 @@ right there in the repo and reads as authoritative.
 **What worked well:** the Aqua documentation is genuinely excellent — the access
 model, the coverage formula, and the "known tooling caveats" section saved us days.
 A complete Aqua XYC strategy being two bytes (`0x1100`) is a lovely result.
+
+---
+
+## The Graph
+
+### 1. `graph test` has no Windows binary, and the fallback needs Docker running
+
+```
+$ graph test
+Error: Failed to get matchstick binary: Unsupported platform: Windows_NT x64 10
+Consider using -d flag to run it in Docker instead:
+  graph test -d
+```
+
+The suggestion is good, but `-d` then needs a running Docker engine, which is a
+much larger ask than "run my unit tests" implies — and on a hackathon clock it is
+the difference between writing handler tests and not writing them. The error
+arrives only after `matchstick-as` is installed and the tests are written, so the
+cost is paid before the limitation is discovered.
+
+Worth surfacing on the [unit testing
+page](https://thegraph.com/docs/en/subgraphs/developing/creating/unit-testing-framework/)
+next to the install instructions rather than at runtime. A note that the Docker
+path is the only supported one on Windows would have changed how we sequenced the
+work.
+
+### 2. A syncing subgraph is indistinguishable from an empty one
+
+`_meta` reports `block.number` and `hasIndexingErrors`, which is enough to detect
+lag — but only if you already know to look. A subgraph that is 2M blocks behind
+answers every query truthfully and uselessly: zero rows, no error, no warning.
+
+The natural client shape is `const rows = await fromGraph() ?? await fromRpc()`,
+and that is silently wrong, because `[] ?? rpc` is `[]`. We shipped exactly that
+bug and only caught it because the first deploy synced while we watched.
+
+Two things would help:
+
+- A `_meta { isSynced }` or `blocksBehind` field, so freshness is one boolean
+  rather than a subtraction against a separately fetched chain head.
+- A note in the querying docs that results from a syncing subgraph are partial
+  rather than empty, with the null-vs-empty distinction spelled out.
+
+### 3. Studio's deploy key and the account API key are easy to confuse
+
+The API Keys page and the subgraph page both show a 32-hex-character secret. Only
+the second one works with `graph deploy`, and using the first fails with
+`Deploy key not found` — which reads as "your key is wrong" rather than "that is
+the other kind of key". Naming the failure (`this looks like a query API key; the
+deploy key is on your subgraph's page`) would resolve it instantly.
