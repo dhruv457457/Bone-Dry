@@ -30,11 +30,17 @@ Everything below works against a fork of Base mainnet, so no testnet deploy and
 no faucet. The canonical Aqua and SwapVM contracts are the real ones.
 
 ```bash
+# 0. contract dependencies. lib/ is not committed, and the default tag of
+#    v4-core (v4.0.0) predates src/types/PoolOperation.sol, so the commit is
+#    pinned. v4-periphery is not needed — nothing imports it.
+cd contracts
+forge install foundry-rs/forge-std               uniswap/v4-core@46c6834698c48bc4a463a86d8420f4eb1d7f3b75
+
 # 1. a Base fork to work against
 anvil --fork-url https://mainnet.base.org
 
 # 2. build the strategies and seed three makers onto the fork
-cd tools && npm i && node gen-strategy.cjs
+cd ../tools && npm i && node gen-strategy.cjs
 cd ../contracts && forge script script/Seed.s.sol   --rpc-url http://127.0.0.1:8545 --broadcast
 forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
 
@@ -54,6 +60,10 @@ use your own endpoint). `RouterAgreement` additionally replays whatever
 curl 'http://localhost:3000/api/route?amountIn=20000000000' > contracts/fixtures/route.json
 cd contracts && forge test
 ```
+
+On Windows, clone somewhere short — v4-core's nested submodules (`solmate` →
+`ds-test`) blow past `MAX_PATH` from a deep directory, and `git config
+core.longpaths true` is worth setting.
 
 The subgraph's handler tests need Matchstick, which has no Windows binary:
 
