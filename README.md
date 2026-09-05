@@ -47,3 +47,9 @@ against real contracts.
 cd tools && npm i && node gen-strategy.cjs   # build the ungated strategy fixture
 cd ../contracts && forge test -vv            # fork Base and fill it
 ```
+
+## Setup
+
+```bash
+cd contracts && forge install foundry-rs/forge-std --no-git
+```

@@ -1,7 +1,9 @@
 node_modules/
+contracts/lib/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+.claude/
 .env
 .env.local
 .DS_Store
