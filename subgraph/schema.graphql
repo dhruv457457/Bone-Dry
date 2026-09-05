@@ -15,7 +15,10 @@ type Protocol @entity(immutable: false) {
   strategiesShipped: BigInt!
   strategiesActive: BigInt!
   makers: BigInt!
+  "every Swapped the router emitted"
   fills: BigInt!
+  "the subset joined to a strategy this index knows about; equal to `fills` on Base today"
+  fillsAgainstAqua: BigInt!
 }
 
 type Maker @entity(immutable: false) {
@@ -82,6 +85,8 @@ type Fill @entity(immutable: true) {
   tokenOut: Bytes!
   amountIn: BigInt!
   amountOut: BigInt!
+  "false when no indexed strategy matches this orderHash"
+  againstAqua: Boolean!
   blockNumber: BigInt!
   timestamp: BigInt!
   txHash: Bytes!

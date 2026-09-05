@@ -7,6 +7,32 @@ import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } fr
 
 type Token = { address: string; symbol: string; decimals: number };
 
+/** A hung RPC is worse than a refused one: nothing rejects, so the page sits on
+ *  "reading chain" forever with no way back. Every request gets a deadline, and
+ *  a 500 that returns an HTML error page must not surface as a JSON parse error. */
+const TIMEOUT_MS = 30_000;
+
+async function getJson<T>(url: string, timeout = TIMEOUT_MS): Promise<T> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`${url.split("?")[0]} returned ${res.status} (not JSON)`);
+    }
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new Error(`${url.split("?")[0]} timed out after ${timeout / 1000}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: Token }; hook: string }) {
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? tokens.weth : tokens.usdc;
@@ -17,6 +43,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
   const [makers, setMakers] = useState<MakersResponse | null>(null);
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,9 +60,9 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     try {
       const q = `tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}`;
       const [r, m, p] = await Promise.all([
-        fetch(`/api/route?${q}`).then((x) => x.json() as Promise<RouteResponse>),
-        fetch(`/api/makers?token=${tokenOut.address}`).then((x) => x.json() as Promise<MakersResponse>),
-        fetch(`/api/pool?hook=${hook}`).then((x) => x.json() as Promise<PoolResponse>),
+        getJson<RouteResponse>(`/api/route?${q}`),
+        getJson<MakersResponse>(`/api/makers?token=${tokenOut.address}`),
+        getJson<PoolResponse>(`/api/pool?hook=${hook}`),
       ]);
       if (mine !== gen.current) return;
       const bad = r.error ?? m.error ?? p.error;
@@ -57,12 +84,17 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
 
   // Coverage does not depend on the swap inputs, so it is fetched once instead
   // of on every keystroke. It is also the slowest call: a multicall per position.
+  // A failure here used to be swallowed, so the panel simply never appeared and
+  // nothing said why — say why instead.
   useEffect(() => {
     let live = true;
-    fetch("/api/coverage?first=12")
-      .then((r) => r.json())
-      .then((c: CoverageResponse) => live && !c.error && setCoverage(c))
-      .catch(() => {});
+    getJson<CoverageResponse>("/api/coverage?first=12", 60_000)
+      .then((c) => {
+        if (!live) return;
+        if (c.error) setCoverageError(c.error);
+        else setCoverage(c);
+      })
+      .catch((e) => live && setCoverageError((e as Error).message));
     return () => {
       live = false;
     };
@@ -193,7 +225,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
         </section>
       </div>
 
-      <Coverage coverage={coverage} />
+      <Coverage coverage={coverage} error={coverageError} />
     </div>
   );
 }
@@ -203,7 +235,25 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
    enumerable, so nothing on-chain can total what one maker promised across all
    of their strategies. The index can. Next to the wallet balance, that is a
    coverage ratio -- and on Base most of the largest positions fail it. */
-function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
+function Coverage({
+  coverage,
+  error,
+}: {
+  coverage: CoverageResponse | null;
+  error: string | null;
+}) {
+  if (error)
+    return (
+      <section className={s.coverage}>
+        <div className={s.sectionHead}>
+          <h2 className="label">Coverage &mdash; promised against held, per maker</h2>
+        </div>
+        <p className={s.empty}>
+          Unavailable: {error}. This view is computed from the Aquifer subgraph, which
+          is the only thing that can total a maker&apos;s commitments across strategies.
+        </p>
+      </section>
+    );
   if (!coverage || coverage.rows.length === 0) return null;
   const worst = coverage.rows.find((r) => r.known) ?? coverage.rows[0];
 

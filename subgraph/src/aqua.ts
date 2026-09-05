@@ -5,7 +5,7 @@ import { Protocol, Maker, Strategy, Commitment, MakerTokenPosition } from "../ge
 const ZERO = BigInt.fromI32(0);
 const ONE = BigInt.fromI32(1);
 
-function protocol(): Protocol {
+export function protocol(): Protocol {
   let p = Protocol.load("1");
   if (p == null) {
     p = new Protocol("1");
@@ -13,11 +13,12 @@ function protocol(): Protocol {
     p.strategiesActive = ZERO;
     p.makers = ZERO;
     p.fills = ZERO;
+    p.fillsAgainstAqua = ZERO;
   }
   return p as Protocol;
 }
 
-function maker(addr: Address, ts: BigInt): Maker {
+export function maker(addr: Address, ts: BigInt): Maker {
   let m = Maker.load(addr.toHexString());
   if (m == null) {
     m = new Maker(addr.toHexString());
