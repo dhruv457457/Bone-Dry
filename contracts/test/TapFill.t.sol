@@ -212,4 +212,110 @@ contract TapFillTest is BoneDryFork {
         assertEq(USDC.balanceOf(address(tap)), 0, "hook must not sit on swapper funds");
         assertEq(WETH.balanceOf(address(tap)), 0, "hook must not sit on maker output");
     }
+
+    /// @dev Invariants that must hold for ANY swap size, not just the ones I
+    ///      thought to write down. Three makers, one of them holding a sliver,
+    ///      so the fill path crosses solvency, clamping and mid-fill reverts.
+    function testFuzz_swapInvariants(uint256 sell) public {
+        sell = bound(sell, 1e6, 100_000_000e6); // below ~1 USDC no curve rounds to an output
+
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+        _ship(2, 10_000e6, 3e18);
+        vm.prank(makers[2]);
+        WETH.transfer(address(0xDEAD), 3e18 - 1000); // depth survives, delivery does not
+
+        deal(address(USDC), swapper, sell);
+        uint256 usdcBefore = USDC.balanceOf(swapper);
+        uint256 wethBefore = WETH.balanceOf(swapper);
+
+        vm.startPrank(swapper, swapper);
+        USDC.approve(address(swapRouter), type(uint256).max);
+        swapRouter.swap(
+            key,
+            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            _hookData(3)
+        );
+        vm.stopPrank();
+
+        uint256 spent = usdcBefore - USDC.balanceOf(swapper);
+        uint256 gained = WETH.balanceOf(swapper) - wethBefore;
+
+        assertLe(spent, sell, "swapper charged more than they offered");
+        assertGt(gained, 0, "paid something and received nothing");
+        assertEq(PM.getLiquidity(key.toId()), 0, "pool must never hold liquidity");
+        assertEq(USDC.balanceOf(address(tap)), 0, "hook kept swapper input");
+        assertEq(WETH.balanceOf(address(tap)), 0, "hook kept maker output");
+    }
+
+    /// @dev Dust across several makers. The pro-rata split gives each maker a
+    ///      slice of a couple of wei, which some curves round to a zero payout —
+    ///      and a maker who would pay nothing must be skipped, not filled. If no
+    ///      maker can pay anything the swap reverts, and it must cost nothing.
+    function test_dustAcrossManyMakers_fillsOrRevertsButNeverCharges() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+        _ship(2, 10_000e6, 3e18);
+
+        deal(address(USDC), swapper, 1e6);
+        uint256 before = USDC.balanceOf(swapper);
+
+        vm.startPrank(swapper, swapper);
+        USDC.approve(address(swapRouter), type(uint256).max);
+        try swapRouter.swap(
+            key,
+            SwapParams({zeroForOne: false, amountSpecified: -2, sqrtPriceLimitX96: MAX_SQRT}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            _hookData(3)
+        ) {
+            // filled: the swapper must have received something for what they paid
+            uint256 spent = before - USDC.balanceOf(swapper);
+            console.log("dust spent          :", spent);
+            assertGt(WETH.balanceOf(swapper), 0, "charged for a swap that paid nothing");
+        } catch {
+            assertEq(USDC.balanceOf(swapper), before, "a reverted dust swap must cost nothing");
+        }
+        vm.stopPrank();
+
+        assertEq(USDC.balanceOf(address(tap)), 0, "hook kept dust");
+        assertEq(WETH.balanceOf(address(tap)), 0, "hook kept output");
+    }
+
+    /// @dev A pool holding nothing borrows the input from the PoolManager, whose
+    ///      balance belongs to every other pool. It cannot lend what it does not
+    ///      have, so an oversized swap fills partially instead of reverting — and
+    ///      the swapper is charged only for the part that filled.
+    function test_swapLargerThanPoolManagerHolds_fillsPartially() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+
+        uint256 held = USDC.balanceOf(address(PM));
+        uint256 sell = held * 3;
+
+        deal(address(USDC), swapper, sell);
+        uint256 before = USDC.balanceOf(swapper);
+        uint256 wethBefore = WETH.balanceOf(swapper);
+
+        vm.startPrank(swapper, swapper);
+        USDC.approve(address(swapRouter), type(uint256).max);
+        swapRouter.swap(
+            key,
+            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            _hookData(2)
+        );
+        vm.stopPrank();
+
+        uint256 spent = before - USDC.balanceOf(swapper);
+        console.log("PoolManager USDC    :", held);
+        console.log("offered USDC        :", sell);
+        console.log("actually spent USDC :", spent);
+
+        assertGt(spent, 0, "should have filled something");
+        assertLe(spent, held, "cannot borrow more than the PoolManager holds");
+        assertLt(spent, sell, "must not charge for input it could not place");
+        assertGt(WETH.balanceOf(swapper) - wethBefore, 0, "no output for the input spent");
+        assertEq(PM.getLiquidity(key.toId()), 0, "pool still holds nothing");
+    }
 }

@@ -14,7 +14,7 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | Milestone | State |
 |---|---|
 | Ungated Aqua strategy fillable by any EOA on Base mainnet fork | proven by test |
-| `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | 5/5 tests green |
+| `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | 11 tests green, fuzzed 1 USDC to 100M |
 | `Lens` — solvency filter, skips makers who cannot deliver | done |
 | Multi-maker pro-rata routing | +4848 bps on a 20k swap |
 | Router API — indexes makers, ranks by real depth, emits hookData | live |

@@ -14,6 +14,7 @@ import {Lens} from "./Lens.sol";
 interface IERC20Minimal {
     function transfer(address to, uint256 amount) external returns (bool);
     function approve(address spender, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 /**
@@ -63,6 +64,7 @@ contract Tap is IHooks {
         uint256 remaining;
         uint256 totalOut;
         uint256 totalDepth;
+        uint256 unplaced;
     }
 
     constructor(IPoolManager _poolManager, ISwapVM _router, Lens _lens) {
@@ -106,26 +108,60 @@ contract Tap is IHooks {
         }
         if (c.totalDepth == 0) revert NoSolventMaker();
 
-        // --- pass 2: split the input pro-rata to real depth ---
+        // --- pass 2: place slices, borrowing only what each one uses ---
+        //
+        // `take` moves real tokens out of the PoolManager, and a zero-liquidity
+        // pool has none of its own — it is borrowing against every other pool's
+        // balance. Taking the whole `amountSpecified` up front therefore borrows
+        // what this hook may have no way to place, and reverts outright when the
+        // PoolManager is not holding that much. So each slice is taken
+        // immediately before the fill that spends it, and anything no maker can
+        // absorb is never taken at all: the swapper is charged for what filled.
+        // A pool with no liquidity of its own borrows from the PoolManager's
+        // balance, which belongs to every other pool. It cannot lend what it does
+        // not hold, so that balance — not the swapper's ambition — is the ceiling
+        // on how much input can be placed in one transaction. Beyond it the fill
+        // is partial, which v4 expresses natively through the returned delta.
+        uint256 available = IERC20Minimal(c.tokenIn).balanceOf(address(poolManager));
+        if (c.remaining > available) c.remaining = available;
+        if (c.remaining == 0) revert NoSolventMaker();
+
         uint256 takeIn = c.remaining;
-        IERC20Minimal(c.tokenIn).approve(address(router), takeIn);
-        poolManager.take(inC, address(this), takeIn);
 
         for (uint256 i; i < n && c.remaining > 0; ++i) {
             if (depth[i] == 0) {
                 emit MakerSkipped(orders[i].maker, 0);
                 continue;
             }
-            uint256 slice = _lastSolvent(depth, i) ? c.remaining : (takeIn * depth[i]) / c.totalDepth;
+            uint256 slice = (takeIn * depth[i]) / c.totalDepth;
             if (slice == 0) continue;
             if (slice > c.remaining) slice = c.remaining;
 
-            // Depth is a ceiling on the payout, not on the slice. An XYC curve is
-            // bounded by the maker's VIRTUAL balance, so a large enough slice asks
-            // for more than the wallet backs and `pull()` reverts inside the
-            // router. Letting that bubble up would fail the whole swap for every
-            // other maker too, so a maker who cannot deliver is dropped exactly
-            // like one with no depth at all.
+            // Quote before borrowing. Depth caps the payout, not the slice: an XYC
+            // curve is bounded by the maker's VIRTUAL balance, so a large enough
+            // slice asks for more than the wallet backs and `pull()` reverts
+            // inside the router. Asking first costs a staticcall and avoids both
+            // the borrow and the revert.
+            uint256 expected;
+            try router.quote(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
+                uint256, uint256 out, bytes32
+            ) {
+                expected = out;
+            } catch {
+                emit MakerSkipped(orders[i].maker, slice);
+                continue;
+            }
+            if (expected == 0 || expected > depth[i]) {
+                emit MakerSkipped(orders[i].maker, slice);
+                continue;
+            }
+
+            poolManager.take(inC, address(this), slice);
+            IERC20Minimal(c.tokenIn).approve(address(router), slice);
+
+            // The quote is a promise about state that a reentrant fill could have
+            // changed, so the swap is still guarded: a maker who cannot deliver is
+            // dropped exactly like one with no depth at all.
             try router.swap(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
                 uint256, uint256 out, bytes32
             ) {
@@ -133,6 +169,8 @@ contract Tap is IHooks {
                 c.totalOut += out;
                 emit Filled(orders[i].maker, slice, out);
             } catch {
+                // the slice was taken but not spent; hand it straight back
+                c.unplaced += slice;
                 emit MakerSkipped(orders[i].maker, slice);
             }
         }
@@ -140,13 +178,14 @@ contract Tap is IHooks {
         uint256 filledIn = takeIn - c.remaining;
         if (c.totalOut == 0) revert NoSolventMaker();
 
-        // Do not leave a standing allowance behind: only part of `takeIn` may have
-        // been spent, and the next swap sets its own.
+        // Do not leave a standing allowance behind; the next swap sets its own.
         IERC20Minimal(c.tokenIn).approve(address(router), 0);
 
-        // Anything we could not place goes straight back to the PoolManager.
+        // Only slices that were taken and then not spent need returning. Input no
+        // maker could absorb was never borrowed, so it is not here to give back —
+        // the delta below charges the swapper for `filledIn` and nothing more.
         poolManager.sync(inC);
-        if (c.remaining > 0) IERC20Minimal(c.tokenIn).transfer(address(poolManager), c.remaining);
+        if (c.unplaced > 0) IERC20Minimal(c.tokenIn).transfer(address(poolManager), c.unplaced);
         poolManager.settle();
 
         poolManager.sync(outC);
@@ -164,14 +203,6 @@ contract Tap is IHooks {
             toBeforeSwapDelta(int128(int256(filledIn)), -int128(int256(c.totalOut))),
             0
         );
-    }
-
-    /// @dev true when no later entry has depth, so this one sweeps the remainder
-    function _lastSolvent(uint256[] memory depth, uint256 i) private pure returns (bool) {
-        for (uint256 j = i + 1; j < depth.length; ++j) {
-            if (depth[j] > 0) return false;
-        }
-        return true;
     }
 
     // --- everything else is deliberately unimplemented -----------------------
