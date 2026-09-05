@@ -1,4 +1,4 @@
-import { indexStrategies, measureDepth } from "@/lib/aqua";
+import { cachedStrategies, indexStrategies, measureDepth } from "@/lib/aqua";
 import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
 import { ROUTER } from "@/lib/chain";
 import { TOKENS, WETH } from "@/lib/chain";
@@ -22,14 +22,20 @@ export async function GET(req: Request) {
     const from = fromBlock ? amountParam(fromBlock, 0n) : undefined;
 
     // Prefer the index; fall back to paging logs when no subgraph is configured.
-    const strategies =
-      (await strategiesFromGraph(ROUTER)) ??
-      (await indexStrategies(from !== undefined ? { fromBlock: from } : undefined));
+    const fromGraph = await strategiesFromGraph(ROUTER);
+    const scan = fromGraph
+      ? null
+      : from !== undefined
+        ? { strategies: await indexStrategies({ fromBlock: from }), window: null }
+        : await cachedStrategies();
+    const strategies = fromGraph ?? scan!.strategies;
     const depths = await measureDepth(strategies, token);
 
     const meta = TOKENS[token.toLowerCase()];
     return j({
       source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
+      // Honest about the fallback's blind spot: log paging only saw this window.
+      window: scan?.window ?? null,
       token: { address: token, symbol: meta?.symbol ?? "?", decimals: meta?.decimals ?? 18 },
       indexed: strategies.length,
       solvent: depths.filter((d) => d.solvent).length,

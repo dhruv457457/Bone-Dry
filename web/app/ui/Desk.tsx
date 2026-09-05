@@ -70,7 +70,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
         <hr className={s.mastRule} />
         <div className={`${s.mastMeta} label`}>
           <span>Base &middot; chain 8453</span>
-          <span>Hook {short(hook)}</span>
+          <span>Hook <span className="hex">{short(hook)}</span></span>
           <span>Index {makers?.source ?? "..."}</span>
           <span className={s.spin}>{busy ? "reading chain" : "idle"}</span>
         </div>
@@ -132,6 +132,10 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
             <li>
               <span className="label">Skipped as insolvent</span>
               <span className="num">{route?.makersSkipped.length ?? 0}</span>
+            </li>
+            <li>
+              <span className="label">Quote reverts (gated)</span>
+              <span className="num">{route?.makersUnfillable?.length ?? 0}</span>
             </li>
             <li>
               <span className="label">Cut back to real depth</span>
@@ -233,7 +237,13 @@ function MakerBook({
       </p>
     );
 
-  const max = makers.makers.reduce((a, m) => (BigInt(m.virtual) > a ? BigInt(m.virtual) : a), 1n);
+  // A single maker can have dozens of strategies live, most of them holding
+  // nothing for this token. Listing every one buries the two rows that matter,
+  // so dormant strategies are counted rather than enumerated.
+  const live = makers.makers.filter((m) => m.virtual !== "0" || m.depth !== "0");
+  const dormant = makers.makers.length - live.length;
+  const rows = live.length > 0 ? live : makers.makers.slice(0, 1);
+  const max = rows.reduce((a, m) => (BigInt(m.virtual) > a ? BigInt(m.virtual) : a), 1n);
 
   return (
     <div className={s.tableWrap}>
@@ -249,7 +259,7 @@ function MakerBook({
         </tr>
       </thead>
       <tbody>
-        {makers.makers.map((m) => {
+        {rows.map((m) => {
           const isUsed = used.has(m.maker.toLowerCase());
           return (
             <tr key={`${m.maker}-${m.strategyHash}`} className={isUsed ? s.used : undefined}>
@@ -276,6 +286,16 @@ function MakerBook({
           );
         })}
       </tbody>
+      {dormant > 0 && (
+        <tfoot>
+          <tr>
+            <td colSpan={6} className={`label ${s.dormant}`}>
+              + {dormant} shipped {dormant === 1 ? "strategy" : "strategies"} holding no{" "}
+              {makers.token.symbol}
+            </td>
+          </tr>
+        </tfoot>
+      )}
     </table>
     </div>
   );

@@ -218,3 +218,48 @@ export async function clampToDepth(
   });
   return { slices: out.filter((s) => s.amountIn > 0n), clamped };
 }
+
+/**
+ * Drop makers whose strategy cannot be filled by us at all.
+ *
+ * Depth says a maker HAS the token. It does not say they will hand it over.
+ * A strategy can carry an access control the taker fails — 1inch's own dApp
+ * attaches a KycNFT check to everything it ships — or price a pair we did not
+ * ask about, or run a program this router cannot drive. All of those revert the
+ * quote, which `allowFailure` reports as a payout of zero.
+ *
+ * Left in the plan, such a maker is handed a share of the swapper's input and
+ * returns nothing for it. One multicall up front removes them, and the input
+ * they would have wasted goes to makers who can actually fill.
+ */
+export async function filterFillable(
+  depths: MakerDepth[],
+  tokenIn: Address,
+  tokenOut: Address,
+  amountIn: bigint
+): Promise<{ fillable: MakerDepth[]; unfillable: Address[] }> {
+  const solvent = depths.filter((d) => d.solvent);
+  if (solvent.length === 0) return { fillable: [], unfillable: [] };
+
+  // The probe is a fraction of the REQUESTED input, never of depth. Depth is
+  // denominated in tokenOut and the probe is spent in tokenIn: for WETH in and
+  // USDC out that mistake probes 8.5e6 wei of WETH, quotes out zero USDC, and
+  // marks every honest maker gated — silently disabling the whole direction.
+  const probe = amountIn / 1000n > 0n ? amountIn / 1000n : amountIn > 0n ? amountIn : 1n;
+  const probes: Slice[] = solvent.map((d) => ({
+    maker: d.maker,
+    strategyHash: d.strategyHash,
+    strategy: d.strategy,
+    amountIn: probe,
+    depth: d.depth,
+  }));
+
+  const q = await quoteRoute(probes, tokenIn, tokenOut);
+  const fillable: MakerDepth[] = [];
+  const unfillable: Address[] = [];
+  solvent.forEach((d, i) => {
+    if ((q.perMaker[i]?.amountOut ?? 0n) > 0n) fillable.push(d);
+    else unfillable.push(d.maker);
+  });
+  return { fillable, unfillable };
+}

@@ -52,6 +52,10 @@ h1, h2, h3 { font-weight: 400; margin: 0; letter-spacing: -0.01em; }
   color: var(--ink-soft);
 }
 
+/* Hex is not prose. `text-transform: uppercase` on a label turns 0x into 0X,
+   which is not the same string a block explorer will accept. */
+.hex { text-transform: none; }
+
 .rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
 
 button {

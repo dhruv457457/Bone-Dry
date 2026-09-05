@@ -138,6 +138,8 @@
 .barReal { background: var(--slate); }
 .barGap { background: var(--red); opacity: 0.45; }
 
+.dormant { text-align: left !important; color: var(--ink-faint); padding-top: 10px !important; border-bottom: 0 !important; }
+
 .empty { padding: 40px 0; color: var(--ink-faint); font-size: 15px; max-width: 52ch; }
 
 /* ── hookdata ─────────────────────────────────────────────────────────── */

@@ -1,5 +1,5 @@
-import { indexStrategies, measureDepth } from "@/lib/aqua";
-import { planRoute, quoteRoute, clampToDepth, encodeHookData } from "@/lib/router";
+import { cachedStrategies, measureDepth } from "@/lib/aqua";
+import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData } from "@/lib/router";
 import { USDC, WETH, TOKENS, ROUTER } from "@/lib/chain";
 import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
 import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
@@ -22,9 +22,14 @@ export async function GET(req: Request) {
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
 
-    const strategies = (await strategiesFromGraph(ROUTER)) ?? (await indexStrategies());
+    const strategies = (await strategiesFromGraph(ROUTER)) ?? (await cachedStrategies()).strategies;
     const depths = await measureDepth(strategies, tokenOut);
-    const planned = planRoute(depths, amountIn);
+
+    // Having the token is not the same as being willing to part with it. Probe
+    // each solvent maker once and drop the ones whose quote reverts, so their
+    // share of the input is not thrown away on a fill that can never land.
+    const { fillable, unfillable } = await filterFillable(depths, tokenIn, tokenOut, amountIn);
+    const planned = planRoute(fillable, amountIn);
 
     // A solvent maker is not the same as a deliverable quote: the curve is bounded
     // by the VIRTUAL balance, so a big enough slice quotes out more than the wallet
@@ -34,9 +39,12 @@ export async function GET(req: Request) {
     if (slices.length === 0) {
       return j({
         source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
-        tokenIn,
-        tokenOut,
+        tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
+        tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
         amountIn,
+        // Same shape as the success branch: a consumer should not have to branch.
+        amountFilled: 0n,
+        unfilled: amountIn,
         slices: [],
         amountOut: 0n,
         singleMakerAmountOut: 0n,
@@ -44,6 +52,7 @@ export async function GET(req: Request) {
         makersConsidered: depths.length,
         makersUsed: 0,
         makersSkipped: depths.filter((d) => !d.solvent).map((d) => d.maker),
+        makersUnfillable: unfillable,
         clamped,
         hookData: null,
         reason:
@@ -77,6 +86,8 @@ export async function GET(req: Request) {
       makersConsidered: depths.length,
       makersUsed: slices.length,
       makersSkipped: depths.filter((d) => !d.solvent).map((d) => d.maker),
+      /** solvent makers whose quote reverts — gated, wrong pair, or a program we cannot drive */
+      makersUnfillable: unfillable,
       /** makers whose quote exceeded their real depth and had to be cut back */
       clamped,
       slices: slices.map((s, i) => ({

@@ -30,6 +30,7 @@ export type RouteResponse = {
   makersConsidered: number;
   makersUsed: number;
   makersSkipped: string[];
+  makersUnfillable: string[];
   slices: { maker: string; amountIn: string; depth: string; amountOut: string }[];
   amountOut: string;
   singleMakerAmountOut: string;

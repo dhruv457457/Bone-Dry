@@ -1,6 +1,9 @@
 import { decodeAbiParameters, parseAbiParameters, type Address, type Hex } from "viem";
 import { client, AQUA, ROUTER, aquaAbi, erc20Abi } from "./chain";
 
+/** Block Aqua was deployed on Base. Nothing was shipped before it. */
+export const AQUA_GENESIS = 48_839_900n;
+
 export type Strategy = {
   maker: Address;
   strategyHash: Hex;
@@ -31,16 +34,27 @@ export async function indexStrategies(opts?: {
   fromBlock?: bigint;
   toBlock?: bigint;
   pageSize?: bigint;
+  maxPages?: number;
 }): Promise<Strategy[]> {
   const latest = opts?.toBlock ?? (await client.getBlockNumber());
-  const from = opts?.fromBlock ?? (latest > 50_000n ? latest - 50_000n : 0n);
   const page = opts?.pageSize ?? 9_999n;
+  const budget = opts?.maxPages ?? 12;
+
+  // Walk backwards from the head. A forward scan from Aqua's genesis is ~200
+  // sequential round trips on Base and would make the fallback unusable; a
+  // rolling window pinned to the head silently drops strategies once they age
+  // out. So: newest first, a fixed page budget, and `scannedFrom` on the result
+  // so the caller can say which window it actually saw. The subgraph is the
+  // answer to this; this is what you get without one.
+  const floor = opts?.fromBlock ?? AQUA_GENESIS;
 
   const shipped: Strategy[] = [];
   const docked = new Set<string>();
+  let end = latest;
+  let pages = 0;
 
-  for (let start = from; start <= latest; start += page + 1n) {
-    const end = start + page > latest ? latest : start + page;
+  while (end >= floor && pages < budget) {
+    const start = end - page > floor ? end - page : floor;
 
     const [ship, dock] = await Promise.all([
       client.getLogs({ address: AQUA, event: aquaAbi[0], fromBlock: start, toBlock: end }),
@@ -61,9 +75,45 @@ export async function indexStrategies(opts?: {
       const a = l.args as { maker: Address; strategyHash: Hex };
       docked.add(`${a.maker.toLowerCase()}:${a.strategyHash}`);
     }
+
+    if (start === floor) break;
+    end = start - 1n;
+    pages++;
   }
 
+  lastWindow = { fromBlock: end, toBlock: latest };
   return shipped.filter((s) => !docked.has(`${s.maker.toLowerCase()}:${s.strategyHash}`));
+}
+
+/** The window the last RPC scan covered. Meaningless once a subgraph is
+ *  configured, which is the point. */
+export type Window = { fromBlock: bigint; toBlock: bigint };
+let lastWindow: Window = { fromBlock: 0n, toBlock: 0n };
+
+/**
+ * One scan, shared. Paging logs backwards over Base takes ~12s, and both
+ * /api/makers and /api/route need the same answer — without this the page fires
+ * two identical scans on every keystroke. Concurrent callers await the same
+ * promise rather than starting a second scan, so `window` always describes the
+ * strategies returned alongside it.
+ */
+const TTL_MS = 15_000;
+let inflight: Promise<{ strategies: Strategy[]; window: Window }> | null = null;
+let cachedAt = 0;
+
+export function cachedStrategies(): Promise<{ strategies: Strategy[]; window: Window }> {
+  if (inflight && Date.now() - cachedAt < TTL_MS) return inflight;
+  cachedAt = Date.now(); // set on start so concurrent callers dedupe...
+  inflight = indexStrategies()
+    .then((strategies) => {
+      cachedAt = Date.now(); // ...and again on resolve, so a 12s scan is not
+      return { strategies, window: lastWindow }; // stale 12s into its own TTL
+    })
+    .catch((e) => {
+      inflight = null; // a failed scan must not be served for the next 15 seconds
+      throw e;
+    });
+  return inflight;
 }
 
 /**
