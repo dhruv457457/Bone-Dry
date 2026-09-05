@@ -54,8 +54,10 @@ three *claim* three. That is the whole point: the third is the phantom the route
 has to route around, and the second is the one whose promise outruns its wallet.
 
 `forge test` runs the contract suite against a Base fork (set `BASE_RPC_URL` to
-use your own endpoint). `RouterAgreement` additionally replays whatever
-`fixtures/route.json` holds and skips when it is absent:
+use your own endpoint). `RouterAgreement` replays whatever `fixtures/route.json` holds and skips when it
+is absent. The fixture is a snapshot of a running service against one chain
+state, so it is not committed — capture it fresh, or the comparison is against a
+quote the chain has since moved past:
 
 ```bash
 curl 'http://localhost:3000/api/route?amountIn=20000000000' > contracts/fixtures/route.json
