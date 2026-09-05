@@ -160,3 +160,20 @@
 }
 
 .spin { color: var(--ink-faint); }
+
+/* ── coverage ─────────────────────────────────────────────────────────── */
+.coverage { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 8px; }
+.coverageLede {
+  max-width: 62ch;
+  margin: 10px 0 22px;
+  color: var(--ink-soft);
+  font-size: 16px;
+}
+.coverageLede strong { font-weight: 400; color: var(--ink); }
+
+/* One row per maker+token. The bar is the reading; the number confirms it. */
+.covBar { display: block; width: 120px; height: 5px; background: var(--red); margin-left: auto; }
+.covFill { display: block; height: 100%; background: var(--slate); }
+.covPct { display: inline-block; min-width: 5.5em; }
+.zero { color: var(--red); }
+.full { color: var(--slate); }

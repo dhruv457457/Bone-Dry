@@ -52,3 +52,25 @@ export type PoolResponse = {
   note: string;
   error?: string;
 };
+
+export type CoverageRow = {
+  maker: string;
+  token: string;
+  decimals: number;
+  activeStrategies: number;
+  committed: string;
+  wallet: string;
+  allowance: string;
+  backed: string;
+  coverageBps: string;
+  shortfall: string;
+};
+
+export type CoverageResponse = {
+  source: string;
+  note: string;
+  positions: number;
+  underCollateralised: number;
+  rows: CoverageRow[];
+  error?: string;
+};

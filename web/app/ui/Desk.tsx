@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
-import type { MakersResponse, RouteResponse, PoolResponse } from "./types";
+import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -16,6 +16,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [makers, setMakers] = useState<MakersResponse | null>(null);
   const [pool, setPool] = useState<PoolResponse | null>(null);
+  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,6 +54,19 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     const t = setTimeout(load, 250); // debounce keystrokes
     return () => clearTimeout(t);
   }, [load]);
+
+  // Coverage does not depend on the swap inputs, so it is fetched once instead
+  // of on every keystroke. It is also the slowest call: a multicall per position.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/coverage?first=12")
+      .then((r) => r.json())
+      .then((c: CoverageResponse) => live && !c.error && setCoverage(c))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -178,7 +192,80 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
           <HookData route={route} />
         </section>
       </div>
+
+      <Coverage coverage={coverage} />
     </div>
+  );
+}
+
+/* The number Aqua cannot produce.
+   Balances are keyed [maker][app][strategyHash][token] and the mapping is not
+   enumerable, so nothing on-chain can total what one maker promised across all
+   of their strategies. The index can. Next to the wallet balance, that is a
+   coverage ratio -- and on Base most of the largest positions fail it. */
+function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
+  if (!coverage || coverage.rows.length === 0) return null;
+  const worst = coverage.rows[0];
+
+  return (
+    <section className={s.coverage}>
+      <div className={s.sectionHead}>
+        <h2 className="label">Coverage &mdash; promised against held, per maker</h2>
+        <span className="label">
+          {coverage.underCollateralised} of {coverage.positions} under-collateralised
+        </span>
+      </div>
+
+      <p className={s.coverageLede}>
+        Aqua keys balances by maker, app, strategy and token, and the mapping is not
+        enumerable &mdash; so no contract can add up what one maker has promised across
+        every strategy they have live. The subgraph can. Set that total against the
+        wallet and the allowance and the promise becomes checkable. Right now the
+        largest position on Base belongs to a maker running{" "}
+        <strong>
+          {worst.activeStrategies} live strategies backed by {worst.wallet === "0" ? "nothing" : "less than they owe"}
+        </strong>
+        .
+      </p>
+
+      <div className={s.tableWrap}>
+        <table className={s.table}>
+          <thead>
+            <tr>
+              <th>Maker</th>
+              <th>Token</th>
+              <th>Live strategies</th>
+              <th>Committed</th>
+              <th>Actually backed</th>
+              <th>Coverage</th>
+            </tr>
+          </thead>
+          <tbody>
+            {coverage.rows.map((r) => {
+              const bps = Number(r.coverageBps);
+              const pctOf = Math.min(100, bps / 100);
+              return (
+                <tr key={`${r.maker}-${r.token}`}>
+                  <td className="num">{short(r.maker)}</td>
+                  <td className={`num ${s.dim}`}>{short(r.token)}</td>
+                  <td className="num">{r.activeStrategies}</td>
+                  <td className={`num ${s.dim}`}>{compact(r.committed, r.decimals)}</td>
+                  <td className="num">{compact(r.backed, r.decimals)}</td>
+                  <td>
+                    <span className={`num ${s.covPct} ${bps === 0 ? s.zero : bps >= 10000 ? s.full : ""}`}>
+                      {(bps / 100).toFixed(1)}%
+                    </span>
+                    <span className={s.covBar} aria-hidden>
+                      <span className={s.covFill} style={{ width: `${pctOf}%` }} />
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -252,8 +339,11 @@ function MakerBook({
   // nothing for this token. Listing every one buries the two rows that matter,
   // so dormant strategies are counted rather than enumerated.
   const live = makers.makers.filter((m) => m.virtual !== "0" || m.depth !== "0");
-  const dormant = makers.makers.length - live.length;
-  const rows = live.length > 0 ? live : makers.makers.slice(0, 1);
+  // Sorted by deliverable depth already, so the head of the list is the part a
+  // router would ever touch. The tail is real but it is not a reading.
+  const SHOWN = 8;
+  const rows = (live.length > 0 ? live : makers.makers.slice(0, 1)).slice(0, SHOWN);
+  const hidden = makers.makers.length - rows.length;
   const max = rows.reduce((a, m) => (BigInt(m.virtual) > a ? BigInt(m.virtual) : a), 1n);
 
   return (
@@ -297,12 +387,12 @@ function MakerBook({
           );
         })}
       </tbody>
-      {dormant > 0 && (
+      {hidden > 0 && (
         <tfoot>
           <tr>
             <td colSpan={6} className={`label ${s.dormant}`}>
-              + {dormant} shipped {dormant === 1 ? "strategy" : "strategies"} holding no{" "}
-              {makers.token.symbol}
+              + {hidden} more live {hidden === 1 ? "strategy" : "strategies"}, none with more{" "}
+              {makers.token.symbol} to give than these
             </td>
           </tr>
         </tfoot>

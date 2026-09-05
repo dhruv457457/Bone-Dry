@@ -1,4 +1,4 @@
-import { cachedStrategies, measureDepth } from "@/lib/aqua";
+import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
 import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData } from "@/lib/router";
 import { USDC, WETH, TOKENS, ROUTER } from "@/lib/chain";
 import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
@@ -22,8 +22,10 @@ export async function GET(req: Request) {
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
 
+    // The index for history, a short chain scan for the tail it has not reached.
     const fromGraph = await strategiesFromGraph(ROUTER);
-    const strategies = fromGraph ?? (await cachedStrategies()).strategies;
+    const tail = (await cachedStrategies()).strategies;
+    const strategies = fromGraph ? mergeStrategies(fromGraph, tail) : tail;
     const depths = await measureDepth(strategies, tokenOut);
 
     // Having the token is not the same as being willing to part with it. Probe

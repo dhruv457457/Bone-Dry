@@ -1,4 +1,4 @@
-import { cachedStrategies, indexStrategies, measureDepth } from "@/lib/aqua";
+import { cachedStrategies, indexStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
 import { strategiesFromGraph, GRAPH_URL, graphHead, graphBehind } from "@/lib/graph";
 import { ROUTER } from "@/lib/chain";
 import { TOKENS, WETH } from "@/lib/chain";
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
       : from !== undefined
         ? { strategies: await indexStrategies({ fromBlock: from }), window: null }
         : await cachedStrategies();
-    const strategies = fromGraph ?? scan!.strategies;
+    const strategies = fromGraph ? mergeStrategies(fromGraph, (await cachedStrategies()).strategies) : scan!.strategies;
     const depths = await measureDepth(strategies, token);
 
     const meta = TOKENS[token.toLowerCase()];

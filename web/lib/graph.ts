@@ -82,22 +82,27 @@ const MAX_LAG_BLOCKS = 300n;
  * anywhere saying why. So the freshness of the index is checked before its
  * contents are used.
  */
-export async function strategiesFromGraph(app: Address): Promise<Strategy[] | null> {
-  if (!GRAPH_URL) return null;
+export async function indexFresh(): Promise<boolean> {
+  if (!GRAPH_URL) return false;
 
   const meta = await gql<{ _meta: { block: { number: number }; hasIndexingErrors: boolean } | null }>(
     META_QUERY,
     {}
   );
-  if (!meta?._meta || meta._meta.hasIndexingErrors) return null;
+  if (!meta?._meta || meta._meta.hasIndexingErrors) return false;
   graphHead = BigInt(meta._meta.block.number);
 
   const chainHead = await headBlock();
   if (chainHead !== null && chainHead - graphHead > MAX_LAG_BLOCKS) {
     graphBehind = chainHead - graphHead;
-    return null;
+    return false;
   }
   graphBehind = 0n;
+  return true;
+}
+
+export async function strategiesFromGraph(app: Address): Promise<Strategy[] | null> {
+  if (!(await indexFresh())) return null;
 
   const data = await gql<{
     strategies: { strategyHash: Hex; strategy: Hex; shippedAt: string; maker: { id: Address } }[];
@@ -123,4 +128,61 @@ export async function committedFromGraph(maker: Address, token: Address): Promis
   });
   if (!data) return null;
   return data.makerTokenPosition ? BigInt(data.makerTokenPosition.totalCommitted) : 0n;
+}
+
+const COVERAGE_QUERY = `
+  query Coverage($first: Int!) {
+    makerTokenPositions(
+      where: { totalCommitted_gt: 0 }
+      first: $first
+      orderBy: totalCommitted
+      orderDirection: desc
+    ) {
+      id
+      token
+      totalCommitted
+      activeStrategies
+      maker { id }
+    }
+  }
+`;
+
+export type Position = {
+  maker: Address;
+  token: Address;
+  totalCommitted: bigint;
+  activeStrategies: number;
+};
+
+/**
+ * Every maker's total commitment per token, across their whole book.
+ *
+ * This is the query that justifies the subgraph. Aqua keys balances by
+ * [maker][app][strategyHash][token] and the mapping is not enumerable — 1inch
+ * say so themselves — so no contract, and no amount of eth_call, can add up what
+ * one maker has promised across all of their strategies. Only an index over
+ * Shipped/Pushed/Pulled/Docked can. Put it next to the wallet balance and you
+ * have a coverage ratio: on Base today one maker has eight live strategies
+ * committing 12,694 DEGEN against a wallet holding none of it.
+ */
+export async function positionsFromGraph(first = 50): Promise<Position[] | null> {
+  // Coverage over a half-synced index reads as a shortfall that is really just
+  // a Pushed event the index has not reached yet. Refuse rather than mislead.
+  if (!(await indexFresh())) return null;
+
+  const data = await gql<{
+    makerTokenPositions: {
+      token: Hex;
+      totalCommitted: string;
+      activeStrategies: string;
+      maker: { id: Address };
+    }[];
+  }>(COVERAGE_QUERY, { first });
+  if (!data) return null;
+  return data.makerTokenPositions.map((p) => ({
+    maker: p.maker.id,
+    token: p.token as Address,
+    totalCommitted: BigInt(p.totalCommitted),
+    activeStrategies: Number(p.activeStrategies),
+  }));
 }

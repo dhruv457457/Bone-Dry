@@ -159,3 +159,28 @@ export function makerFromStrategy(strategy: Hex): Address {
   );
   return (order as { maker: Address }).maker;
 }
+
+/**
+ * The index, plus whatever the chain has that the index has not.
+ *
+ * A subgraph is authoritative about history and always slightly behind the
+ * present: it is fresh to within 300 blocks at best, and a strategy shipped in
+ * the last minute is invisible to it. Choosing one source or the other trades a
+ * complete history for a current one. Merging keeps both — the index supplies
+ * depth of history, a short backward RPC scan supplies the tail, and dedupe on
+ * (maker, strategyHash) makes the overlap free.
+ *
+ * It also makes the app work against a fork of the chain the index watches,
+ * which is what a reviewer running this locally actually has.
+ */
+export function mergeStrategies(indexed: Strategy[], tail: Strategy[]): Strategy[] {
+  const seen = new Set(indexed.map((s) => `${s.maker.toLowerCase()}:${s.strategyHash}`));
+  const merged = indexed.slice();
+  for (const s of tail) {
+    const k = `${s.maker.toLowerCase()}:${s.strategyHash}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    merged.push(s);
+  }
+  return merged;
+}
