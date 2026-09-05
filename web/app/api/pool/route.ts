@@ -1,7 +1,7 @@
 import { encodeAbiParameters, parseAbiParameters, keccak256, encodePacked, toHex, type Address } from "viem";
 import { client, POOL_MANAGER, USDC, WETH, poolManagerAbi } from "@/lib/chain";
 import { addressParam, uintParam, BadInput } from "@/lib/validate";
-import { j, fail } from "@/lib/json";
+import { j, fail, chainFailure } from "@/lib/json";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +68,8 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
+    const unreachable = chainFailure(e);
+    if (unreachable) return unreachable;
     return fail((e as Error).message, 500);
   }
 }

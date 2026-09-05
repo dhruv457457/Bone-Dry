@@ -16,6 +16,9 @@ export const GRAPH_URL = process.env.GRAPH_URL ?? "";
  *  the UI can say "still syncing" rather than "no makers". */
 export let graphHead = 0n;
 export let graphBehind = 0n;
+/** Why the index was not used. "unreachable" and "syncing" are different
+ *  problems and were being reported as the same one. */
+export let graphState: "ready" | "syncing" | "unreachable" | "errored" | "off" = "off";
 
 /**
  * Aquifer — the indexed source.
@@ -83,21 +86,33 @@ const MAX_LAG_BLOCKS = 300n;
  * contents are used.
  */
 export async function indexFresh(): Promise<boolean> {
-  if (!GRAPH_URL) return false;
+  if (!GRAPH_URL) {
+    graphState = "off";
+    return false;
+  }
 
   const meta = await gql<{ _meta: { block: { number: number }; hasIndexingErrors: boolean } | null }>(
     META_QUERY,
     {}
   );
-  if (!meta?._meta || meta._meta.hasIndexingErrors) return false;
+  if (!meta?._meta) {
+    graphState = "unreachable";
+    return false;
+  }
+  if (meta._meta.hasIndexingErrors) {
+    graphState = "errored";
+    return false;
+  }
   graphHead = BigInt(meta._meta.block.number);
 
   const chainHead = await headBlock();
   if (chainHead !== null && chainHead - graphHead > MAX_LAG_BLOCKS) {
     graphBehind = chainHead - graphHead;
+    graphState = "syncing";
     return false;
   }
   graphBehind = 0n;
+  graphState = "ready";
   return true;
 }
 

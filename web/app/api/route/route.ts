@@ -1,9 +1,9 @@
 import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
 import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData } from "@/lib/router";
 import { USDC, WETH, TOKENS, ROUTER } from "@/lib/chain";
-import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
+import { strategiesFromGraph, GRAPH_URL, graphState } from "@/lib/graph";
 import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
-import { j, fail } from "@/lib/json";
+import { j, fail, chainFailure } from "@/lib/json";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,7 @@ export async function GET(req: Request) {
 
     if (slices.length === 0) {
       return j({
-        source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? "rpc-log-paging (index syncing)" : "rpc-log-paging",
+        source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? `rpc-log-paging (index ${graphState})` : "rpc-log-paging",
         tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
         tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
         amountIn,
@@ -79,7 +79,7 @@ export async function GET(req: Request) {
       single.amountOut > 0n ? ((split.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
-      source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? "rpc-log-paging (index syncing)" : "rpc-log-paging",
+      source: fromGraph ? "aquifer-subgraph" : GRAPH_URL ? `rpc-log-paging (index ${graphState})` : "rpc-log-paging",
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       amountIn,
@@ -106,6 +106,8 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
+    const unreachable = chainFailure(e);
+    if (unreachable) return unreachable;
     return fail((e as Error).message, 500);
   }
 }

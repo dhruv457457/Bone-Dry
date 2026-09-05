@@ -1,7 +1,7 @@
 import { erc20Abi, lensAbi, AQUA, LENS, client } from "@/lib/chain";
 import { positionsFromGraph, GRAPH_URL, graphHead } from "@/lib/graph";
 import { uintParam, BadInput } from "@/lib/validate";
-import { j, fail } from "@/lib/json";
+import { j, fail, chainFailure } from "@/lib/json";
 
 export const dynamic = "force-dynamic";
 
@@ -49,12 +49,18 @@ export async function GET(req: Request) {
       const b = res[i * 3];
       const a = res[i * 3 + 1];
       const dec = res[i * 3 + 2];
+      // A read that failed is not a balance of zero. Treating it as one would
+      // report a solvent maker as backed by nothing — inventing the exact finding
+      // this endpoint exists to report. Unknown rows say so and are excluded from
+      // the under-collateralised count.
+      const known = b.status === "success" && a.status === "success";
       const wallet = b.status === "success" ? (b.result as bigint) : 0n;
       const allowance = a.status === "success" ? (a.result as bigint) : 0n;
       const decimals = dec.status === "success" ? Number(dec.result) : 18;
       const backed = wallet < allowance ? wallet : allowance;
 
       return {
+        known,
         maker: p.maker,
         token: p.token,
         app: p.app,
@@ -68,7 +74,7 @@ export async function GET(req: Request) {
         backed,
         /** basis points of the promise the maker can honour; 10000 = fully covered */
         coverageBps:
-          p.totalCommitted > 0n ? (backed * 10_000n) / p.totalCommitted : 0n,
+          !known ? -1n : p.totalCommitted > 0n ? (backed * 10_000n) / p.totalCommitted : 0n,
         shortfall: p.totalCommitted > backed ? p.totalCommitted - backed : 0n,
       };
     });
@@ -90,7 +96,7 @@ export async function GET(req: Request) {
       | { maker: string; token: string; onchainBps: string; agrees: boolean | null }[]
       | null = null;
     if (LENS) {
-      const checkable = rows.filter((r) => r.strategyHashes.length > 0 && r.app);
+      const checkable = rows.filter((r) => r.known && r.strategyHashes.length > 0 && r.app);
       if (checkable.length > 0) {
         const lensCalls = checkable.map((r) => ({
           address: LENS as `0x${string}`,
@@ -115,7 +121,7 @@ export async function GET(req: Request) {
       }
     }
 
-    const uncovered = rows.filter((r) => r.coverageBps < 10_000n);
+    const uncovered = rows.filter((r) => r.known && r.coverageBps < 10_000n);
     return j({
       source: "aquifer-subgraph",
       note:
@@ -123,6 +129,8 @@ export async function GET(req: Request) {
         "which no contract can do: Aqua's balance mapping is not enumerable",
       positions: rows.length,
       underCollateralised: uncovered.length,
+      /** rows whose on-chain balance could not be read, and so prove nothing */
+      unknown: rows.filter((r) => !r.known).length,
       /** null when no Lens is deployed on this chain */
       onchainCrossCheck: verified
         ? {
@@ -140,6 +148,8 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
+    const unreachable = chainFailure(e);
+    if (unreachable) return unreachable;
     return fail((e as Error).message, 500);
   }
 }

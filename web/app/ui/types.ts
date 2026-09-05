@@ -11,7 +11,7 @@ export type MakerRow = {
 
 export type MakersResponse = {
   source: string;
-  index: { head: string; behind: string; ready: boolean } | null;
+  index: { state: string; head: string; behind: string; ready: boolean } | null;
   token: { address: string; symbol: string; decimals: number };
   indexed: number;
   solvent: number;
@@ -54,6 +54,7 @@ export type PoolResponse = {
 };
 
 export type CoverageRow = {
+  known: boolean;
   maker: string;
   token: string;
   decimals: number;
@@ -71,6 +72,7 @@ export type CoverageResponse = {
   note: string;
   positions: number;
   underCollateralised: number;
+  unknown: number;
   onchainCrossCheck: {
     checked: number;
     agreed: number;

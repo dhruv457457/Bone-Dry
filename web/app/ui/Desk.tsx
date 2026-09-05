@@ -205,7 +205,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
    coverage ratio -- and on Base most of the largest positions fail it. */
 function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
   if (!coverage || coverage.rows.length === 0) return null;
-  const worst = coverage.rows[0];
+  const worst = coverage.rows.find((r) => r.known) ?? coverage.rows[0];
 
   return (
     <section className={s.coverage}>
@@ -245,7 +245,7 @@ function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
           <tbody>
             {coverage.rows.map((r) => {
               const bps = Number(r.coverageBps);
-              const pctOf = Math.min(100, bps / 100);
+              const pctOf = r.known ? Math.min(100, bps / 100) : 0;
               return (
                 <tr key={`${r.maker}-${r.token}`}>
                   <td className="num">{short(r.maker)}</td>
@@ -254,8 +254,10 @@ function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
                   <td className={`num ${s.dim}`}>{compact(r.committed, r.decimals)}</td>
                   <td className="num">{compact(r.backed, r.decimals)}</td>
                   <td>
-                    <span className={`num ${s.covPct} ${bps === 0 ? s.zero : bps >= 10000 ? s.full : ""}`}>
-                      {(bps / 100).toFixed(1)}%
+                    <span
+                      className={`num ${s.covPct} ${!r.known ? s.dim : bps === 0 ? s.zero : bps >= 10000 ? s.full : ""}`}
+                    >
+                      {r.known ? `${(bps / 100).toFixed(1)}%` : "unread"}
                     </span>
                     <span className={s.covBar} aria-hidden>
                       <span className={s.covFill} style={{ width: `${pctOf}%` }} />
@@ -278,8 +280,11 @@ function indexLabel(makers: MakersResponse | null): string {
   if (!makers) return "...";
   if (!makers.index) return "rpc log paging";
   if (makers.index.ready) return "aquifer subgraph";
-  const behind = Number(makers.index.behind).toLocaleString();
-  return `rpc fallback — index ${behind} blocks behind`;
+  if (makers.index.state === "syncing") {
+    const behind = Number(makers.index.behind).toLocaleString();
+    return `rpc fallback — index ${behind} blocks behind`;
+  }
+  return `rpc fallback — index ${makers.index.state}`;
 }
 
 /* The proof: the whole thesis in one number, read straight out of PoolManager
