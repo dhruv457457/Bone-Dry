@@ -10,6 +10,7 @@ import {IAqua} from "../src/interfaces/IAqua.sol";
 import {ISwapVM} from "../src/interfaces/ISwapVM.sol";
 import {Lens} from "../src/Lens.sol";
 import {Tap} from "../src/Tap.sol";
+import {Wellhead} from "../src/Wellhead.sol";
 
 /**
  * Puts a live Bone Dry pool on the chain the RPC points at.
@@ -51,6 +52,7 @@ contract Deploy is Script {
         vm.startBroadcast(pk);
         Lens lens = new Lens(aqua);
         Tap staging = new Tap(IPoolManager(PM), router, lens);
+        Wellhead wellhead = new Wellhead(IPoolManager(PM));
         vm.stopBroadcast();
 
         // Move the code to the address whose bits declare the permissions.
@@ -79,7 +81,8 @@ contract Deploy is Script {
             console.log("pool already live, left alone");
         }
 
-        console.log("lens ", address(lens));
-        console.log("tap  ", HOOK);
+        console.log("lens     ", address(lens));
+        console.log("tap      ", HOOK);
+        console.log("wellhead ", address(wellhead));
     }
 }

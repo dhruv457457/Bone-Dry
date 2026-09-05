@@ -46,6 +46,8 @@ contract Tap is IHooks {
     error ExactOutputNotSupported();
     error NoSolventMaker();
     error AmountOverflowsDelta();
+    error NativeCurrencyNotSupported();
+    error CouldNotFillEntireSwap(uint256 requested, uint256 filled);
     error HookNotImplemented();
 
     event Filled(address indexed maker, uint256 amountIn, uint256 amountOut);
@@ -86,12 +88,17 @@ contract Tap is IHooks {
         if (params.amountSpecified >= 0) revert ExactOutputNotSupported();
 
         Ctx memory c;
-        c.remaining = uint256(-params.amountSpecified);
+        uint256 requested = uint256(-params.amountSpecified);
+        c.remaining = requested;
 
         (Currency inC, Currency outC) =
             params.zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
         c.tokenIn = Currency.unwrap(inC);
         c.tokenOut = Currency.unwrap(outC);
+        // Aqua settles in ERC-20s; a native-currency side has no contract to read a
+        // balance or an allowance from. Say so rather than reverting inside a
+        // balanceOf on address(0).
+        if (c.tokenIn == address(0) || c.tokenOut == address(0)) revert NativeCurrencyNotSupported();
 
         TapData memory d = abi.decode(hookData, (TapData));
         uint256 n = d.strategies.length;
@@ -115,68 +122,43 @@ contract Tap is IHooks {
         // balance. Taking the whole `amountSpecified` up front therefore borrows
         // what this hook may have no way to place, and reverts outright when the
         // PoolManager is not holding that much. So each slice is taken
-        // immediately before the fill that spends it, and anything no maker can
-        // absorb is never taken at all: the swapper is charged for what filled.
-        // A pool with no liquidity of its own borrows from the PoolManager's
-        // balance, which belongs to every other pool. It cannot lend what it does
-        // not hold, so that balance — not the swapper's ambition — is the ceiling
-        // on how much input can be placed in one transaction. Beyond it the fill
-        // is partial, which v4 expresses natively through the returned delta.
+        // immediately before the fill that spends it, and the PoolManager's own
+        // balance — not the swapper's ambition — is the ceiling on how much can be
+        // placed at all. Beyond it the fill is partial, which v4 expresses
+        // natively through the returned delta.
         uint256 available = IERC20Minimal(c.tokenIn).balanceOf(address(poolManager));
-        if (c.remaining > available) c.remaining = available;
-        if (c.remaining == 0) revert NoSolventMaker();
+        if (c.remaining > available) revert CouldNotFillEntireSwap(requested, available);
 
         uint256 takeIn = c.remaining;
 
         for (uint256 i; i < n && c.remaining > 0; ++i) {
-            if (depth[i] == 0) {
-                emit MakerSkipped(orders[i].maker, 0);
-                continue;
-            }
             uint256 slice = (takeIn * depth[i]) / c.totalDepth;
-            if (slice == 0) continue;
             if (slice > c.remaining) slice = c.remaining;
+            _fill(c, d, orders, depth, i, inC, slice);
+        }
 
-            // Quote before borrowing. Depth caps the payout, not the slice: an XYC
-            // curve is bounded by the maker's VIRTUAL balance, so a large enough
-            // slice asks for more than the wallet backs and `pull()` reverts
-            // inside the router. Asking first costs a staticcall and avoids both
-            // the borrow and the revert.
-            uint256 expected;
-            try router.quote(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
-                uint256, uint256 out, bytes32
-            ) {
-                expected = out;
-            } catch {
-                emit MakerSkipped(orders[i].maker, slice);
-                continue;
-            }
-            if (expected == 0 || expected > depth[i]) {
-                emit MakerSkipped(orders[i].maker, slice);
-                continue;
-            }
-
-            poolManager.take(inC, address(this), slice);
-            IERC20Minimal(c.tokenIn).approve(address(router), slice);
-
-            // The quote is a promise about state that a reentrant fill could have
-            // changed, so the swap is still guarded: a maker who cannot deliver is
-            // dropped exactly like one with no depth at all.
-            try router.swap(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
-                uint256, uint256 out, bytes32
-            ) {
-                c.remaining -= slice;
-                c.totalOut += out;
-                emit Filled(orders[i].maker, slice, out);
-            } catch {
-                // the slice was taken but not spent; hand it straight back
-                c.unplaced += slice;
-                emit MakerSkipped(orders[i].maker, slice);
-            }
+        // Pro-rata slices are integer division, so they add up to a wei or two
+        // less than the input. A Bone Dry fill has to consume every unit of it —
+        // whatever is left over falls through to the PoolManager and pins the
+        // price — so sweep the remainder onto whoever will still take it.
+        for (uint256 i; i < n && c.remaining > 0; ++i) {
+            _fill(c, d, orders, depth, i, inC, c.remaining);
         }
 
         uint256 filledIn = takeIn - c.remaining;
         if (c.totalOut == 0) revert NoSolventMaker();
+
+        // Everything the hook does not consume falls through to the PoolManager's
+        // own swap — and against a pool with no liquidity that walks the price all
+        // the way to the caller's limit and leaves it there. One partial fill
+        // therefore pins the pool at MAX_SQRT_RATIO and every later swap in the
+        // same direction reverts with PriceLimitAlreadyExceeded: the pool is
+        // bricked by a swap that merely came up short.
+        //
+        // So a Bone Dry fill is all or nothing. Asking for more than the makers
+        // can deliver is a revert, the same as any AMM refusing a swap that would
+        // breach a limit, rather than a partial fill that quietly ruins the pool.
+        if (filledIn != requested) revert CouldNotFillEntireSwap(requested, filledIn);
 
         // Do not leave a standing allowance behind; the next swap sets its own.
         IERC20Minimal(c.tokenIn).approve(address(router), 0);
@@ -203,6 +185,63 @@ contract Tap is IHooks {
             toBeforeSwapDelta(int128(int256(filledIn)), -int128(int256(c.totalOut))),
             0
         );
+    }
+
+    /**
+     * @dev One maker, one slice. Quote before borrowing: depth caps the payout,
+     *      not the slice, so an XYC curve bounded by the maker's VIRTUAL balance
+     *      will happily quote more than the wallet backs and revert inside
+     *      `pull()`. Asking first costs a staticcall and avoids both the borrow
+     *      and the revert. The swap stays guarded anyway, because a quote is a
+     *      promise about state a reentrant fill could still change.
+     */
+    function _fill(
+        Ctx memory c,
+        TapData memory d,
+        ISwapVM.Order[] memory orders,
+        uint256[] memory depth,
+        uint256 i,
+        Currency inC,
+        uint256 slice
+    ) private {
+        if (depth[i] == 0 || slice == 0) return;
+
+        uint256 expected;
+        try router.quote(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
+            uint256, uint256 out, bytes32
+        ) {
+            expected = out;
+        } catch {
+            emit MakerSkipped(orders[i].maker, slice);
+            return;
+        }
+        if (expected == 0 || expected > depth[i]) {
+            emit MakerSkipped(orders[i].maker, slice);
+            return;
+        }
+
+        poolManager.take(inC, address(this), slice);
+        // A failed fill leaves its approval behind, and tokens in the USDT mould
+        // revert on a non-zero to non-zero approve. Clear it first so a maker who
+        // reverted cannot block every maker after them.
+        IERC20Minimal(c.tokenIn).approve(address(router), 0);
+        IERC20Minimal(c.tokenIn).approve(address(router), slice);
+
+        try router.swap(orders[i], c.tokenIn, c.tokenOut, slice, d.takerTraits) returns (
+            uint256 usedIn, uint256 out, bytes32
+        ) {
+            // Spend what the router says it took, not what we offered. They are
+            // equal for an exact-in fill, but assuming it strands any shortfall in
+            // the hook AND charges the swapper for it.
+            if (usedIn > slice) usedIn = slice;
+            c.remaining -= usedIn;
+            c.unplaced += slice - usedIn;
+            c.totalOut += out;
+            emit Filled(orders[i].maker, usedIn, out);
+        } catch {
+            c.unplaced += slice; // taken but not spent; handed back below
+            emit MakerSkipped(orders[i].maker, slice);
+        }
     }
 
     // --- everything else is deliberately unimplemented -----------------------

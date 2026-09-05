@@ -3,6 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
+import { useWallet, walletClient, describe } from "./useWallet";
+import {
+  client,
+  WELLHEAD,
+  HOOK,
+  USDC,
+  WETH,
+  wellheadAbi,
+  erc20WriteAbi,
+  erc20Abi,
+} from "@/lib/chain";
+import type { Address, Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
 
 type Token = { address: string; symbol: string; decimals: number };
@@ -44,6 +56,13 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
+
+  const wallet = useWallet();
+  const [txState, setTxState] = useState<{
+    phase: "idle" | "approving" | "swapping" | "done";
+    hash?: Hex;
+    note?: string;
+  }>({ phase: "idle" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,6 +118,74 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
       live = false;
     };
   }, []);
+
+  /**
+   * Approve if needed, then swap. The hookData is the candidate set the router
+   * API assembled -- the hook cannot discover makers on its own, because Aqua's
+   * balance mapping is not enumerable.
+   *
+   * minOut is the quote less 1%. A quote is a reading of state any maker can
+   * change before the transaction lands, so the floor is the swapper's only real
+   * protection; sending 0 would make the demo smooth and the product unsafe.
+   */
+  const executeSwap = useCallback(async () => {
+    if (!route?.hookData || !wallet.address || !WELLHEAD) return;
+    const wc = walletClient();
+    const account = wallet.address;
+    const amount = BigInt(route.amountFilled);
+    if (amount === 0n) return;
+
+    try {
+      const allowance = (await client.readContract({
+        address: tokenIn.address as Address,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, WELLHEAD as Address],
+      })) as bigint;
+
+      if (allowance < amount) {
+        setTxState({ phase: "approving" });
+        const approveHash = await wc.writeContract({
+          account,
+          address: tokenIn.address as Address,
+          abi: erc20WriteAbi,
+          functionName: "approve",
+          args: [WELLHEAD as Address, (1n << 256n) - 1n],
+        });
+        await client.waitForTransactionReceipt({ hash: approveHash });
+      }
+
+      const quoted = BigInt(route.amountOut);
+      const minOut = (quoted * 99n) / 100n;
+
+      // currency0 is the lower address; WETH (0x42..) sorts below USDC (0x83..)
+      const zeroForOne = tokenIn.address.toLowerCase() === WETH.toLowerCase();
+
+      setTxState({ phase: "swapping" });
+      const hash = await wc.writeContract({
+        account,
+        address: WELLHEAD as Address,
+        abi: wellheadAbi,
+        functionName: "swap",
+        args: [
+          { currency0: WETH, currency1: USDC, fee: 0, tickSpacing: 60, hooks: HOOK },
+          zeroForOne,
+          amount,
+          minOut,
+          route.hookData as Hex,
+        ],
+      });
+      const receipt = await client.waitForTransactionReceipt({ hash });
+      setTxState({
+        phase: "done",
+        hash,
+        note: receipt.status === "success" ? undefined : "reverted on chain",
+      });
+      void load();
+    } catch (e) {
+      setTxState({ phase: "idle", note: describe(e) });
+    }
+  }, [route, wallet.address, tokenIn.address, load]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -203,11 +290,14 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
             </li>
           </ul>
 
-          <div className={s.actions}>
-            <button onClick={load} disabled={busy}>
-              {busy ? "Reading..." : "Re-quote"}
-            </button>
-          </div>
+          <SwapAction
+            wallet={wallet}
+            route={route}
+            busy={busy}
+            tx={txState}
+            onSwap={executeSwap}
+            onReload={load}
+          />
 
           {route?.reason && <p className={s.err}>{route.reason}</p>}
           {error && <p className={s.err}>{error}</p>}
@@ -335,6 +425,81 @@ function indexLabel(makers: MakersResponse | null): string {
     return `rpc fallback — index ${behind} blocks behind`;
   }
   return `rpc fallback — index ${makers.index.state}`;
+}
+
+/* Everything a swapper needs to act, and nothing they do not.
+   The states worth distinguishing are: no wallet extension at all, a wallet on
+   the wrong chain, a route with nothing to fill, and a router that was never
+   deployed on this chain -- each of which is a different thing to do next. */
+function SwapAction({
+  wallet,
+  route,
+  busy,
+  tx,
+  onSwap,
+  onReload,
+}: {
+  wallet: ReturnType<typeof useWallet>;
+  route: RouteResponse | null;
+  busy: boolean;
+  tx: { phase: string; hash?: string; note?: string };
+  onSwap: () => void;
+  onReload: () => void;
+}) {
+  const nothingToFill = !route?.hookData || route.amountFilled === "0";
+  const pending = tx.phase === "approving" || tx.phase === "swapping";
+
+  return (
+    <div className={s.actions}>
+      {!WELLHEAD ? (
+        <p className={s.note}>
+          Read-only: no Wellhead router is configured for this chain. Deploy one with{" "}
+          <code>script/Deploy.s.sol</code> and set{" "}
+          <code>NEXT_PUBLIC_WELLHEAD_ADDRESS</code>.
+        </p>
+      ) : !wallet.available ? (
+        <p className={s.note}>
+          No wallet found in this browser. The quote, the maker book and the coverage
+          view all read the chain directly and work without one.
+        </p>
+      ) : !wallet.address ? (
+        <button onClick={wallet.connect} disabled={wallet.connecting}>
+          {wallet.connecting ? "Check your wallet..." : "Connect wallet"}
+        </button>
+      ) : wallet.wrongChain ? (
+        <button onClick={wallet.switchChain}>Switch to Base</button>
+      ) : (
+        <button onClick={onSwap} disabled={pending || busy || nothingToFill}>
+          {tx.phase === "approving"
+            ? "Approving..."
+            : tx.phase === "swapping"
+              ? "Swapping..."
+              : nothingToFill
+                ? "Nothing to fill"
+                : "Swap"}
+        </button>
+      )}
+
+      <button className={s.secondary} onClick={onReload} disabled={busy}>
+        {busy ? "Reading..." : "Re-quote"}
+      </button>
+
+      {wallet.address && (
+        <span className={`label ${s.account}`}>
+          <span className="hex">{short(wallet.address)}</span>
+        </span>
+      )}
+
+      {tx.phase === "done" && (
+        <p className={s.note}>
+          {tx.note ? `Swap ${tx.note}.` : "Filled, and the pool still holds nothing. "}
+          <span className="hex num">{tx.hash ? short(tx.hash) : ""}</span>
+        </p>
+      )}
+      {tx.note && tx.phase === "idle" && <p className={s.err}>{tx.note}</p>}
+      {wallet.error && <p className={s.err}>{wallet.error}</p>}
+    </div>
+  );
 }
 
 /* The proof: the whole thesis in one number, read straight out of PoolManager

@@ -22,6 +22,12 @@ export const HOOK: Address = (process.env.HOOK_ADDRESS ??
  *  coverage view works without it, and gains an on-chain cross-check with it. */
 export const LENS = (process.env.LENS_ADDRESS ?? "") as Address | "";
 
+/** Wellhead, the router a wallet actually calls. Set per deployment. */
+export const WELLHEAD = (process.env.NEXT_PUBLIC_WELLHEAD_ADDRESS ?? "") as Address | "";
+
+/** Chain the app expects a wallet to be on. A fork of Base reports 8453 too. */
+export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 8453);
+
 export const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const WETH: Address = "0x4200000000000000000000000000000000000006";
 
@@ -91,6 +97,45 @@ export const erc20Abi = [
       { name: "s", type: "address" },
     ],
     outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+export const wellheadAbi = [
+  {
+    type: "function",
+    name: "swap",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "key",
+        type: "tuple",
+        components: [
+          { name: "currency0", type: "address" },
+          { name: "currency1", type: "address" },
+          { name: "fee", type: "uint24" },
+          { name: "tickSpacing", type: "int24" },
+          { name: "hooks", type: "address" },
+        ],
+      },
+      { name: "zeroForOne", type: "bool" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minOut", type: "uint256" },
+      { name: "hookData", type: "bytes" },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
+
+export const erc20WriteAbi = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
   },
 ] as const;
 

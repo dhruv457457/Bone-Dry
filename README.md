@@ -20,6 +20,7 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | Router API — indexes makers, ranks by real depth, emits hookData | live |
 | `Aquifer` — the subgraph | deployed and synced on Base |
 | Coverage view — the number Aqua cannot compute | live, cross-checked on-chain |
+| `Wellhead` — the router a wallet calls | live, wallet connect + swap |
 | Frontend | live |
 
 Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
@@ -79,6 +80,22 @@ cd subgraph && npx graph test -d      # -d runs it in Docker
 | `GET /api/route?tokenIn=&tokenOut=&amountIn=` | the split, a real quote for it, and the `hookData` the pool needs |
 | `GET /api/pool?hook=` | the pool's own liquidity, read out of PoolManager storage |
 | `GET /api/coverage?first=` | promised against held, per maker — subgraph only |
+
+Connect a wallet on the fork and press Swap, or take the same path without a
+browser:
+
+```bash
+WELLHEAD=0x... node web/scripts/swap-smoke.mjs 20000000000
+```
+
+```
+quoted   : 2.969705251715010073 WETH
+status   : success
+received : 2.969694882406596405 WETH
+```
+
+The pool holds nothing before that transaction and nothing after it. The WETH
+came out of maker wallets and the USDC went into them.
 
 ## What the index found on Base
 

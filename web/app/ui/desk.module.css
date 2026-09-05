@@ -102,7 +102,19 @@
 .gain { color: var(--slate); }
 .loss { color: var(--red); }
 
-.actions { margin-top: 20px; display: flex; gap: 10px; }
+.actions { margin-top: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.actions button { flex: 0 0 auto; }
+.secondary { border-color: var(--rule); color: var(--ink-soft); }
+.secondary:hover:not(:disabled) { background: var(--ink-soft); color: var(--paper); }
+.account { margin-left: auto; }
+.note {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.note code { font-family: var(--mono); font-size: 11px; }
 .err { margin-top: 14px; border-left: 2px solid var(--red); padding-left: 10px; color: var(--red); font-size: 14px; }
 
 /* ── maker book ───────────────────────────────────────────────────────── */
