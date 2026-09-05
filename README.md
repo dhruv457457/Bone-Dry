@@ -22,7 +22,53 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | Coverage view — the number Aqua cannot compute | live, cross-checked on-chain |
 | Frontend | live |
 
-Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.2`
+Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
+
+## Run it
+
+Everything below works against a fork of Base mainnet, so no testnet deploy and
+no faucet. The canonical Aqua and SwapVM contracts are the real ones.
+
+```bash
+# 1. a Base fork to work against
+anvil --fork-url https://mainnet.base.org
+
+# 2. build the strategies and seed three makers onto the fork
+cd tools && npm i && node gen-strategy.cjs
+cd ../contracts && forge script script/Seed.s.sol   --rpc-url http://127.0.0.1:8545 --broadcast
+forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+
+# 3. the app
+cd ../web && npm i && cp .env.example .env.local && npm run dev
+```
+
+The seed gives maker 0 three WETH, maker 1 two, and maker 2 none — while all
+three *claim* three. That is the whole point: the third is the phantom the router
+has to route around, and the second is the one whose promise outruns its wallet.
+
+`forge test` runs the contract suite against a Base fork (set `BASE_RPC_URL` to
+use your own endpoint). `RouterAgreement` additionally replays whatever
+`fixtures/route.json` holds and skips when it is absent:
+
+```bash
+curl 'http://localhost:3000/api/route?amountIn=20000000000' > contracts/fixtures/route.json
+cd contracts && forge test
+```
+
+The subgraph's handler tests need Matchstick, which has no Windows binary:
+
+```bash
+cd subgraph && npx graph test -d      # -d runs it in Docker
+```
+
+### The endpoints
+
+| | |
+|---|---|
+| `GET /api/makers?token=` | every live strategy, with `min(virtual, wallet, allowance)` as its depth |
+| `GET /api/route?tokenIn=&tokenOut=&amountIn=` | the split, a real quote for it, and the `hookData` the pool needs |
+| `GET /api/pool?hook=` | the pool's own liquidity, read out of PoolManager storage |
+| `GET /api/coverage?first=` | promised against held, per maker — subgraph only |
 
 ## What the index found on Base
 

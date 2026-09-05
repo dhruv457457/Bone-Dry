@@ -25,6 +25,9 @@ contract Seed is Script {
     address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant WETH = 0x4200000000000000000000000000000000000006;
 
+    // Anvil's first three deterministic accounts. These are published in the
+    // anvil banner and shipped inside forge-std's own tests — they are test
+    // fixtures, not credentials, and they control nothing on any real network.
     uint256[3] PKS = [
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80,
         0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d,
