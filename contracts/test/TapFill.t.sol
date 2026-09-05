@@ -1,70 +1,49 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {console} from "forge-std/Test.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {BoneDryFork, IERC20} from "./Base.t.sol";
 import {Tap} from "../src/Tap.sol";
-import {IAqua} from "../src/interfaces/IAqua.sol";
-import {ISwapVM} from "../src/interfaces/ISwapVM.sol";
-
-interface IERC20 {
-    function balanceOf(address) external view returns (uint256);
-    function approve(address, uint256) external returns (bool);
-}
+import {Lens} from "../src/Lens.sol";
 
 /**
  * Bone Dry, end to end, on a Base mainnet fork.
  *
- * A real Uniswap v4 pool, on the real PoolManager, with ZERO liquidity — and a
- * swap through it still fills, because the Tap sources every token from a 1inch
- * Aqua maker's own wallet inside `beforeSwap`.
+ * A real Uniswap v4 pool on the real PoolManager with ZERO liquidity, filled from
+ * three independent Aqua makers' wallets — and correct when one of them quietly
+ * walks away with their inventory.
  */
-contract TapFillTest is Test {
+contract TapFillTest is BoneDryFork {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
     IPoolManager constant PM = IPoolManager(0x498581fF718922c3f8e6A244956aF099B2652b2b);
-    IERC20 constant USDC = IERC20(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);
-    IERC20 constant WETH = IERC20(0x4200000000000000000000000000000000000006);
+    uint160 constant FLAGS = uint160(0x88); // beforeSwap | beforeSwapReturnDelta
+    uint160 constant MAX_SQRT = 1461446703485210103287273052203988822378723970341;
 
-    // beforeSwap (1<<7) | beforeSwapReturnDelta (1<<3)
-    uint160 constant FLAGS = uint160(0x88);
-
-    IAqua aqua;
-    ISwapVM router;
     Tap tap;
+    Lens lens;
     PoolSwapTest swapRouter;
-
-    address maker;
+    PoolKey key;
     address swapper = address(0xA11CE);
 
-    bytes strategy;
-    bytes32 strategyHash;
-    bytes takerTraits;
-    PoolKey key;
-
     function setUp() public {
-        vm.createSelectFork(vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org")));
+        _forkAndLoadFixture();
 
-        string memory j = vm.readFile("fixtures/strategy.json");
-        aqua         = IAqua(vm.parseJsonAddress(j, ".aqua"));
-        router       = ISwapVM(vm.parseJsonAddress(j, ".router"));
-        maker        = vm.parseJsonAddress(j, ".maker");
-        strategy     = vm.parseJsonBytes(j, ".strategy");
-        strategyHash = vm.parseJsonBytes32(j, ".strategyHash");
-        takerTraits  = vm.parseJsonBytes(j, ".takerTraitsAndData");
+        lens = new Lens(aqua);
 
-        // v4 encodes hook permissions in the address itself, so the hook has to
-        // live at an address whose low bits are exactly our flag set.
+        // v4 encodes hook permissions in the address, so the hook must live at an
+        // address whose low bits are exactly our flag set.
         address hookAddr = address(uint160(0x4444 << 144) | FLAGS);
-        deployCodeTo("Tap.sol:Tap", abi.encode(PM, router), hookAddr);
+        deployCodeTo("Tap.sol:Tap", abi.encode(PM, router, lens), hookAddr);
         tap = Tap(hookAddr);
 
         swapRouter = new PoolSwapTest(PM);
@@ -77,69 +56,98 @@ contract TapFillTest is Test {
             tickSpacing: 60,
             hooks: IHooks(hookAddr)
         });
-        PM.initialize(key, 79228162514264337593543950336); // sqrtPriceX96 = 1<<96
+        PM.initialize(key, 79228162514264337593543950336);
 
         vm.label(hookAddr, "Tap");
         vm.label(address(PM), "PoolManager");
-        vm.label(maker, "maker");
         vm.label(swapper, "swapper");
     }
 
-    function test_poolHasNoLiquidity_butSwapStillFills() public {
-        // ---- maker ships inventory that never leaves their wallet ----
-        uint256 usdcIn = 10_000e6;
-        uint256 wethIn = 3e18;
+    function _hookData(uint256 count) internal view returns (bytes memory) {
+        bytes[] memory s = new bytes[](count);
+        for (uint256 i; i < count; ++i) s[i] = strategies[i];
+        return abi.encode(Tap.TapData({strategies: s, takerTraits: takerTraits}));
+    }
 
-        deal(address(USDC), maker, usdcIn);
-        deal(address(WETH), maker, wethIn);
-
-        address[] memory tokens = new address[](2);
-        tokens[0] = address(USDC);
-        tokens[1] = address(WETH);
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = usdcIn;
-        amounts[1] = wethIn;
-
-        vm.startPrank(maker);
-        USDC.approve(address(aqua), type(uint256).max);
-        WETH.approve(address(aqua), type(uint256).max);
-        aqua.ship(address(router), strategy, tokens, amounts);
-        vm.stopPrank();
-
-        // ---- the pool itself is empty, and stays empty ----
-        uint128 liqBefore = PM.getLiquidity(key.toId());
-        assertEq(liqBefore, 0, "pool should have zero liquidity");
-
-        // ---- somebody swaps ----
-        uint256 sell = 100e6;
+    function _swap(uint256 sell, bytes memory hookData) internal returns (uint256 gained) {
         deal(address(USDC), swapper, sell);
-
-        bytes memory hookData = abi.encode(Tap.TapData({strategy: strategy, takerTraits: takerTraits}));
-
-        uint256 wethBefore = WETH.balanceOf(swapper);
-        uint256 makerUsdcBefore = USDC.balanceOf(maker);
-
+        uint256 before = WETH.balanceOf(swapper);
         vm.startPrank(swapper, swapper);
         USDC.approve(address(swapRouter), type(uint256).max);
         swapRouter.swap(
             key,
-            SwapParams({
-                zeroForOne: false,                 // selling currency1 (USDC) for currency0 (WETH)
-                amountSpecified: -int256(sell),    // negative = exact input
-                sqrtPriceLimitX96: 1461446703485210103287273052203988822378723970341 // MAX-1
-            }),
+            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             hookData
         );
         vm.stopPrank();
+        gained = WETH.balanceOf(swapper) - before;
+    }
 
-        uint256 gained = WETH.balanceOf(swapper) - wethBefore;
+    function test_poolHasNoLiquidity_butSwapStillFills() public {
+        _ship(0, 10_000e6, 3e18);
+
+        assertEq(PM.getLiquidity(key.toId()), 0, "pool should start empty");
+
+        uint256 makerUsdcBefore = USDC.balanceOf(makers[0]);
+        uint256 gained = _swap(100e6, _hookData(1));
+
         console.log("pool liquidity      :", PM.getLiquidity(key.toId()));
         console.log("swapper WETH gained :", gained);
-        console.log("maker USDC received :", USDC.balanceOf(maker) - makerUsdcBefore);
+        console.log("maker USDC received :", USDC.balanceOf(makers[0]) - makerUsdcBefore);
 
         assertEq(PM.getLiquidity(key.toId()), 0, "pool STILL has zero liquidity");
         assertGt(gained, 0, "swapper received no WETH");
-        assertEq(USDC.balanceOf(maker) - makerUsdcBefore, sell, "maker did not receive the USDC");
+        assertEq(USDC.balanceOf(makers[0]) - makerUsdcBefore, 100e6, "maker did not receive USDC");
+    }
+
+    /// @dev Splitting across makers beats routing everything to one, because each
+    ///      constant-product curve is walked less far up its own price impact.
+    function test_splittingAcrossThreeMakers_beatsOne() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+        _ship(2, 10_000e6, 3e18);
+
+        uint256 sell = 5_000e6; // big enough for price impact to bite
+
+        uint256 snap = vm.snapshotState();
+        uint256 oneMaker = _swap(sell, _hookData(1));
+        vm.revertToState(snap);
+        uint256 threeMakers = _swap(sell, _hookData(3));
+
+        console.log("one maker   WETH out:", oneMaker);
+        console.log("three makers WETH out:", threeMakers);
+        console.log("improvement (wei)   :", threeMakers - oneMaker);
+
+        assertGt(threeMakers, oneMaker, "splitting should beat a single maker");
+    }
+
+    /// @dev The solvency filter. Maker 1 ships, then moves the inventory out of
+    ///      their wallet. Their virtual balance still reads full — Aqua has no
+    ///      on-chain guard for this — but the fill must route around them.
+    function test_insolventMakerIsSkipped_notReverted() public {
+        _ship(0, 10_000e6, 3e18);
+        _ship(1, 10_000e6, 3e18);
+
+        // maker 1 walks away with the WETH
+        vm.prank(makers[1]);
+        WETH.transfer(address(0xDEAD), 3e18);
+
+        (, uint256 stillClaims) =
+            aqua.safeBalances(makers[1], address(router), strategyHashes[1], address(USDC), address(WETH));
+        assertEq(stillClaims, 3e18, "virtual balance should still read full");
+        assertEq(
+            lens.quotableDepth(makers[1], address(router), strategyHashes[1], address(WETH)),
+            0,
+            "lens should see through it"
+        );
+        console.log("maker1 virtual WETH :", stillClaims);
+        console.log("maker1 real depth   :", lens.quotableDepth(makers[1], address(router), strategyHashes[1], address(WETH)));
+
+        uint256 gained = _swap(100e6, _hookData(2));
+        console.log("swapper WETH gained :", gained);
+
+        assertGt(gained, 0, "swap should still fill from the solvent maker");
+        assertEq(USDC.balanceOf(makers[1]), 10_000e6, "insolvent maker should not have been used");
     }
 }
