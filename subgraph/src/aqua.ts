@@ -64,7 +64,38 @@ export function handleShipped(e: Shipped): void {
 
   // Shipped carries no amounts — the initial balances arrive as Pushed events
   // from inside ship(). So there is nothing to double count here.
-  let s = new Strategy(sid(e.params.app, e.params.strategyHash));
+  //
+  // A strategyHash is deterministic, so docking and shipping the same program
+  // again reuses this id. Overwriting it with `new Strategy` would blank
+  // `tokens` while the previous life's Commitment rows survived: handlePushed
+  // skips the token-list bookkeeping for a Commitment that already exists, so
+  // the list would stay empty, the next Docked would unwind nothing, and
+  // MakerTokenPosition.totalCommitted would drift permanently high. Reuse the
+  // row and clear the stale commitments instead.
+  let id = sid(e.params.app, e.params.strategyHash);
+  let s = Strategy.load(id);
+  let reship = s != null;
+  if (s == null) s = new Strategy(id);
+
+  if (reship) {
+    let stale = s.tokens;
+    for (let i = 0; i < stale.length; i++) {
+      let token = Address.fromBytes(stale[i]);
+      let c = Commitment.load(cid(e.params.app, e.params.strategyHash, token));
+      if (c == null) continue;
+      if (c.remaining.gt(ZERO)) {
+        // whatever the previous life still claimed was never pulled or docked
+        let pos = position(e.params.maker, token, ts);
+        pos.totalCommitted = pos.totalCommitted.gt(c.remaining)
+          ? pos.totalCommitted.minus(c.remaining)
+          : ZERO;
+        pos.activeStrategies = pos.activeStrategies.gt(ZERO) ? pos.activeStrategies.minus(ONE) : ZERO;
+        pos.save();
+      }
+      store.remove("Commitment", c.id);
+    }
+  }
+
   s.maker = m.id;
   s.app = e.params.app;
   s.strategyHash = e.params.strategyHash;
@@ -72,6 +103,7 @@ export function handleShipped(e: Shipped): void {
   s.active = true;
   s.shippedAt = ts;
   s.shippedTx = e.transaction.hash;
+  s.dockedAt = null;
   s.tokens = [];
   s.save();
 
