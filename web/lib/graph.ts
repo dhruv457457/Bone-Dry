@@ -142,7 +142,14 @@ const COVERAGE_QUERY = `
       token
       totalCommitted
       activeStrategies
-      maker { id }
+      maker {
+        id
+        strategies(where: { active: true }, first: 100) {
+          strategyHash
+          app
+          tokens
+        }
+      }
     }
   }
 `;
@@ -152,6 +159,10 @@ export type Position = {
   token: Address;
   totalCommitted: bigint;
   activeStrategies: number;
+  /** The hashes behind that total. Lens.coverage() needs them and cannot find
+   *  them: the mapping is not enumerable, so the index is the only source. */
+  strategyHashes: Hex[];
+  app: Address | null;
 };
 
 /**
@@ -175,14 +186,21 @@ export async function positionsFromGraph(first = 50): Promise<Position[] | null>
       token: Hex;
       totalCommitted: string;
       activeStrategies: string;
-      maker: { id: Address };
+      maker: { id: Address; strategies: { strategyHash: Hex; app: Address; tokens: Hex[] }[] };
     }[];
   }>(COVERAGE_QUERY, { first });
   if (!data) return null;
-  return data.makerTokenPositions.map((p) => ({
-    maker: p.maker.id,
-    token: p.token as Address,
-    totalCommitted: BigInt(p.totalCommitted),
-    activeStrategies: Number(p.activeStrategies),
-  }));
+  return data.makerTokenPositions.map((p) => {
+    const forToken = (p.maker.strategies ?? []).filter((s) =>
+      s.tokens.map((t) => t.toLowerCase()).includes(p.token.toLowerCase())
+    );
+    return {
+      maker: p.maker.id,
+      token: p.token as Address,
+      totalCommitted: BigInt(p.totalCommitted),
+      activeStrategies: Number(p.activeStrategies),
+      strategyHashes: forToken.map((s) => s.strategyHash),
+      app: forToken.length > 0 ? forToken[0].app : null,
+    };
+  });
 }

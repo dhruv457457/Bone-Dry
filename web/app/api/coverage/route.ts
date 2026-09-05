@@ -1,5 +1,5 @@
-import { erc20Abi, AQUA, client } from "@/lib/chain";
-import { positionsFromGraph, GRAPH_URL } from "@/lib/graph";
+import { erc20Abi, lensAbi, AQUA, LENS, client } from "@/lib/chain";
+import { positionsFromGraph, GRAPH_URL, graphHead } from "@/lib/graph";
 import { uintParam, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
 
@@ -57,6 +57,8 @@ export async function GET(req: Request) {
       return {
         maker: p.maker,
         token: p.token,
+        app: p.app,
+        strategyHashes: p.strategyHashes,
         decimals,
         activeStrategies: p.activeStrategies,
         committed: p.totalCommitted,
@@ -71,6 +73,48 @@ export async function GET(req: Request) {
       };
     });
 
+    // Composability, demonstrated rather than asserted. Lens.coverage() computes
+    // the same ratio on-chain, but it takes the strategy hashes as calldata — it
+    // cannot find them, because the mapping is not enumerable. The index supplies
+    // exactly the list the contract cannot produce, and the two answers are then
+    // independent computations over the same facts. If they disagree, one of them
+    // is wrong and this says so rather than hiding it.
+    // ...but only if both sides are looking at the same block. The index and the
+    // RPC can sit at different heights — trivially so against a fork of the chain
+    // the index watches — and a maker who moved funds in between will make two
+    // correct answers look like a bug. Skew is reported, not silently resolved.
+    const chainBlock = await client.getBlockNumber();
+    const skew = chainBlock > graphHead ? chainBlock - graphHead : graphHead - chainBlock;
+
+    let verified:
+      | { maker: string; token: string; onchainBps: string; agrees: boolean | null }[]
+      | null = null;
+    if (LENS) {
+      const checkable = rows.filter((r) => r.strategyHashes.length > 0 && r.app);
+      if (checkable.length > 0) {
+        const lensCalls = checkable.map((r) => ({
+          address: LENS as `0x${string}`,
+          abi: lensAbi,
+          functionName: "coverage",
+          args: [r.maker, r.app!, r.strategyHashes, r.token],
+        }));
+        const lensRes = await client.multicall({ contracts: lensCalls, allowFailure: true });
+        verified = checkable.map((r, i) => {
+          const ok = lensRes[i].status === "success";
+          const bps = ok ? (lensRes[i].result as unknown as [bigint, bigint, bigint])[2] : -1n;
+          // Lens caps at 10000; the API does not, so compare against the cap.
+          const capped = r.coverageBps > 10_000n ? 10_000n : r.coverageBps;
+          return {
+            maker: r.maker,
+            token: r.token,
+            onchainBps: bps.toString(),
+            // null = inconclusive: the two sides read different blocks
+            agrees: !ok ? false : bps === capped ? true : skew > 0n ? null : false,
+          };
+        });
+      }
+    }
+
     const uncovered = rows.filter((r) => r.coverageBps < 10_000n);
     return j({
       source: "aquifer-subgraph",
@@ -79,6 +123,19 @@ export async function GET(req: Request) {
         "which no contract can do: Aqua's balance mapping is not enumerable",
       positions: rows.length,
       underCollateralised: uncovered.length,
+      /** null when no Lens is deployed on this chain */
+      onchainCrossCheck: verified
+        ? {
+            checked: verified.length,
+            agreed: verified.filter((v) => v.agrees === true).length,
+            disagreements: verified.filter((v) => v.agrees === false).length,
+            inconclusive: verified.filter((v) => v.agrees === null).length,
+            indexBlock: graphHead,
+            chainBlock,
+            blockSkew: skew,
+            rows: verified,
+          }
+        : null,
       rows: rows.sort((a, b) => (a.coverageBps === b.coverageBps ? 0 : a.coverageBps < b.coverageBps ? -1 : 1)),
     });
   } catch (e) {

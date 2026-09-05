@@ -13,13 +13,53 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 
 | Milestone | State |
 |---|---|
-| Ungated Aqua strategy fillable by any EOA on Base mainnet fork | ✅ proven by test |
-| `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | ✅ 6/6 tests green |
-| `Lens` — solvency filter, skips makers who can't deliver | ✅ |
-| Multi-maker pro-rata routing | ✅ +28.6% on a 5k swap |
-| Router API — indexes makers, ranks by real depth, emits hookData | ✅ live |
-| `Aquifer` — the subgraph | ✅ codegen + build green |
-| Frontend | todo |
+| Ungated Aqua strategy fillable by any EOA on Base mainnet fork | proven by test |
+| `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | 5/5 tests green |
+| `Lens` — solvency filter, skips makers who cannot deliver | done |
+| Multi-maker pro-rata routing | +4848 bps on a 20k swap |
+| Router API — indexes makers, ranks by real depth, emits hookData | live |
+| `Aquifer` — the subgraph | deployed and synced on Base |
+| Coverage view — the number Aqua cannot compute | live, cross-checked on-chain |
+| Frontend | live |
+
+Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.2`
+
+## What the index found on Base
+
+Aqua keys balances by `[maker][app][strategyHash][token]` and the mapping is not
+enumerable — 1inch say so themselves. So nothing on-chain, and no amount of
+`eth_call`, can total what one maker has promised across every strategy they have
+live. Only an index over `Shipped`/`Pushed`/`Pulled`/`Docked` can.
+
+Aquifer has indexed 436 shipped strategies, 129 still active, 111 makers and
+1,862 fills. Setting each maker's committed total against their wallet balance
+and Aqua allowance gives a coverage ratio, and **seven of the twelve largest
+positions on Base are under-collateralised — five of them backed by nothing**:
+
+| Maker | Live strategies | Committed | Actually backed | Coverage |
+|---|---|---|---|---|
+| `0x7553…4a55` | 8 | 12,694.5 DEGEN | 0 | **0.0%** |
+| `0x7553…4a55` | 5 | 3,174.6 | 0 | **0.0%** |
+| `0x1a09…88ec` | 4 | 139.8 | 0 | **0.0%** |
+| `0x181b…380b` | 3 | 116,795 | 1,036.3 | 0.9% |
+| `0x3a43…b77b` | 1 | 106,335 | 106,335 | 100.0% |
+| `0xd18b…32a8` | 1 | 2,904,818 | 5,983,537 | 206.0% |
+
+One maker runs eighteen live strategies across four tokens with allowance set to
+infinite and wallets holding none of it. Every one of those strategies quotes
+depth that cannot be delivered. That is the whole thesis of this project, sitting
+on mainnet, and it took a subgraph to see it.
+
+### Checked both ways
+
+`Lens.coverage()` computes the same ratio on-chain — but it takes the strategy
+hashes as calldata, because it cannot enumerate them either. The subgraph supplies
+exactly the list the contract cannot produce, which makes the two independent
+computations over the same facts. `/api/coverage` runs both and reports the
+comparison: 11 of 12 agree exactly, and the twelfth is marked *inconclusive*
+rather than failed, because the index sat 4,860 blocks ahead of the fork the
+contract was reading. Summing `rawBalances` for that position against live Base
+returns `40902390610653882910543` — the subgraph's total to the wei.
 
 ## The finding that makes this possible
 

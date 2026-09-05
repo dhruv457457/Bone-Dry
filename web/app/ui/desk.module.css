@@ -161,6 +161,13 @@
 
 .spin { color: var(--ink-faint); }
 
+.crossCheck {
+  margin: -8px 0 20px;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule-faint);
+  border-bottom: 1px solid var(--rule-faint);
+}
+
 /* ── coverage ─────────────────────────────────────────────────────────── */
 .coverage { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 8px; }
 .coverageLede {

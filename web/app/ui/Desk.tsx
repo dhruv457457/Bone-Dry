@@ -228,6 +228,8 @@ function Coverage({ coverage }: { coverage: CoverageResponse | null }) {
         .
       </p>
 
+      <CrossCheck check={coverage.onchainCrossCheck} />
+
       <div className={s.tableWrap}>
         <table className={s.table}>
           <thead>
@@ -399,6 +401,36 @@ function MakerBook({
       )}
     </table>
     </div>
+  );
+}
+
+/* The index feeding a contract, checked both ways.
+   Lens.coverage() computes this same ratio on-chain but takes the strategy
+   hashes as calldata -- it cannot enumerate them. The subgraph supplies exactly
+   the list the contract cannot produce, so the two are independent computations
+   over the same facts. When they read different blocks, that is stated rather
+   than resolved: a maker who moved funds in between makes two correct answers
+   look like a bug. */
+function CrossCheck({ check }: { check: CoverageResponse["onchainCrossCheck"] }) {
+  if (!check) return null;
+  const skew = Number(check.blockSkew);
+  return (
+    <p className={s.crossCheck}>
+      <span className="label">Cross-checked on-chain</span>{" "}
+      <span className="num">
+        {check.agreed}/{check.checked} agree with Lens.coverage()
+      </span>
+      {check.disagreements > 0 && (
+        <span className={`num ${s.loss}`}> &middot; {check.disagreements} disagree</span>
+      )}
+      {check.inconclusive > 0 && (
+        <span className={`num ${s.dim}`}>
+          {" "}
+          &middot; {check.inconclusive} inconclusive, index is {skew.toLocaleString()} blocks
+          ahead of this RPC
+        </span>
+      )}
+    </p>
   );
 }
 

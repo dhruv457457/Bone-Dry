@@ -71,6 +71,15 @@ export type CoverageResponse = {
   note: string;
   positions: number;
   underCollateralised: number;
+  onchainCrossCheck: {
+    checked: number;
+    agreed: number;
+    disagreements: number;
+    inconclusive: number;
+    indexBlock: string;
+    chainBlock: string;
+    blockSkew: string;
+  } | null;
   rows: CoverageRow[];
   error?: string;
 };

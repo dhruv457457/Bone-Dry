@@ -18,6 +18,10 @@ export const POOL_MANAGER: Address = "0x498581fF718922c3f8e6A244956aF099B2652b2b
 export const HOOK: Address = (process.env.HOOK_ADDRESS ??
   "0x4444000000000000000000000000000000000088") as Address;
 
+/** Lens, if one is deployed on the chain we are pointed at. Optional: the
+ *  coverage view works without it, and gains an on-chain cross-check with it. */
+export const LENS = (process.env.LENS_ADDRESS ?? "") as Address | "";
+
 export const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const WETH: Address = "0x4200000000000000000000000000000000000006";
 
@@ -87,6 +91,25 @@ export const erc20Abi = [
       { name: "s", type: "address" },
     ],
     outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+export const lensAbi = [
+  {
+    type: "function",
+    name: "coverage",
+    stateMutability: "view",
+    inputs: [
+      { name: "maker", type: "address" },
+      { name: "app", type: "address" },
+      { name: "strategyHashes", type: "bytes32[]" },
+      { name: "token", type: "address" },
+    ],
+    outputs: [
+      { name: "committed", type: "uint256" },
+      { name: "backing", type: "uint256" },
+      { name: "coverageBps", type: "uint256" },
+    ],
   },
 ] as const;
 
