@@ -1,0 +1,88 @@
+"""
+Aquifer — a reference index for 1inch Aqua.
+
+Aqua's balance mapping is not enumerable, so there is no on-chain way to ask who
+the makers are or how much they have committed. 1inch document this and recommend
+building an indexer over the registry events; no hosted subgraph exists. This is
+that index, and the shape below is proposed as a reusable schema any Aqua app can
+adopt rather than something specific to Bone Dry.
+
+Join key, per the 1inch docs: Swapped.orderHash == Shipped.strategyHash.
+"""
+
+type Protocol @entity(immutable: false) {
+  id: ID!
+  strategiesShipped: BigInt!
+  strategiesActive: BigInt!
+  makers: BigInt!
+  fills: BigInt!
+}
+
+type Maker @entity(immutable: false) {
+  id: ID!                      # maker address
+  firstSeen: BigInt!
+  activeStrategies: BigInt!
+  totalStrategies: BigInt!
+  fillsAsMaker: BigInt!
+  strategies: [Strategy!]! @derivedFrom(field: "maker")
+  positions: [MakerTokenPosition!]! @derivedFrom(field: "maker")
+}
+
+type Strategy @entity(immutable: false) {
+  id: ID!                      # app-strategyHash
+  maker: Maker!
+  app: Bytes!
+  strategyHash: Bytes!
+  "abi.encode(Order) — replayable, and the exact bytes a router hands to the VM"
+  strategy: Bytes!
+  active: Boolean!
+  shippedAt: BigInt!
+  shippedTx: Bytes!
+  dockedAt: BigInt
+  "Docked carries no token list, so the strategy remembers its own"
+  tokens: [Bytes!]!
+  commitments: [Commitment!]! @derivedFrom(field: "strategy")
+  fills: [Fill!]! @derivedFrom(field: "strategy")
+}
+
+type Commitment @entity(immutable: false) {
+  id: ID!                      # app-strategyHash-token
+  strategy: Strategy!
+  maker: Maker!
+  token: Bytes!
+  "virtual balance still credited to this strategy"
+  remaining: BigInt!
+  "everything ever pushed in, including the initial ship"
+  totalPushed: BigInt!
+  "everything ever pulled out by a fill"
+  totalPulled: BigInt!
+}
+
+"""
+The number that only an index can produce: one maker's total commitment of a
+token across every strategy they have live. Compare it to the wallet balance and
+you have the coverage ratio Aqua cannot compute for itself.
+"""
+type MakerTokenPosition @entity(immutable: false) {
+  id: ID!                      # maker-token
+  maker: Maker!
+  token: Bytes!
+  totalCommitted: BigInt!
+  activeStrategies: BigInt!
+  updatedAt: BigInt!
+}
+
+type Fill @entity(immutable: true) {
+  id: ID!                      # txHash-logIndex
+  strategy: Strategy
+  orderHash: Bytes!
+  maker: Bytes!
+  taker: Bytes!
+  tokenIn: Bytes!
+  tokenOut: Bytes!
+  amountIn: BigInt!
+  amountOut: BigInt!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}

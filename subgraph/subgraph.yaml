@@ -1,0 +1,50 @@
+specVersion: 1.0.0
+description: Aquifer — a reference index for 1inch Aqua shared liquidity on Base
+repository: https://github.com/dhruv457457/Bone-Dry
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: Aqua
+    network: base
+    source:
+      address: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a"
+      abi: Aqua
+      startBlock: 48839900
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/aqua.ts
+      entities: [Protocol, Maker, Strategy, Commitment, MakerTokenPosition]
+      abis:
+        - name: Aqua
+          file: ./abis/Aqua.json
+      eventHandlers:
+        - event: Shipped(address,address,bytes32,bytes)
+          handler: handleShipped
+        - event: Docked(address,address,bytes32)
+          handler: handleDocked
+        - event: Pulled(address,address,bytes32,address,uint256)
+          handler: handlePulled
+        - event: Pushed(address,address,bytes32,address,uint256)
+          handler: handlePushed
+  - kind: ethereum
+    name: SwapVM
+    network: base
+    source:
+      address: "0x111111338c5091E8440b67B168bAe16a668AC0De"
+      abi: SwapVM
+      startBlock: 48839900
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/swapvm.ts
+      entities: [Fill, Strategy, Maker, Protocol]
+      abis:
+        - name: SwapVM
+          file: ./abis/SwapVM.json
+      eventHandlers:
+        - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
+          handler: handleSwapped

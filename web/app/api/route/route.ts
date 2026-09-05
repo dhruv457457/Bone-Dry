@@ -1,6 +1,7 @@
 import { indexStrategies, measureDepth } from "@/lib/aqua";
 import { planRoute, quoteRoute, encodeHookData } from "@/lib/router";
-import { USDC, WETH, TOKENS } from "@/lib/chain";
+import { USDC, WETH, TOKENS, ROUTER } from "@/lib/chain";
+import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
 import { j, fail } from "@/lib/json";
 import type { Address } from "viem";
 
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
     const tokenOut = (url.searchParams.get("tokenOut") ?? WETH) as Address;
     const amountIn = BigInt(url.searchParams.get("amountIn") ?? "100000000");
 
-    const strategies = await indexStrategies();
+    const strategies = (await strategiesFromGraph(ROUTER)) ?? (await indexStrategies());
     const depths = await measureDepth(strategies, tokenOut);
     const slices = planRoute(depths, amountIn);
 
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
       single.amountOut > 0n ? ((split.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
+      source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       amountIn,

@@ -11,3 +11,6 @@ web/.next/
 web/node_modules/
 web/next-env.d.ts
 tsconfig.tsbuildinfo
+subgraph/generated/
+subgraph/build/
+subgraph/node_modules/

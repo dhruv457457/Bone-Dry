@@ -1,4 +1,6 @@
 import { indexStrategies, measureDepth } from "@/lib/aqua";
+import { strategiesFromGraph, GRAPH_URL } from "@/lib/graph";
+import { ROUTER } from "@/lib/chain";
 import { TOKENS, WETH } from "@/lib/chain";
 import { j, fail } from "@/lib/json";
 import type { Address } from "viem";
@@ -17,13 +19,15 @@ export async function GET(req: Request) {
     const token = (url.searchParams.get("token") ?? WETH) as Address;
     const fromBlock = url.searchParams.get("fromBlock");
 
-    const strategies = await indexStrategies(
-      fromBlock ? { fromBlock: BigInt(fromBlock) } : undefined
-    );
+    // Prefer the index; fall back to paging logs when no subgraph is configured.
+    const strategies =
+      (await strategiesFromGraph(ROUTER)) ??
+      (await indexStrategies(fromBlock ? { fromBlock: BigInt(fromBlock) } : undefined));
     const depths = await measureDepth(strategies, token);
 
     const meta = TOKENS[token.toLowerCase()];
     return j({
+      source: GRAPH_URL ? "aquifer-subgraph" : "rpc-log-paging",
       token: { address: token, symbol: meta?.symbol ?? "?", decimals: meta?.decimals ?? 18 },
       indexed: strategies.length,
       solvent: depths.filter((d) => d.solvent).length,

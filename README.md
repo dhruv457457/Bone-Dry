@@ -18,7 +18,7 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | `Lens` — solvency filter, skips makers who can't deliver | ✅ |
 | Multi-maker pro-rata routing | ✅ +28.6% on a 5k swap |
 | Router API — indexes makers, ranks by real depth, emits hookData | ✅ live |
-| `Aquifer` — the subgraph | todo |
+| `Aquifer` — the subgraph | ✅ codegen + build green |
 | Frontend | todo |
 
 ## The finding that makes this possible
@@ -125,3 +125,38 @@ GET /api/route?amountIn=5000000000        (sell 5,000 USDC)
 The `shortfall` column is phantom liquidity, measured. A strategy can quote depth
 its wallet no longer backs; Aqua has no on-chain guard for it, so the router
 carries one.
+
+## Aquifer — the index
+
+Aqua's `_balances` mapping is not enumerable. There is no on-chain way to ask who
+the makers are, or how much one maker has committed across their whole book.
+1inch state this plainly and recommend building a reference indexer; no hosted
+subgraph exists. `subgraph/` is that index.
+
+Five events, two data sources, from Aqua's Base deployment block **48839900**:
+
+```
+Aqua     Shipped · Docked · Pulled · Pushed
+SwapVM   Swapped
+
+join key   Swapped.orderHash == Shipped.strategyHash     (per the 1inch docs)
+```
+
+The entity that matters is `MakerTokenPosition` — one maker's committed total of a
+token across every live strategy. That number cannot be computed on-chain, and
+comparing it to the wallet balance is what produces a coverage ratio.
+
+`Shipped` carries no amounts, so there is nothing to double-count: initial
+balances arrive as `Pushed` events emitted from inside `ship()`.
+
+The router API prefers the subgraph and falls back to paging `eth_getLogs` when
+`GRAPH_URL` is unset, so it works with or without a deployment:
+
+```json
+{ "source": "aquifer-subgraph" }   // or "rpc-log-paging"
+```
+
+```bash
+cd subgraph && npm i && npm run codegen && npm run build
+npm run deploy          # needs a Subgraph Studio deploy key
+```
