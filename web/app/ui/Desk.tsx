@@ -13,6 +13,7 @@ import {
   wellheadAbi,
   erc20WriteAbi,
   erc20Abi,
+  POOL_KEY,
 } from "@/lib/chain";
 import type { Address, Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
@@ -58,6 +59,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
   const [coverageError, setCoverageError] = useState<string | null>(null);
 
   const wallet = useWallet();
+  const [balance, setBalance] = useState<bigint | null>(null);
   const [txState, setTxState] = useState<{
     phase: "idle" | "approving" | "swapping" | "done";
     hash?: Hex;
@@ -101,6 +103,29 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     return () => clearTimeout(t);
   }, [load]);
 
+  // What the connected wallet actually holds of the token being sold. Without
+  // this the app happily quotes a swap the wallet cannot pay for, the approval
+  // succeeds, and the swap reverts on a bare ERC-20 error.
+  useEffect(() => {
+    if (!wallet.address) {
+      setBalance(null);
+      return;
+    }
+    let live = true;
+    client
+      .readContract({
+        address: tokenIn.address as Address,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [wallet.address],
+      })
+      .then((b) => live && setBalance(b as bigint))
+      .catch(() => live && setBalance(null));
+    return () => {
+      live = false;
+    };
+  }, [wallet.address, tokenIn.address, txState.phase]);
+
   // Coverage does not depend on the swap inputs, so it is fetched once instead
   // of on every keystroke. It is also the slowest call: a multicall per position.
   // A failure here used to be swallowed, so the panel simply never appeared and
@@ -136,6 +161,36 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     if (amount === 0n) return;
 
     try {
+      // A fork of Base reports Base's chain id, so `wallet_switchEthereumChain`
+      // can move a wallet onto real Base while the app keeps reading the fork —
+      // both claim 8453 and the mismatch is invisible. Ask the wallet itself
+      // whether the router exists where it is looking.
+      const deployed = (await window.ethereum!.request({
+        method: "eth_getCode",
+        params: [WELLHEAD, "latest"],
+      })) as string;
+      if (!deployed || deployed === "0x") {
+        setTxState({
+          phase: "idle",
+          note:
+            "Your wallet is on a different network than this app is reading — no router at " +
+            `${WELLHEAD.slice(0, 8)}… there. Point the wallet at the same RPC.`,
+        });
+        return;
+      }
+
+      if (balance !== null && balance < amount) {
+        setTxState({
+          phase: "idle",
+          note: `Not enough ${tokenIn.symbol}: this wallet holds ${units(
+            balance,
+            tokenIn.decimals,
+            4
+          )}.`,
+        });
+        return;
+      }
+
       const allowance = (await client.readContract({
         address: tokenIn.address as Address,
         abi: erc20Abi,
@@ -168,7 +223,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
         abi: wellheadAbi,
         functionName: "swap",
         args: [
-          { currency0: WETH, currency1: USDC, fee: 0, tickSpacing: 60, hooks: HOOK },
+          POOL_KEY,
           zeroForOne,
           amount,
           minOut,
@@ -185,7 +240,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     } catch (e) {
       setTxState({ phase: "idle", note: describe(e) });
     }
-  }, [route, wallet.address, tokenIn.address, load]);
+  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -221,7 +276,15 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
           </div>
 
           <div className={s.field}>
-            <span className="label">You pay</span>
+            <span className="label">
+              You pay
+              {balance !== null && (
+                <span className={s.balance}>
+                  {" "}
+                  &middot; wallet holds {units(balance, tokenIn.decimals, 4)}
+                </span>
+              )}
+            </span>
             <div className={s.amountRow}>
               <input
                 value={input}
@@ -294,6 +357,8 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
             wallet={wallet}
             route={route}
             busy={busy}
+            balance={balance}
+            decimals={tokenIn.decimals}
             tx={txState}
             onSwap={executeSwap}
             onReload={load}
@@ -436,6 +501,8 @@ function SwapAction({
   route,
   busy,
   tx,
+  balance,
+  decimals,
   onSwap,
   onReload,
 }: {
@@ -443,10 +510,14 @@ function SwapAction({
   route: RouteResponse | null;
   busy: boolean;
   tx: { phase: string; hash?: string; note?: string };
+  balance: bigint | null;
+  decimals: number;
   onSwap: () => void;
   onReload: () => void;
 }) {
   const nothingToFill = !route?.hookData || route.amountFilled === "0";
+  const short_ =
+    balance !== null && route !== null && balance < BigInt(route.amountFilled || "0");
   const pending = tx.phase === "approving" || tx.phase === "swapping";
 
   return (
@@ -469,14 +540,16 @@ function SwapAction({
       ) : wallet.wrongChain ? (
         <button onClick={wallet.switchChain}>Switch to Base</button>
       ) : (
-        <button onClick={onSwap} disabled={pending || busy || nothingToFill}>
+        <button onClick={onSwap} disabled={pending || busy || nothingToFill || short_}>
           {tx.phase === "approving"
             ? "Approving..."
             : tx.phase === "swapping"
               ? "Swapping..."
               : nothingToFill
                 ? "Nothing to fill"
-                : "Swap"}
+                : short_
+                  ? "Not enough to swap"
+                  : "Swap"}
         </button>
       )}
 

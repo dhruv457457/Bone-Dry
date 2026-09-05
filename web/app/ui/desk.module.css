@@ -76,6 +76,8 @@
 .amountRow { display: flex; align-items: baseline; gap: 8px; }
 .amountRow input { flex: 1; min-width: 0; font-size: 26px; letter-spacing: -0.03em; }
 .ticker { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); }
+.balance { text-transform: none; letter-spacing: 0; color: var(--ink-faint); }
+
 .flip { display: flex; justify-content: flex-end; margin: -12px 0 12px; }
 .flipBtn { border: 0; padding: 2px 0; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
 .flipBtn:hover:not(:disabled) { background: none; color: var(--ink); text-decoration: underline; }

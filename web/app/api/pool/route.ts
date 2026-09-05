@@ -1,5 +1,5 @@
 import { encodeAbiParameters, parseAbiParameters, keccak256, encodePacked, toHex, type Address } from "viem";
-import { client, POOL_MANAGER, USDC, WETH, poolManagerAbi } from "@/lib/chain";
+import { client, POOL_MANAGER, POOL_KEY, poolManagerAbi } from "@/lib/chain";
 import { addressParam, uintParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -25,9 +25,10 @@ export async function GET(req: Request) {
     const fee = uintParam(url.searchParams.get("fee"), 0, 24, "fee");
     const tickSpacing = uintParam(url.searchParams.get("tickSpacing"), 60, 23, "tickSpacing");
 
-    // WETH (0x42..) sorts below USDC (0x83..)
-    const currency0 = WETH;
-    const currency1 = USDC;
+    // POOL_KEY holds the canonical ordering; fee and tickSpacing stay
+    // overridable so a caller can inspect a differently-configured pool.
+    const currency0 = POOL_KEY.currency0;
+    const currency1 = POOL_KEY.currency1;
 
     const poolId = keccak256(
       encodeAbiParameters(

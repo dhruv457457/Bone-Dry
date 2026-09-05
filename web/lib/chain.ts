@@ -31,6 +31,24 @@ export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 8453);
 export const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const WETH: Address = "0x4200000000000000000000000000000000000006";
 
+/**
+ * The Bone Dry pool, defined once.
+ *
+ * A PoolKey is a hash preimage: change any field and it is a different pool. It
+ * was written out in the pool endpoint, in the swap call and in the deploy
+ * script, which is three chances to drift into quoting one pool and swapping
+ * against another.
+ *
+ * currency0 must be the lower address. WETH (0x42..) sorts below USDC (0x83..).
+ */
+export const POOL_KEY = {
+  currency0: WETH,
+  currency1: USDC,
+  fee: 0,
+  tickSpacing: 60,
+  hooks: HOOK,
+} as const;
+
 export const TOKENS: Record<string, { address: Address; symbol: string; decimals: number }> = {
   [USDC.toLowerCase()]: { address: USDC, symbol: "USDC", decimals: 6 },
   [WETH.toLowerCase()]: { address: WETH, symbol: "WETH", decimals: 18 },
