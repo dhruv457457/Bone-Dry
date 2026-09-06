@@ -408,6 +408,7 @@ export default function Desk() {
             decimals={tokenIn.decimals}
             wellhead={net.wellhead}
             chainLabel={net.label}
+            onDisconnect={wallet.disconnect}
             tx={txState}
             onSwap={executeSwap}
             onReload={load}
@@ -643,6 +644,7 @@ function SwapAction({
   chainLabel,
   onSwap,
   onReload,
+  onDisconnect,
 }: {
   wallet: ReturnType<typeof useWallet>;
   route: RouteResponse | null;
@@ -654,6 +656,7 @@ function SwapAction({
   chainLabel: string;
   onSwap: () => void;
   onReload: () => void;
+  onDisconnect: () => void;
 }) {
   const nothingToFill = !route?.hookData || route.amountFilled === "0";
   const short_ =
@@ -697,9 +700,14 @@ function SwapAction({
       </button>
 
       {wallet.address && (
-        <span className={`label ${s.account}`}>
+        <button
+          className={`label ${s.account}`}
+          onClick={onDisconnect}
+          title="Disconnect this wallet"
+        >
           <span className="hex">{short(wallet.address)}</span>
-        </span>
+          <span className={s.disconnect}>disconnect</span>
+        </button>
       )}
 
       {tx.phase === "done" && (

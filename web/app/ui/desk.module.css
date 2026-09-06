@@ -151,7 +151,17 @@
 .actions button { flex: 0 0 auto; }
 .secondary { border-color: var(--rule); color: var(--ink-soft); }
 .secondary:hover:not(:disabled) { background: var(--ink-soft); color: var(--paper); }
-.account { margin-left: auto; }
+.account {
+  margin-left: auto;
+  border: 1px solid var(--rule);
+  padding: 5px 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.account:hover:not(:disabled) { background: none; border-color: var(--ink); color: var(--ink); }
+.account:hover .disconnect { color: var(--red); }
+.disconnect { color: var(--ink-faint); }
 .note {
   flex-basis: 100%;
   margin: 4px 0 0;

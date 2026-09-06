@@ -133,7 +133,29 @@ export function useWallet(expected: NetworkId) {
     }
   }, [expected]);
 
-  return { ...state, connect, switchChain };
+  /**
+   * Disconnect, as far as a page is allowed to.
+   *
+   * EIP-1193 has no disconnect: a site cannot make a wallet forget it, only stop
+   * using what it was given. MetaMask and others implement wallet_revokePermissions
+   * (EIP-2255), which genuinely drops the account permission so the next connect
+   * prompts again — so ask for that first, and clear local state either way. A
+   * wallet that does not support it still ends up disconnected from this app's
+   * point of view, which is what the button appears to promise.
+   */
+  const disconnect = useCallback(async () => {
+    try {
+      await window.ethereum?.request({
+        method: "wallet_revokePermissions",
+        params: [{ eth_accounts: {} }],
+      });
+    } catch {
+      // unsupported, or the user dismissed it — local state is still ours to drop
+    }
+    setState((s) => ({ ...s, address: null, error: null }));
+  }, []);
+
+  return { ...state, connect, switchChain, disconnect };
 }
 
 /**
