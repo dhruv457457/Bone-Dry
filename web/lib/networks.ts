@@ -1,4 +1,4 @@
-import { createPublicClient, http, type Address, type PublicClient } from "viem";
+import { createPublicClient, fallback, http, type Address, type PublicClient } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
 /**
@@ -25,6 +25,8 @@ export type Network = {
   testnet: boolean;
   explorer: string;
   rpc: string;
+  /** Public endpoints rate-limit hard. One is a single point of failure. */
+  rpcFallbacks: string[];
   aqua: Address;
   router: Address;
   poolManager: Address;
@@ -53,6 +55,11 @@ export const NETWORKS: Record<NetworkId, Network> = {
     testnet: false,
     explorer: "https://basescan.org",
     rpc: process.env.RPC_URL ?? "https://mainnet.base.org",
+    rpcFallbacks: [
+      "https://base-rpc.publicnode.com",
+      "https://base.llamarpc.com",
+      "https://1rpc.io/base",
+    ],
     aqua: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
     router: "0x111111338c5091E8440b67B168bAe16a668AC0De",
     poolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
@@ -73,6 +80,11 @@ export const NETWORKS: Record<NetworkId, Network> = {
     testnet: true,
     explorer: "https://sepolia.basescan.org",
     rpc: process.env.SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
+    rpcFallbacks: [
+      "https://base-sepolia-rpc.publicnode.com",
+      "https://base-sepolia.gateway.tenderly.co",
+      "https://1rpc.io/base-sepolia",
+    ],
     // 1inch have never deployed Aqua to a testnet. These are ours, built
     // unmodified from their sources; the router is tag v1.0.2, because main
     // renumbered the opcodes and will not run the SDK's own programs.
@@ -110,9 +122,25 @@ const clients = new Map<NetworkId, PublicClient>();
 export function clientFor(n: Network): PublicClient {
   const cached = clients.get(n.id);
   if (cached) return cached;
+  /**
+   * Several endpoints, tried in order, each retried a couple of times.
+   *
+   * sepolia.base.org answers 429 under any real load, and with a single
+   * transport that surfaces as a 500 on every read — the pool proof, the maker
+   * book, all of it — for something that is nobody's bug and clears in a second.
+   * A fallback list plus backoff turns a rate limit into a pause. A locally
+   * configured RPC still goes first, because a fork is not optional when that is
+   * what the app is pointed at.
+   */
   const made = createPublicClient({
     chain: n.id === 8453 ? base : baseSepolia,
-    transport: http(n.rpc),
+    transport: fallback(
+      [n.rpc, ...n.rpcFallbacks].map((url) =>
+        http(url, { retryCount: 2, retryDelay: 220, timeout: 12_000 })
+      ),
+      { rank: false }
+    ),
+    batch: { multicall: { wait: 16 } },
   }) as PublicClient;
   clients.set(n.id, made);
   return made;

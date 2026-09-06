@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "lenis/dist/lenis.css";
 import "./globals.css";
 import Motion from "./ui/Motion";
+import Web3 from "./ui/Web3";
 
 export const metadata: Metadata = {
   title: { default: "Bone Dry", template: "%s · Bone Dry" },
@@ -28,7 +29,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
       <body>
-        <Motion>{children}</Motion>
+        <Web3>
+          <Motion>{children}</Motion>
+        </Web3>
       </body>
     </html>
   );

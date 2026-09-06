@@ -4,7 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
-import { useWallet, walletClient, describe } from "./useWallet";
+import { useAccount, useSwitchChain, useWriteContract } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+/** A user closing the wallet popup is not an error worth shouting about. */
+function describe(e: unknown): string {
+  const err = e as { code?: number; shortMessage?: string; message?: string };
+  if (err?.code === 4001 || /rejected|denied/i.test(err?.message ?? "")) return "cancelled in wallet";
+  return err?.shortMessage ?? err?.message ?? "transaction failed";
+}
 import { wellheadAbi, erc20WriteAbi, erc20Abi } from "@/lib/chain";
 import {
   publicClientFor,
@@ -73,7 +80,15 @@ export default function Desk() {
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
 
-  const wallet = useWallet(chainId);
+  // wagmi owns the connection; RainbowKit owns the picker. `wrongChain` is still
+  // ours to decide, because "wrong" means "not the network this page is showing".
+  const { address, isConnected, chainId: walletChainId } = useAccount();
+  const { switchChain } = useSwitchChain();
+  // useWriteContract rather than a raw wallet client: with a chain chosen at
+  // runtime the client's chain type resolves to never, and wagmi's own hook
+  // takes chainId as an argument and stays typed.
+  const { writeContractAsync } = useWriteContract();
+  const wrongChain = isConnected && walletChainId !== undefined && walletChainId !== chainId;
   const [balance, setBalance] = useState<bigint | null>(null);
   const chainIdRef = useRef<NetworkId>(chainId);
   chainIdRef.current = chainId;
@@ -142,7 +157,7 @@ export default function Desk() {
   // this the app happily quotes a swap the wallet cannot pay for, the approval
   // succeeds, and the swap reverts on a bare ERC-20 error.
   useEffect(() => {
-    if (!wallet.address) {
+    if (!address) {
       setBalance(null);
       return;
     }
@@ -152,14 +167,14 @@ export default function Desk() {
         address: tokenIn.address as Address,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [wallet.address],
+        args: [address],
       })
       .then((b) => live && setBalance(b as bigint))
       .catch(() => live && setBalance(null));
     return () => {
       live = false;
     };
-  }, [wallet.address, tokenIn.address, txState.phase, chainId]);
+  }, [address, tokenIn.address, txState.phase, chainId]);
 
   // Coverage does not depend on the swap inputs, so it is fetched once instead
   // of on every keystroke. It is also the slowest call: a multicall per position.
@@ -191,9 +206,8 @@ export default function Desk() {
    * protection; sending 0 would make the demo smooth and the product unsafe.
    */
   const executeSwap = useCallback(async () => {
-    if (!route?.hookData || !wallet.address || !net.wellhead) return;
-    const wc = walletClient(chainId);
-    const account = wallet.address;
+    if (!route?.hookData || !address || !net.wellhead) return;
+    const account = address;
     // The chain this transaction belongs to. Everything below is async, and the
     // switcher is one click away.
     const forChain = chainId;
@@ -201,15 +215,15 @@ export default function Desk() {
     const amount = BigInt(route.amountFilled);
     if (amount === 0n) return;
 
+    const rpc = publicClientFor(net);
+    const rpcForWallet = rpc;
+
     try {
       // A fork of Base reports Base's chain id, so `wallet_switchEthereumChain`
       // can move a wallet onto real Base while the app keeps reading the fork —
       // both claim 8453 and the mismatch is invisible. Ask the wallet itself
       // whether the router exists where it is looking.
-      const deployed = (await window.ethereum!.request({
-        method: "eth_getCode",
-        params: [net.wellhead, "latest"],
-      })) as string;
+      const deployed = await rpcForWallet.getBytecode({ address: net.wellhead as Address });
       if (!deployed || deployed === "0x") {
         setTxState({
           phase: "idle",
@@ -232,7 +246,6 @@ export default function Desk() {
         return;
       }
 
-      const rpc = publicClientFor(net);
       const allowance = (await rpc.readContract({
         address: tokenIn.address as Address,
         abi: erc20Abi,
@@ -242,7 +255,8 @@ export default function Desk() {
 
       if (allowance < amount) {
         setTxState({ phase: "approving" });
-        const approveHash = await wc.writeContract({
+        const approveHash = await writeContractAsync({
+          chainId,
           account,
           address: tokenIn.address as Address,
           abi: erc20WriteAbi,
@@ -263,7 +277,8 @@ export default function Desk() {
         : !sellingUsdcIsZeroForOne(net);
 
       setTxState({ phase: "swapping" });
-      const hash = await wc.writeContract({
+      const hash = await writeContractAsync({
+        chainId,
         account,
         address: net.wellhead as Address,
         abi: wellheadAbi,
@@ -287,7 +302,7 @@ export default function Desk() {
     } catch (e) {
       if (stillHere()) setTxState({ phase: "idle", note: describe(e) });
     }
-  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net, chainId]);
+  }, [route, address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net, chainId, writeContractAsync]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -402,14 +417,15 @@ export default function Desk() {
           </ul>
 
           <SwapAction
-            wallet={wallet}
             route={route}
             busy={busy}
             balance={balance}
             decimals={tokenIn.decimals}
             wellhead={net.wellhead}
             chainLabel={net.label}
-            onDisconnect={wallet.disconnect}
+            address={address}
+            wrongChain={wrongChain}
+            onSwitch={() => switchChain({ chainId })}
             tx={txState}
             onSwap={executeSwap}
             onReload={load}
@@ -635,7 +651,6 @@ function NetworkSwitch({
    the wrong chain, a route with nothing to fill, and a router that was never
    deployed on this chain -- each of which is a different thing to do next. */
 function SwapAction({
-  wallet,
   route,
   busy,
   tx,
@@ -643,11 +658,12 @@ function SwapAction({
   decimals,
   wellhead,
   chainLabel,
+  address,
+  wrongChain,
+  onSwitch,
   onSwap,
   onReload,
-  onDisconnect,
 }: {
-  wallet: ReturnType<typeof useWallet>;
   route: RouteResponse | null;
   busy: boolean;
   tx: { phase: string; hash?: string; note?: string };
@@ -655,9 +671,11 @@ function SwapAction({
   decimals: number;
   wellhead: string;
   chainLabel: string;
+  address?: string;
+  wrongChain: boolean;
+  onSwitch: () => void;
   onSwap: () => void;
   onReload: () => void;
-  onDisconnect: () => void;
 }) {
   const nothingToFill = !route?.hookData || route.amountFilled === "0";
   const short_ =
@@ -671,17 +689,13 @@ function SwapAction({
           Read-only on this network: no Wellhead router is deployed here. Everything
           above still reads the chain directly — switch to Base Sepolia to trade.
         </p>
-      ) : !wallet.available ? (
-        <p className={s.note}>
-          No wallet found in this browser. The quote, the maker book and the coverage
-          view all read the chain directly and work without one.
-        </p>
-      ) : !wallet.address ? (
-        <button onClick={wallet.connect} disabled={wallet.connecting}>
-          {wallet.connecting ? "Check your wallet..." : "Connect wallet"}
-        </button>
-      ) : wallet.wrongChain ? (
-        <button onClick={wallet.switchChain}>Switch to {chainLabel}</button>
+      ) : !address ? (
+        // RainbowKit's own button: it knows which wallets are installed, offers a
+        // QR for mobile when a WalletConnect id is configured, and disconnects for
+        // real rather than just forgetting the address.
+        <ConnectButton label="Connect wallet" chainStatus="none" showBalance={false} />
+      ) : wrongChain ? (
+        <button onClick={onSwitch}>Switch to {chainLabel}</button>
       ) : (
         <button onClick={onSwap} disabled={pending || busy || nothingToFill || short_}>
           {tx.phase === "approving"
@@ -700,15 +714,10 @@ function SwapAction({
         {busy ? "Reading..." : "Re-quote"}
       </button>
 
-      {wallet.address && (
-        <button
-          className={`label ${s.account}`}
-          onClick={onDisconnect}
-          title="Disconnect this wallet"
-        >
-          <span className="hex">{short(wallet.address)}</span>
-          <span className={s.disconnect}>disconnect</span>
-        </button>
+      {address && (
+        <span className={s.account}>
+          <ConnectButton chainStatus="none" showBalance={false} accountStatus="address" />
+        </span>
       )}
 
       {tx.phase === "done" && (
@@ -718,7 +727,6 @@ function SwapAction({
         </p>
       )}
       {tx.note && tx.phase === "idle" && <p className={s.err}>{tx.note}</p>}
-      {wallet.error && <p className={s.err}>{wallet.error}</p>}
     </div>
   );
 }

@@ -16,6 +16,12 @@ export function fail(message: string, status = 400) {
  */
 export function chainFailure(e: unknown): Response | null {
   const m = (e as Error)?.message ?? "";
+  // A public endpoint throttling us is not an outage and should not read like
+  // one. It clears on its own, so say so and let the caller retry.
+  if (/429|rate limit|too many requests/i.test(m)) {
+    console.error("[chain] rate limited", m.slice(0, 200));
+    return fail("the public RPC is rate limiting us — try again in a moment", 503);
+  }
   if (/HTTP request failed|fetch failed|ECONNREFUSED|timed out|socket hang up/i.test(m)) {
     console.error("[chain]", m);
     return fail("cannot reach the chain right now", 503);
