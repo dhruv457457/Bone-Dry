@@ -218,3 +218,59 @@ export async function positionsFromGraph(n: Network, first = 50): Promise<Positi
     };
   });
 }
+
+const MAKER_POSITIONS_QUERY = `
+  query MakerPositions($id: ID!) {
+    maker(id: $id) {
+      positions(where: { totalCommitted_gt: 0 }, first: 200) {
+        token
+        totalCommitted
+        activeStrategies
+      }
+      strategies(where: { active: true }, first: 200) {
+        strategyHash
+        app
+        tokens
+      }
+    }
+  }
+`;
+
+/**
+ * One maker's positions, looked up directly rather than filtered out of the
+ * top N globally.
+ *
+ * positionsFromGraph orders by size and takes the biggest `first` positions
+ * across every maker — right for "how bad is it overall", wrong for "check
+ * this one address": a maker with a handful of small strategies can rank
+ * outside that page and read as having no positions at all, which is the one
+ * wrong answer a solvency checker cannot give. Querying the Maker entity by
+ * id sidesteps the ranking entirely.
+ */
+export async function positionsForMaker(n: Network, maker: Address): Promise<Position[] | null> {
+  if (!(await indexFresh(n))) return null;
+
+  const data = await gql<{
+    maker: {
+      positions: { token: Hex; totalCommitted: string; activeStrategies: string }[];
+      strategies: { strategyHash: Hex; app: Address; tokens: Hex[] }[];
+    } | null;
+  }>(n, MAKER_POSITIONS_QUERY, { id: maker.toLowerCase() });
+  if (!data) return null;
+  if (!data.maker) return [];
+
+  const strategies = data.maker.strategies ?? [];
+  return data.maker.positions.map((p) => {
+    const forToken = strategies.filter((s) =>
+      s.tokens.map((t) => t.toLowerCase()).includes(p.token.toLowerCase())
+    );
+    return {
+      maker,
+      token: p.token as Address,
+      totalCommitted: BigInt(p.totalCommitted),
+      activeStrategies: Number(p.activeStrategies),
+      strategyHashes: forToken.map((s) => s.strategyHash),
+      app: forToken.length > 0 ? forToken[0].app : null,
+    };
+  });
+}

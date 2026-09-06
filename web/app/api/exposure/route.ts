@@ -1,9 +1,8 @@
 import { erc20Abi } from "@/lib/chain";
 import { networkFrom, clientFor, tokensOf } from "@/lib/networks";
-import { positionsFromGraph, committedFromGraph } from "@/lib/graph";
+import { positionsForMaker } from "@/lib/graph";
 import { addressParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
-import type { Address } from "viem";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +24,13 @@ export async function GET(req: Request) {
     }
     const maker = addressParam(makerParam, "0x0000000000000000000000000000000000000000");
 
-    const allPositions = await positionsFromGraph(n, 500);
+    // Looked up directly by maker id, not filtered out of a top-N global scan
+    // (positionsFromGraph orders by size for the aggregate coverage view, and
+    // a maker's own smaller positions can rank outside that page — the one
+    // wrong answer a per-address solvency check cannot give).
+    const makerPositions = await positionsForMaker(n, maker);
 
-    if (allPositions === null) {
+    if (makerPositions === null) {
       return j({
         available: false,
         reason: !n.graphUrl
@@ -38,29 +41,6 @@ export async function GET(req: Request) {
         fullyCoveredCount: 0,
         totalPositions: 0,
       });
-    }
-
-    // Filter positions from the index for this maker
-    const makerPositions = allPositions.filter(
-      (p) => p.maker.toLowerCase() === maker.toLowerCase()
-    );
-
-    // Also check standard network tokens if they weren't in the top positions
-    const knownTokens = Object.values(tokensOf(n)).map((t) => t.address);
-    for (const token of knownTokens) {
-      if (!makerPositions.some((p) => p.token.toLowerCase() === token.toLowerCase())) {
-        const committed = await committedFromGraph(n, maker, token);
-        if (committed !== null && committed > 0n) {
-          makerPositions.push({
-            maker,
-            token,
-            totalCommitted: committed,
-            activeStrategies: 1,
-            strategyHashes: [],
-            app: n.router,
-          });
-        }
-      }
     }
 
     if (makerPositions.length === 0) {
