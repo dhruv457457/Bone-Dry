@@ -122,6 +122,7 @@ export default function Desk() {
     setBalance(null);
     setError(null);
     setTxState({ phase: "idle" });
+    setInput(currentPair.id === "weth-mock" ? "0.001" : "100");
   }, [chainId, currentPair.id]);
 
   // One in-flight generation. A slow request that resolves after a newer one
@@ -816,7 +817,7 @@ function PoolProof({ pool }: { pool: PoolResponse | null }) {
       <div className={s.proofSide}>
         <span className="label">Pool id</span>
         <span className="num">{pool ? short(pool.poolId) : "--"}</span>
-        <span className="label" style={{ marginTop: 8 }}>
+        <span className={`label ${s.proofSubLabel}`}>
           Initialized
         </span>
         <span className="num">{pool ? (pool.initialized ? "yes" : "not yet") : "--"}</span>
@@ -884,7 +885,7 @@ function MakerBook({
                       className={s.barReal}
                       style={{ width: `${pct(m.depth, m.virtual === "0" ? "1" : m.virtual)}%` }}
                     />
-                    <span className={s.barGap} style={{ flex: 1 }} />
+                    <span className={s.barGap} />
                   </span>
                 </span>
               </td>
@@ -951,7 +952,7 @@ function HookData({ route }: { route: RouteResponse | null }) {
   const bytes = (route.hookData.length - 2) / 2;
   return (
     <div className={s.blob}>
-      <div className={s.sectionHead} style={{ border: 0, margin: 0, paddingBottom: 0 }}>
+      <div className={`${s.sectionHead} ${s.sectionHeadBare}`}>
         <h2 className="label">hookData handed to Tap.beforeSwap</h2>
         <span className="label">
           {bytes} bytes &middot; {route.slices.length} strategies

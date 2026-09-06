@@ -61,6 +61,24 @@ export const PAIRS: Record<NetworkId, PairConfig[]> = {
       hook: NETWORKS[84532].hook,
       poolId: "0xc7801a6812962faaf660df0532e3006cd171fcf69ecd21538aabf4bb9f5271bc",
     },
+    {
+      id: "weth-mock",
+      label: "WETH / MOCK",
+      token0: {
+        address: "0x4200000000000000000000000000000000000006",
+        symbol: "WETH",
+        decimals: 18,
+      },
+      token1: {
+        address: "0xB3809889554aF826268F48a2B0E5F681c3500403",
+        symbol: "MOCK",
+        decimals: 8,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: "0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088",
+      poolId: "0x9c1e01a4303132e6e6f19fcc80dd10351612d54f3c3128c7c4751b25ba6981c6",
+    },
   ],
 };
 

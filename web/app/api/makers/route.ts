@@ -1,6 +1,7 @@
 import { cachedStrategies, indexStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
 import { networkFrom, tokensOf } from "@/lib/networks";
+import { allTokensFor } from "@/lib/pairs";
 import { byDepthDesc } from "@/lib/router";
 import { addressParam, amountParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
@@ -33,7 +34,8 @@ export async function GET(req: Request) {
       : scan!.strategies;
 
     const depths = await measureDepth(n, strategies, token);
-    const meta = tokensOf(n)[token.toLowerCase()];
+    const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
+    const meta = TOKENS[token.toLowerCase()];
     const index = indexStateOf(n);
 
     return j({

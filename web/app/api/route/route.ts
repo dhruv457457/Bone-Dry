@@ -1,6 +1,7 @@
 import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
 import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData } from "@/lib/router";
 import { networkFrom, tokensOf } from "@/lib/networks";
+import { allTokensFor } from "@/lib/pairs";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
 import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
@@ -18,7 +19,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const n = networkFrom(url.searchParams.get("chain"));
-    const TOKENS = tokensOf(n);
+    const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
     const tokenIn = addressParam(url.searchParams.get("tokenIn"), n.usdc);
     const tokenOut = addressParam(url.searchParams.get("tokenOut"), n.weth);
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);

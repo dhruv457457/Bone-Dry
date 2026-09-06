@@ -1,5 +1,6 @@
 import { erc20Abi } from "@/lib/chain";
 import { networkFrom, clientFor, tokensOf } from "@/lib/networks";
+import { allTokensFor } from "@/lib/pairs";
 import { positionsForMaker } from "@/lib/graph";
 import { addressParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
@@ -61,7 +62,7 @@ export async function GET(req: Request) {
     ]);
 
     const res = await client.multicall({ contracts: calls, allowFailure: true });
-    const TOKENS = tokensOf(n);
+    const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
 
     const positions = makerPositions.map((p, i) => {
       const b = res[i * 3];
