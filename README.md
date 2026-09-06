@@ -25,6 +25,30 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 
 Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
 
+## Live on Base Sepolia
+
+Deployed and swappable by anyone, for free. Addresses in
+[`deployments/base-sepolia.json`](deployments/base-sepolia.json).
+
+1inch have never put Aqua on a testnet, so Aqua and the SwapVM router here are our
+own deployments, built unmodified from their sources — which their licence permits
+in as many words and which their team confirmed in Discord. The router is built
+from tag `v1.0.2`: `main` has renumbered the opcodes and will not run the SDK's
+own programs. That is written up in [FEEDBACK.md](FEEDBACK.md).
+
+A real swap, on the public testnet:
+
+```
+sold  USDC : 5000000
+got   WETH : 1425979680696660
+pool liquidity after : 0
+```
+
+Five USDC split three-to-two across two makers, matching their 0.015 : 0.010
+deliverable depths. The WETH left their wallets and the USDC arrived in them. A
+third maker promised the same 0.015, holds none of it, and was skipped without
+costing the swapper anything.
+
 ## Run it
 
 Everything below works against a fork of Base mainnet, so no testnet deploy and

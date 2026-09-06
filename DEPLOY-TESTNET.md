@@ -156,24 +156,20 @@ BEFORE_SWAP_RETURNS_DELTA and nothing else. `0x2ae6…4088` — and
 | `0xEeA25b…` | 0.015 | 0.010 |
 | `0x4c8A0D…` | 0.015 | 0 |
 
-### Blocked: the SwapVM opcode numbering moved
+### Solved: build the router from v1.0.2, not main
 
-Swaps revert. Every `router.quote` fails, so every maker is skipped and the hook
-raises `NoSolventMaker`.
+The SDK emits `0x1100`; `main` numbers `XYCSwap` as `0x50`. At `v1.0.2` the
+opcodes are a jump table whose element 0 is overwritten with the array length, so
+the dispatched opcode is the static index minus one — `XYCSwap` dispatches as
+`0x11`, which is what the SDK and the mainnet routers agree on.
 
-The cause is a version skew, not our code. The SDK emits `0x1100` for an XYC
-strategy — opcode `0x11` — which is what the routers 1inch deployed to mainnet
-dispatch on. But `swap-vm` `main` numbers `XYCSwap` as `0x50`
-(`src/libs/OpcodeList.sol`), so a router built from source today does not
-understand the SDK's own output. Rebuilding with `PROGRAM=0x5000` did not fix it
-either, so the program encoding differs by more than the opcode byte.
+### It works
 
-Three ways out, cheapest first:
+```
+sold  USDC : 5000000
+got   WETH : 1425979680696660
+pool liquidity after : 0
+```
 
-1. Build the router from the tag 1inch actually deployed rather than `main`, so
-   the SDK's programs are valid again. `v1.0.0`, `v1.0.1` and `v1.0.2` exist; the
-   clone here is shallow and their trees were never fetched.
-2. Read the program encoder in `swap-vm` and hand-build a program `main` accepts,
-   abandoning the SDK's builder for testnet.
-3. Ask 1inch in Discord which commit matches the mainnet deployment — the fastest
-   answer if they are awake, and worth asking regardless.
+Split three-to-two across the two solvent makers, matching their 0.015 : 0.010
+depths. The WETH left their wallets and the pool held nothing at any point.

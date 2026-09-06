@@ -1,12 +1,14 @@
 {
   "chainId": 84532,
   "network": "base-sepolia",
-  "note": "Aqua and the SwapVM router are our own deployments, built unmodified from 1inch/aqua and 1inch/swap-vm. 1inch have never deployed Aqua to a testnet.",
+  "note": "Aqua and the SwapVM router are our own deployments, built unmodified from 1inch's sources. 1inch have never deployed Aqua to a testnet. The router is built from tag v1.0.2, whose opcode table matches what @1inch/swap-vm-sdk emits; main has renumbered XYCSwap and will not run SDK programs.",
   "aqua": "0x7a062f824FAbdf2360354Ad52B3752065150Da61",
-  "swapVmRouter": "0x92435B930B6bD8F931f7B2c1366864ff5257c25a",
-  "lens": "0x4A428273D8AEeDEf5cd45a8fc6c6Cf7c2C813297",
-  "tap": "0x2ae6ABe034A4eF4979bFA766aCB978856E574088",
-  "wellhead": "0xba3f67db8697aeCfAb6Bd35F3146368B61E24Cd2",
+  "swapVmRouter": "0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7",
+  "swapVmTag": "v1.0.2",
+  "lens": "0xA3ce77230A06302e3De32A3816f46C293c9D291F",
+  "tap": "0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088",
+  "wellhead": "0x0A54ac0705Aeab8AB29F48899d2B347D7235a531",
+  "poolId": "0xc7801a6812962faaf660df0532e3006cd171fcf69ecd21538aabf4bb9f5271bc",
   "poolManager": "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
   "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "weth": "0x4200000000000000000000000000000000000006",
@@ -15,5 +17,10 @@
     "0xEeA25b4D709fF72E8443f27a2719b11B1342d28B",
     "0x4c8A0D6aB1a43ce95caa0462379D27e92326546A"
   ],
-  "status": "deployed and seeded; swaps blocked on a SwapVM opcode mismatch, see DEPLOY-TESTNET.md"
+  "proof": {
+    "sold": "5000000 USDC",
+    "received": "1425979680696660 WETH",
+    "poolLiquidityAfter": "0",
+    "note": "split 3:2 across the two solvent makers, matching their 0.015:0.010 depths; the third promised the same and held nothing, and was skipped"
+  }
 }
