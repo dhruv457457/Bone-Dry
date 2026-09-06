@@ -4,17 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
 import { useWallet, walletClient, describe } from "./useWallet";
+import { wellheadAbi, erc20WriteAbi, erc20Abi } from "@/lib/chain";
 import {
-  client,
-  WELLHEAD,
-  HOOK,
-  USDC,
-  WETH,
-  wellheadAbi,
-  erc20WriteAbi,
-  erc20Abi,
-  POOL_KEY,
-} from "@/lib/chain";
+  publicClientFor,
+  NETWORKS,
+  DEFAULT_NETWORK,
+  poolKey,
+  sellingUsdcIsZeroForOne,
+  tokensOf,
+  type NetworkId,
+} from "@/lib/networks";
 import type { Address, Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
 
@@ -46,7 +45,21 @@ async function getJson<T>(url: string, timeout = TIMEOUT_MS): Promise<T> {
   }
 }
 
-export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: Token }; hook: string }) {
+export default function Desk() {
+  const [chainId, setChainId] = useState<NetworkId>(DEFAULT_NETWORK);
+  const net = NETWORKS[chainId];
+  const hook = net.hook;
+
+  // Token metadata is per chain: Circle deploys a different USDC on Sepolia, at
+  // a lower address than WETH, which also inverts the pool's currency order.
+  const tokens = useMemo(() => {
+    const t = tokensOf(net);
+    return {
+      usdc: t[net.usdc.toLowerCase()] as Token,
+      weth: t[net.weth.toLowerCase()] as Token,
+    };
+  }, [net]);
+
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? tokens.weth : tokens.usdc;
   const tokenOut = flipped ? tokens.usdc : tokens.weth;
@@ -79,11 +92,11 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     setBusy(true);
     setError(null);
     try {
-      const q = `tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}`;
+      const q = `chain=${chainId}&tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}`;
       const [r, m, p] = await Promise.all([
         getJson<RouteResponse>(`/api/route?${q}`),
-        getJson<MakersResponse>(`/api/makers?token=${tokenOut.address}`),
-        getJson<PoolResponse>(`/api/pool?hook=${hook}`),
+        getJson<MakersResponse>(`/api/makers?chain=${chainId}&token=${tokenOut.address}`),
+        getJson<PoolResponse>(`/api/pool?chain=${chainId}${hook ? `&hook=${hook}` : ""}`),
       ]);
       if (mine !== gen.current) return;
       const bad = r.error ?? m.error ?? p.error;
@@ -96,7 +109,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     } finally {
       if (mine === gen.current) setBusy(false);
     }
-  }, [tokenIn.address, tokenOut.address, amountIn, hook]);
+  }, [tokenIn.address, tokenOut.address, amountIn, hook, chainId]);
 
   useEffect(() => {
     const t = setTimeout(load, 250); // debounce keystrokes
@@ -112,7 +125,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
       return;
     }
     let live = true;
-    client
+    publicClientFor(net)
       .readContract({
         address: tokenIn.address as Address,
         abi: erc20Abi,
@@ -124,7 +137,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     return () => {
       live = false;
     };
-  }, [wallet.address, tokenIn.address, txState.phase]);
+  }, [wallet.address, tokenIn.address, txState.phase, chainId]);
 
   // Coverage does not depend on the swap inputs, so it is fetched once instead
   // of on every keystroke. It is also the slowest call: a multicall per position.
@@ -132,7 +145,9 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
   // nothing said why — say why instead.
   useEffect(() => {
     let live = true;
-    getJson<CoverageResponse>("/api/coverage?first=12", 60_000)
+    setCoverage(null);
+    setCoverageError(null);
+    getJson<CoverageResponse>(`/api/coverage?chain=${chainId}&first=12`, 60_000)
       .then((c) => {
         if (!live) return;
         if (c.error) setCoverageError(c.error);
@@ -142,7 +157,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     return () => {
       live = false;
     };
-  }, []);
+  }, [chainId]);
 
   /**
    * Approve if needed, then swap. The hookData is the candidate set the router
@@ -154,7 +169,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
    * protection; sending 0 would make the demo smooth and the product unsafe.
    */
   const executeSwap = useCallback(async () => {
-    if (!route?.hookData || !wallet.address || !WELLHEAD) return;
+    if (!route?.hookData || !wallet.address || !net.wellhead) return;
     const wc = walletClient();
     const account = wallet.address;
     const amount = BigInt(route.amountFilled);
@@ -167,14 +182,14 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
       // whether the router exists where it is looking.
       const deployed = (await window.ethereum!.request({
         method: "eth_getCode",
-        params: [WELLHEAD, "latest"],
+        params: [net.wellhead, "latest"],
       })) as string;
       if (!deployed || deployed === "0x") {
         setTxState({
           phase: "idle",
           note:
             "Your wallet is on a different network than this app is reading — no router at " +
-            `${WELLHEAD.slice(0, 8)}… there. Point the wallet at the same RPC.`,
+            `${net.wellhead.slice(0, 8)}… there. Point the wallet at the same RPC.`,
         });
         return;
       }
@@ -191,11 +206,12 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
         return;
       }
 
-      const allowance = (await client.readContract({
+      const rpc = publicClientFor(net);
+      const allowance = (await rpc.readContract({
         address: tokenIn.address as Address,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [account, WELLHEAD as Address],
+        args: [account, net.wellhead as Address],
       })) as bigint;
 
       if (allowance < amount) {
@@ -205,32 +221,36 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
           address: tokenIn.address as Address,
           abi: erc20WriteAbi,
           functionName: "approve",
-          args: [WELLHEAD as Address, (1n << 256n) - 1n],
+          args: [net.wellhead as Address, (1n << 256n) - 1n],
         });
-        await client.waitForTransactionReceipt({ hash: approveHash });
+        await rpc.waitForTransactionReceipt({ hash: approveHash });
       }
 
       const quoted = BigInt(route.amountOut);
       const minOut = (quoted * 99n) / 100n;
 
-      // currency0 is the lower address; WETH (0x42..) sorts below USDC (0x83..)
-      const zeroForOne = tokenIn.address.toLowerCase() === WETH.toLowerCase();
+      // Derived, never assumed: the currency order inverts between the chains,
+      // so a fixed direction sells the wrong token on one of them.
+      const sellingUsdc = tokenIn.address.toLowerCase() === net.usdc.toLowerCase();
+      const zeroForOne = sellingUsdc
+        ? sellingUsdcIsZeroForOne(net)
+        : !sellingUsdcIsZeroForOne(net);
 
       setTxState({ phase: "swapping" });
       const hash = await wc.writeContract({
         account,
-        address: WELLHEAD as Address,
+        address: net.wellhead as Address,
         abi: wellheadAbi,
         functionName: "swap",
         args: [
-          POOL_KEY,
+          poolKey(net),
           zeroForOne,
           amount,
           minOut,
           route.hookData as Hex,
         ],
       });
-      const receipt = await client.waitForTransactionReceipt({ hash });
+      const receipt = await rpc.waitForTransactionReceipt({ hash });
       setTxState({
         phase: "done",
         hash,
@@ -240,7 +260,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
     } catch (e) {
       setTxState({ phase: "idle", note: describe(e) });
     }
-  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load]);
+  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -255,10 +275,11 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
           A Uniswap v4 pool that holds nothing. Every fill is drawn from 1inch Aqua maker
           wallets at the moment of the swap.
         </p>
+        <NetworkSwitch chainId={chainId} onChange={setChainId} />
         <hr className={s.mastRule} />
         <div className={`${s.mastMeta} label`}>
-          <span>Base &middot; chain 8453</span>
-          <span>Hook <span className="hex">{short(hook)}</span></span>
+          <span>{net.label} &middot; chain {net.id}</span>
+          <span>{hook ? <>Hook <span className="hex">{short(hook)}</span></> : "no hook deployed here"}</span>
           <span>Index {indexLabel(makers)}</span>
           <span className={s.spin}>{busy ? "reading chain" : "idle"}</span>
         </div>
@@ -359,6 +380,7 @@ export default function Desk({ tokens, hook }: { tokens: { usdc: Token; weth: To
             busy={busy}
             balance={balance}
             decimals={tokenIn.decimals}
+            wellhead={net.wellhead}
             tx={txState}
             onSwap={executeSwap}
             onReload={load}
@@ -492,6 +514,38 @@ function indexLabel(makers: MakersResponse | null): string {
   return `rpc fallback — index ${makers.index.state}`;
 }
 
+/* Two networks, two jobs — said plainly rather than left as a chain id.
+   Mainnet is other people's real Aqua and cannot be transacted against here;
+   Sepolia is our own deployment, where anyone can swap for nothing. */
+function NetworkSwitch({
+  chainId,
+  onChange,
+}: {
+  chainId: NetworkId;
+  onChange: (id: NetworkId) => void;
+}) {
+  const net = NETWORKS[chainId];
+  return (
+    <div className={s.netRow}>
+      <div className={s.netTabs} role="tablist" aria-label="Network">
+        {([84532, 8453] as NetworkId[]).map((id) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={id === chainId}
+            className={`${s.netTab} ${id === chainId ? s.netTabOn : ""}`}
+            onClick={() => onChange(id)}
+          >
+            {NETWORKS[id].label}
+            {NETWORKS[id].testnet ? <span className={s.netFree}>free</span> : null}
+          </button>
+        ))}
+      </div>
+      <p className={s.netPurpose}>{net.purpose}</p>
+    </div>
+  );
+}
+
 /* Everything a swapper needs to act, and nothing they do not.
    The states worth distinguishing are: no wallet extension at all, a wallet on
    the wrong chain, a route with nothing to fill, and a router that was never
@@ -503,6 +557,7 @@ function SwapAction({
   tx,
   balance,
   decimals,
+  wellhead,
   onSwap,
   onReload,
 }: {
@@ -512,6 +567,7 @@ function SwapAction({
   tx: { phase: string; hash?: string; note?: string };
   balance: bigint | null;
   decimals: number;
+  wellhead: string;
   onSwap: () => void;
   onReload: () => void;
 }) {
@@ -522,7 +578,7 @@ function SwapAction({
 
   return (
     <div className={s.actions}>
-      {!WELLHEAD ? (
+      {!wellhead ? (
         <p className={s.note}>
           Read-only: no Wellhead router is configured for this chain. Deploy one with{" "}
           <code>script/Deploy.s.sol</code> and set{" "}

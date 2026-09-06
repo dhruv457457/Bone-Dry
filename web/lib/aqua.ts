@@ -1,8 +1,6 @@
 import { decodeAbiParameters, parseAbiParameters, type Address, type Hex } from "viem";
-import { client, AQUA, ROUTER, aquaAbi, erc20Abi } from "./chain";
-
-/** Block Aqua was deployed on Base. Nothing was shipped before it. */
-export const AQUA_GENESIS = 48_839_900n;
+import { aquaAbi, erc20Abi } from "./chain";
+import { clientFor, type Network } from "./networks";
 
 export type Strategy = {
   maker: Address;
@@ -30,12 +28,16 @@ export type MakerDepth = Strategy & {
  *
  * Public RPCs cap eth_getLogs at 10k blocks, so we page.
  */
-export async function indexStrategies(opts?: {
+export async function indexStrategies(
+  n: Network,
+  opts?: {
   fromBlock?: bigint;
   toBlock?: bigint;
-  pageSize?: bigint;
-  maxPages?: number;
-}): Promise<Strategy[]> {
+    pageSize?: bigint;
+    maxPages?: number;
+  }
+): Promise<Strategy[]> {
+  const client = clientFor(n);
   const latest = opts?.toBlock ?? (await client.getBlockNumber());
   const page = opts?.pageSize ?? 9_999n;
   const budget = opts?.maxPages ?? 12;
@@ -46,7 +48,7 @@ export async function indexStrategies(opts?: {
   // out. So: newest first, a fixed page budget, and `scannedFrom` on the result
   // so the caller can say which window it actually saw. The subgraph is the
   // answer to this; this is what you get without one.
-  const floor = opts?.fromBlock ?? AQUA_GENESIS;
+  const floor = opts?.fromBlock ?? n.aquaGenesis;
 
   const shipped: Strategy[] = [];
   const docked = new Set<string>();
@@ -57,13 +59,13 @@ export async function indexStrategies(opts?: {
     const start = end - page > floor ? end - page : floor;
 
     const [ship, dock] = await Promise.all([
-      client.getLogs({ address: AQUA, event: aquaAbi[0], fromBlock: start, toBlock: end }),
-      client.getLogs({ address: AQUA, event: aquaAbi[1], fromBlock: start, toBlock: end }),
+      client.getLogs({ address: n.aqua, event: aquaAbi[0], fromBlock: start, toBlock: end }),
+      client.getLogs({ address: n.aqua, event: aquaAbi[1], fromBlock: start, toBlock: end }),
     ]);
 
     for (const l of ship) {
       const a = l.args as { maker: Address; app: Address; strategyHash: Hex; strategy: Hex };
-      if (a.app.toLowerCase() !== ROUTER.toLowerCase()) continue; // other apps are not ours to route
+      if (a.app.toLowerCase() !== n.router.toLowerCase()) continue; // other apps are not ours to route
       shipped.push({
         maker: a.maker,
         strategyHash: a.strategyHash,
@@ -98,22 +100,31 @@ let lastWindow: Window = { fromBlock: 0n, toBlock: 0n };
  * strategies returned alongside it.
  */
 const TTL_MS = 15_000;
-let inflight: Promise<{ strategies: Strategy[]; window: Window }> | null = null;
-let cachedAt = 0;
 
-export function cachedStrategies(): Promise<{ strategies: Strategy[]; window: Window }> {
-  if (inflight && Date.now() - cachedAt < TTL_MS) return inflight;
-  cachedAt = Date.now(); // set on start so concurrent callers dedupe...
-  inflight = indexStrategies()
+/** Keyed by chain: one shared promise would hand Base's strategies to a request
+ *  about Sepolia, which is the kind of bug that looks like bad data. */
+type Entry = { at: number; p: Promise<{ strategies: Strategy[]; window: Window }> };
+const cache = new Map<number, Entry>();
+
+export function cachedStrategies(n: Network): Promise<{ strategies: Strategy[]; window: Window }> {
+  const hit = cache.get(n.id);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.p;
+
+  const p = indexStrategies(n)
     .then((strategies) => {
-      cachedAt = Date.now(); // ...and again on resolve, so a 12s scan is not
-      return { strategies, window: lastWindow }; // stale 12s into its own TTL
+      // refresh on resolve too, so a 12s scan is not already stale by the time
+      // it lands
+      const e = cache.get(n.id);
+      if (e) e.at = Date.now();
+      return { strategies, window: lastWindow };
     })
     .catch((e) => {
-      inflight = null; // a failed scan must not be served for the next 15 seconds
+      cache.delete(n.id); // a failed scan must not be served for 15 seconds
       throw e;
     });
-  return inflight;
+
+  cache.set(n.id, { at: Date.now(), p });
+  return p;
 }
 
 /**
@@ -121,13 +132,18 @@ export function cachedStrategies(): Promise<{ strategies: Strategy[]; window: Wi
  * across many strategies, and `pull()` settles with transferFrom — so a fill
  * needs real balance AND allowance. Trust the floor of the three.
  */
-export async function measureDepth(strategies: Strategy[], token: Address): Promise<MakerDepth[]> {
+export async function measureDepth(
+  n: Network,
+  strategies: Strategy[],
+  token: Address
+): Promise<MakerDepth[]> {
+  const client = clientFor(n);
   if (strategies.length === 0) return [];
 
   const calls = strategies.flatMap((s) => [
-    { address: AQUA, abi: aquaAbi, functionName: "rawBalances", args: [s.maker, ROUTER, s.strategyHash, token] } as const,
+    { address: n.aqua, abi: aquaAbi, functionName: "rawBalances", args: [s.maker, n.router, s.strategyHash, token] } as const,
     { address: token, abi: erc20Abi, functionName: "balanceOf", args: [s.maker] } as const,
-    { address: token, abi: erc20Abi, functionName: "allowance", args: [s.maker, AQUA] } as const,
+    { address: token, abi: erc20Abi, functionName: "allowance", args: [s.maker, n.aqua] } as const,
   ]);
 
   const res = await client.multicall({ contracts: calls, allowFailure: true });

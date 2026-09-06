@@ -1,24 +1,24 @@
 import type { Address, Hex } from "viem";
 import type { Strategy } from "./aqua";
-import { client } from "./chain";
+import { clientFor, type Network } from "./networks";
 
-async function headBlock(): Promise<bigint | null> {
+async function headBlock(n: Network): Promise<bigint | null> {
   try {
-    return await client.getBlockNumber();
+    return await clientFor(n).getBlockNumber();
   } catch {
     return null;
   }
 }
 
-export const GRAPH_URL = process.env.GRAPH_URL ?? "";
+/** Per-network index state. Mutable module state was fine with one chain and is
+ *  a lie with two, so it is keyed rather than shared. */
+export type IndexState = "ready" | "syncing" | "unreachable" | "errored" | "off";
+const state = new Map<number, { head: bigint; behind: bigint; status: IndexState }>();
 
-/** Last observed index head, and how far behind the chain it was. Surfaced so
- *  the UI can say "still syncing" rather than "no makers". */
-export let graphHead = 0n;
-export let graphBehind = 0n;
-/** Why the index was not used. "unreachable" and "syncing" are different
- *  problems and were being reported as the same one. */
-export let graphState: "ready" | "syncing" | "unreachable" | "errored" | "off" = "off";
+export function indexStateOf(n: Network) {
+  return state.get(n.id) ?? { head: 0n, behind: 0n, status: "off" as IndexState };
+}
+
 
 /**
  * Aquifer — the indexed source.
@@ -54,10 +54,10 @@ const POSITION_QUERY = `
   }
 `;
 
-async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
-  if (!GRAPH_URL) return null;
+async function gql<T>(n: Network, query: string, variables: Record<string, unknown>): Promise<T | null> {
+  if (!n.graphUrl) return null;
   try {
-    const r = await fetch(GRAPH_URL, {
+    const r = await fetch(n.graphUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
@@ -85,43 +85,42 @@ const MAX_LAG_BLOCKS = 300n;
  * anywhere saying why. So the freshness of the index is checked before its
  * contents are used.
  */
-export async function indexFresh(): Promise<boolean> {
-  if (!GRAPH_URL) {
-    graphState = "off";
+export async function indexFresh(n: Network): Promise<boolean> {
+  if (!n.graphUrl) {
+    state.set(n.id, { head: 0n, behind: 0n, status: "off" });
     return false;
   }
 
   const meta = await gql<{ _meta: { block: { number: number }; hasIndexingErrors: boolean } | null }>(
+    n,
     META_QUERY,
     {}
   );
   if (!meta?._meta) {
-    graphState = "unreachable";
+    state.set(n.id, { head: 0n, behind: 0n, status: "unreachable" });
     return false;
   }
   if (meta._meta.hasIndexingErrors) {
-    graphState = "errored";
+    state.set(n.id, { head: 0n, behind: 0n, status: "errored" });
     return false;
   }
-  graphHead = BigInt(meta._meta.block.number);
+  const head = BigInt(meta._meta.block.number);
 
-  const chainHead = await headBlock();
-  if (chainHead !== null && chainHead - graphHead > MAX_LAG_BLOCKS) {
-    graphBehind = chainHead - graphHead;
-    graphState = "syncing";
+  const chainHead = await headBlock(n);
+  if (chainHead !== null && chainHead - head > MAX_LAG_BLOCKS) {
+    state.set(n.id, { head, behind: chainHead - head, status: "syncing" });
     return false;
   }
-  graphBehind = 0n;
-  graphState = "ready";
+  state.set(n.id, { head, behind: 0n, status: "ready" });
   return true;
 }
 
-export async function strategiesFromGraph(app: Address): Promise<Strategy[] | null> {
-  if (!(await indexFresh())) return null;
+export async function strategiesFromGraph(n: Network, app: Address): Promise<Strategy[] | null> {
+  if (!(await indexFresh(n))) return null;
 
   const data = await gql<{
     strategies: { strategyHash: Hex; strategy: Hex; shippedAt: string; maker: { id: Address } }[];
-  }>(STRATEGIES_QUERY, { app: app.toLowerCase(), first: 500 });
+  }>(n, STRATEGIES_QUERY, { app: app.toLowerCase(), first: 500 });
 
   if (!data) return null;
   return data.strategies.map((s) => ({
@@ -137,8 +136,8 @@ export async function strategiesFromGraph(app: Address): Promise<Strategy[] | nu
  * cannot answer this — the mapping is not enumerable — so it only exists here.
  * Compare against the wallet balance and you have the coverage ratio.
  */
-export async function committedFromGraph(maker: Address, token: Address): Promise<bigint | null> {
-  const data = await gql<{ makerTokenPosition: { totalCommitted: string } | null }>(POSITION_QUERY, {
+export async function committedFromGraph(n: Network, maker: Address, token: Address): Promise<bigint | null> {
+  const data = await gql<{ makerTokenPosition: { totalCommitted: string } | null }>(n, POSITION_QUERY, {
     id: `${maker.toLowerCase()}-${token.toLowerCase()}`,
   });
   if (!data) return null;
@@ -191,10 +190,10 @@ export type Position = {
  * have a coverage ratio: on Base today one maker has eight live strategies
  * committing 12,694 DEGEN against a wallet holding none of it.
  */
-export async function positionsFromGraph(first = 50): Promise<Position[] | null> {
+export async function positionsFromGraph(n: Network, first = 50): Promise<Position[] | null> {
   // Coverage over a half-synced index reads as a shortfall that is really just
   // a Pushed event the index has not reached yet. Refuse rather than mislead.
-  if (!(await indexFresh())) return null;
+  if (!(await indexFresh(n))) return null;
 
   const data = await gql<{
     makerTokenPositions: {
@@ -203,7 +202,7 @@ export async function positionsFromGraph(first = 50): Promise<Position[] | null>
       activeStrategies: string;
       maker: { id: Address; strategies: { strategyHash: Hex; app: Address; tokens: Hex[] }[] };
     }[];
-  }>(COVERAGE_QUERY, { first });
+  }>(n, COVERAGE_QUERY, { first });
   if (!data) return null;
   return data.makerTokenPositions.map((p) => {
     const forToken = (p.maker.strategies ?? []).filter((s) =>

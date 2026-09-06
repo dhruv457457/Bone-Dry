@@ -1,5 +1,6 @@
 import { encodeAbiParameters, parseAbiParameters, keccak256, encodePacked, toHex, type Address } from "viem";
-import { client, POOL_MANAGER, POOL_KEY, poolManagerAbi } from "@/lib/chain";
+import { poolManagerAbi } from "@/lib/chain";
+import { networkFrom, clientFor, poolKey } from "@/lib/networks";
 import { addressParam, uintParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -18,7 +19,9 @@ const LIQUIDITY_OFFSET = 3n;
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const raw = url.searchParams.get("hook");
+    const n = networkFrom(url.searchParams.get("chain"));
+    const client = clientFor(n);
+    const raw = url.searchParams.get("hook") ?? n.hook;
     if (!raw) return fail("hook address required");
     const hook = addressParam(raw, raw as Address);
 
@@ -27,8 +30,7 @@ export async function GET(req: Request) {
 
     // POOL_KEY holds the canonical ordering; fee and tickSpacing stay
     // overridable so a caller can inspect a differently-configured pool.
-    const currency0 = POOL_KEY.currency0;
-    const currency1 = POOL_KEY.currency1;
+    const { currency0, currency1 } = poolKey(n);
 
     const poolId = keccak256(
       encodeAbiParameters(
@@ -40,8 +42,8 @@ export async function GET(req: Request) {
     const liquiditySlot = toHex(BigInt(stateSlot) + LIQUIDITY_OFFSET, { size: 32 });
 
     const [slot0Raw, liqRaw] = await Promise.all([
-      client.readContract({ address: POOL_MANAGER, abi: poolManagerAbi, functionName: "extsload", args: [stateSlot] }),
-      client.readContract({ address: POOL_MANAGER, abi: poolManagerAbi, functionName: "extsload", args: [liquiditySlot] }),
+      client.readContract({ address: n.poolManager, abi: poolManagerAbi, functionName: "extsload", args: [stateSlot] }),
+      client.readContract({ address: n.poolManager, abi: poolManagerAbi, functionName: "extsload", args: [liquiditySlot] }),
     ]);
 
     const sqrtPriceX96 = BigInt(slot0Raw) & ((1n << 160n) - 1n);
@@ -54,7 +56,8 @@ export async function GET(req: Request) {
     const boneDry = initialized && liquidity === 0n;
 
     return j({
-      poolManager: POOL_MANAGER,
+      poolManager: n.poolManager,
+      chain: { id: n.id, label: n.label, testnet: n.testnet },
       poolId,
       key: { currency0, currency1, fee, tickSpacing, hooks: hook },
       initialized,
@@ -69,6 +72,7 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
+    if ((e as Error).message?.startsWith("unknown chain")) return fail((e as Error).message, 400);
     const unreachable = chainFailure(e);
     if (unreachable) return unreachable;
     return fail((e as Error).message, 500);

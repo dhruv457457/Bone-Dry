@@ -1,5 +1,6 @@
-import { erc20Abi, lensAbi, AQUA, LENS, client } from "@/lib/chain";
-import { positionsFromGraph, GRAPH_URL, graphHead } from "@/lib/graph";
+import { erc20Abi, lensAbi } from "@/lib/chain";
+import { networkFrom, clientFor } from "@/lib/networks";
+import { positionsFromGraph, indexStateOf } from "@/lib/graph";
 import { uintParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -22,12 +23,15 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
+    const n = networkFrom(url.searchParams.get("chain"));
+    const client = clientFor(n);
+    const LENS = n.lens;
     const first = uintParam(url.searchParams.get("first"), 25, 10, "first");
 
-    const positions = await positionsFromGraph(first);
+    const positions = await positionsFromGraph(n, first);
     if (positions === null) {
       return fail(
-        GRAPH_URL
+        n.graphUrl
           ? "the index is unavailable or still syncing; coverage is a subgraph-only view"
           : "GRAPH_URL is not configured; coverage cannot be computed from RPC alone",
         503
@@ -40,7 +44,7 @@ export async function GET(req: Request) {
     // wildly different amounts.
     const calls = positions.flatMap((p) => [
       { address: p.token, abi: erc20Abi, functionName: "balanceOf", args: [p.maker] } as const,
-      { address: p.token, abi: erc20Abi, functionName: "allowance", args: [p.maker, AQUA] } as const,
+      { address: p.token, abi: erc20Abi, functionName: "allowance", args: [p.maker, n.aqua] } as const,
       { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] } as const,
     ]);
     const res = await client.multicall({ contracts: calls, allowFailure: true });
@@ -90,7 +94,8 @@ export async function GET(req: Request) {
     // the index watches — and a maker who moved funds in between will make two
     // correct answers look like a bug. Skew is reported, not silently resolved.
     const chainBlock = await client.getBlockNumber();
-    const skew = chainBlock > graphHead ? chainBlock - graphHead : graphHead - chainBlock;
+    const head = indexStateOf(n).head;
+    const skew = chainBlock > head ? chainBlock - head : head - chainBlock;
 
     let verified:
       | { maker: string; token: string; onchainBps: string; agrees: boolean | null }[]
@@ -124,6 +129,7 @@ export async function GET(req: Request) {
     const uncovered = rows.filter((r) => r.known && r.coverageBps < 10_000n);
     return j({
       source: "aquifer-subgraph",
+      chain: { id: n.id, label: n.label, testnet: n.testnet },
       note:
         "committed is summed across every live strategy for that maker and token, " +
         "which no contract can do: Aqua's balance mapping is not enumerable",
@@ -138,7 +144,7 @@ export async function GET(req: Request) {
             agreed: verified.filter((v) => v.agrees === true).length,
             disagreements: verified.filter((v) => v.agrees === false).length,
             inconclusive: verified.filter((v) => v.agrees === null).length,
-            indexBlock: graphHead,
+            indexBlock: head,
             chainBlock,
             blockSkew: skew,
             rows: verified,
@@ -148,6 +154,7 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
+    if ((e as Error).message?.startsWith("unknown chain")) return fail((e as Error).message, 400);
     const unreachable = chainFailure(e);
     if (unreachable) return unreachable;
     return fail((e as Error).message, 500);

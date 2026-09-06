@@ -1,5 +1,5 @@
 import { encodeAbiParameters, parseAbiParameters, decodeAbiParameters, type Address, type Hex } from "viem";
-import { client, ROUTER } from "./chain";
+import { clientFor, type Network } from "./networks";
 import type { MakerDepth } from "./aqua";
 
 /** Packed TakerTraits for a plain exact-in Aqua fill.
@@ -84,7 +84,12 @@ const swapVmAbi = [
 ] as const;
 
 /** Ask the real router what each slice would pay out. No estimates, no models. */
-export async function quoteRoute(slices: Slice[], tokenIn: Address, tokenOut: Address) {
+export async function quoteRoute(
+  n: Network,
+  slices: Slice[],
+  tokenIn: Address,
+  tokenOut: Address
+) {
   if (slices.length === 0) return { amountOut: 0n, perMaker: [] as { maker: Address; amountOut: bigint }[] };
 
   const contracts = slices.map((s) => {
@@ -93,14 +98,14 @@ export async function quoteRoute(slices: Slice[], tokenIn: Address, tokenOut: Ad
       s.strategy
     );
     return {
-      address: ROUTER,
+      address: n.router,
       abi: swapVmAbi,
       functionName: "quote",
       args: [order, tokenIn, tokenOut, s.amountIn, TAKER_TRAITS],
     } as const;
   });
 
-  const res = await client.multicall({ contracts, allowFailure: true });
+  const res = await clientFor(n).multicall({ contracts, allowFailure: true });
 
   let amountOut = 0n;
   const perMaker = res.map((r, i) => {
@@ -133,13 +138,14 @@ const LINEAR_STEPS = 48;
 const REFINEMENTS = 2;
 
 export async function clampToDepth(
+  n: Network,
   slices: Slice[],
   tokenIn: Address,
   tokenOut: Address
 ): Promise<{ slices: Slice[]; clamped: { maker: Address; from: bigint; to: bigint }[] }> {
   if (slices.length === 0) return { slices, clamped: [] };
 
-  const first = await quoteRoute(slices, tokenIn, tokenOut);
+  const first = await quoteRoute(n, slices, tokenIn, tokenOut);
   const over = slices
     .map((s, i) => ({ i, s, out: first.perMaker[i]?.amountOut ?? 0n }))
     .filter((x) => x.out > x.s.depth);
@@ -159,7 +165,7 @@ export async function clampToDepth(
     );
     if (probes.length === 0) return over.map(() => null);
 
-    const q = await quoteRoute(probes, tokenIn, tokenOut);
+    const q = await quoteRoute(n, probes, tokenIn, tokenOut);
     const best: (bigint | null)[] = over.map(() => null);
     probes.forEach((p, idx) => {
       const k = owner[idx];
@@ -233,6 +239,7 @@ export async function clampToDepth(
  * they would have wasted goes to makers who can actually fill.
  */
 export async function filterFillable(
+  n: Network,
   depths: MakerDepth[],
   tokenIn: Address,
   tokenOut: Address,
@@ -254,7 +261,7 @@ export async function filterFillable(
     depth: d.depth,
   }));
 
-  const q = await quoteRoute(probes, tokenIn, tokenOut);
+  const q = await quoteRoute(n, probes, tokenIn, tokenOut);
   const fillable: MakerDepth[] = [];
   const unfillable: Address[] = [];
   solvent.forEach((d, i) => {
