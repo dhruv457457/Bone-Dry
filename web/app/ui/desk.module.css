@@ -395,4 +395,12 @@
 /* ── exposure ─────────────────────────────────────────────────────────── */
 .exposure { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
 
+/* ── lookup ───────────────────────────────────────────────────────────── */
+.backLink { margin-left: auto; text-decoration: underline; }
+.lookupSection { padding: 34px 0 0; max-width: 640px; }
+.lookupLede { margin: 0 0 24px; color: var(--ink-soft); font-size: 15px; line-height: 1.6; }
+.addressInput { font-size: 16px !important; letter-spacing: 0.02em; }
+.lookupActions { margin-top: 16px; }
+.lookupResults { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
+
 

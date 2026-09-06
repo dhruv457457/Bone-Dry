@@ -99,26 +99,19 @@ export default function LookupPage() {
         <div className={`${s.mastMeta} label`}>
           <span>Trust verification</span>
           <span>Aqua maker solvency check</span>
-          <Link href="/app" style={{ marginLeft: "auto", textDecoration: "underline" }}>
+          <Link href="/app" className={s.backLink}>
             &larr; Back to swap desk
           </Link>
         </div>
       </header>
 
-      <section style={{ padding: "34px 0 0", maxWidth: "640px" }}>
+      <section className={s.lookupSection}>
         <div className={s.sectionHead}>
           <h1 className="label">Check any wallet</h1>
           <span className="label">verify promised vs held</span>
         </div>
 
-        <p
-          style={{
-            margin: "0 0 24px",
-            color: "var(--ink-soft)",
-            fontSize: "15px",
-            lineHeight: "1.6",
-          }}
-        >
+        <p className={s.lookupLede}>
           Aqua stores claims per strategy and does not enumerate balances. Paste any
           maker address to total what they have promised across all strategies on this
           network and verify if their promises are backed.
@@ -139,16 +132,16 @@ export default function LookupPage() {
           <div className={s.amountRow}>
             <input
               id="maker-address"
+              className={s.addressInput}
               value={inputAddress}
               onChange={(e) => setInputAddress(e.target.value)}
               placeholder="0x..."
               spellCheck={false}
               autoComplete="off"
-              style={{ fontSize: "16px", letterSpacing: "0.02em" }}
             />
           </div>
 
-          <div className={s.actions} style={{ marginTop: "16px" }}>
+          <div className={`${s.actions} ${s.lookupActions}`}>
             <button type="submit" disabled={!valid || busy}>
               {busy ? "Checking..." : "Check"}
             </button>
@@ -159,13 +152,7 @@ export default function LookupPage() {
       </section>
 
       {data && (
-        <section
-          style={{
-            padding: "34px 0 0",
-            borderTop: "1px solid var(--ink)",
-            marginTop: "34px",
-          }}
-        >
+        <section className={s.lookupResults}>
           <div className={s.sectionHead}>
             <h2 className="label">Results &mdash; {data.maker}</h2>
             <span className="label">
