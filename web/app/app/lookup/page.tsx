@@ -154,7 +154,7 @@ export default function LookupPage() {
       {data && (
         <section className={s.lookupResults}>
           <div className={s.sectionHead}>
-            <h2 className="label">Results &mdash; {data.maker}</h2>
+            <h2 className={s.sectionTitle}>Results &mdash; {data.maker}</h2>
             <span className="label">
               {data.available
                 ? `${data.fullyCoveredCount} of ${data.totalPositions} fully covered`

@@ -121,7 +121,7 @@ export default function Exposure({
     return (
       <section className={s.exposure}>
         <div className={s.sectionHead}>
-          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
           <span className="label">no wallet connected</span>
         </div>
         <div className={s.coverageEmpty}>
@@ -140,7 +140,7 @@ export default function Exposure({
     return (
       <section className={s.exposure}>
         <div className={s.sectionHead}>
-          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
           <span className="label">{error}</span>
         </div>
         <p className={s.err}>{error}</p>
@@ -152,7 +152,7 @@ export default function Exposure({
     return (
       <section className={s.exposure}>
         <div className={s.sectionHead}>
-          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
           <span className="label">reading index...</span>
         </div>
       </section>
@@ -163,7 +163,7 @@ export default function Exposure({
     return (
       <section className={s.exposure}>
         <div className={s.sectionHead}>
-          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
           <span className="label">{data.reason ?? "no index for this network"}</span>
         </div>
         <div className={s.coverageEmpty}>
@@ -181,7 +181,7 @@ export default function Exposure({
     return (
       <section className={s.exposure}>
         <div className={s.sectionHead}>
-          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
           <span className="label">0 active positions</span>
         </div>
         <p className={s.empty}>This wallet has no active Aqua positions on this network.</p>
@@ -194,7 +194,7 @@ export default function Exposure({
   return (
     <section className={s.exposure}>
       <div className={s.sectionHead}>
-        <h2 className="label">Your exposure &mdash; claimed against held</h2>
+        <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
         <span className="label">
           {data.fullyCoveredCount} of {data.totalPositions} fully covered
         </span>

@@ -445,7 +445,7 @@ export default function Desk() {
 
       <section className={s.book}>
         <div className={s.sectionHead}>
-          <h2 className="label">Maker book &mdash; {tokenOut.symbol}</h2>
+          <h2 className={s.sectionTitle}>Maker book &mdash; {tokenOut.symbol}</h2>
           <span className="label">
             {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : "..."}
           </span>
@@ -573,7 +573,7 @@ function Coverage({
     return (
       <section className={s.coverage}>
         <div className={s.sectionHead}>
-          <h2 className="label">Coverage &mdash; promised against held, per maker</h2>
+          <h2 className={s.sectionTitle}>Coverage &mdash; promised against held, per maker</h2>
           <span className="label">{error}</span>
         </div>
         <div className={s.coverageEmpty}>
@@ -593,7 +593,7 @@ function Coverage({
   return (
     <section className={s.coverage}>
       <div className={s.sectionHead}>
-        <h2 className="label">Coverage &mdash; promised against held, per maker</h2>
+        <h2 className={s.sectionTitle}>Coverage &mdash; promised against held, per maker</h2>
         <span className="label">
           {coverage.underCollateralised} of {coverage.positions} under-collateralised
         </span>
@@ -687,7 +687,7 @@ function Deployed({ net }: { net: Network }) {
   return (
     <section className={s.deployed}>
       <div className={s.sectionHead}>
-        <h2 className="label">Deployed on {net.label}</h2>
+        <h2 className={s.sectionTitle}>Deployed on {net.label}</h2>
         <span className="label">verify every one of these</span>
       </div>
       <ul className={s.deployList}>
@@ -1132,7 +1132,7 @@ function ShipStrategy({
   return (
     <section className={s.ship}>
       <div className={s.sectionHead}>
-        <h2 className="label">Ship a strategy &mdash; {tokenIn.symbol} / {tokenOut.symbol}</h2>
+        <h2 className={s.sectionTitle}>Ship a strategy &mdash; {tokenIn.symbol} / {tokenOut.symbol}</h2>
         <span className="label">become a maker</span>
       </div>
       <div className={s.shipCard}>

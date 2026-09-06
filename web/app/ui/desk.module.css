@@ -135,6 +135,17 @@
   margin-bottom: 14px;
 }
 
+/* A section heading, not a field label. Same family as the page's body
+   text, not the mono/uppercase treatment everything data-shaped uses. */
+.sectionTitle {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--ink);
+}
+
 /* ── swap ─────────────────────────────────────────────────────────────── */
 .field { display: grid; gap: 4px; margin-bottom: 20px; }
 .amountRow { display: flex; align-items: baseline; gap: 8px; }
