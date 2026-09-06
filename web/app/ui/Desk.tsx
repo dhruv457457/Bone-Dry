@@ -184,6 +184,16 @@ export default function Desk() {
     let live = true;
     setCoverage(null);
     setCoverageError(null);
+    // Coverage is an index-only view — totalling a maker's commitments across
+    // strategies is precisely the thing a contract cannot do. On a network with
+    // no subgraph there is nothing to ask, so asking anyway just prints a 503 in
+    // the console and tells the reader nothing they could act on.
+    if (!net.graphUrl) {
+      setCoverageError(
+        `No subgraph is indexing ${net.label} yet, and coverage can only come from one.`
+      );
+      return;
+    }
     getJson<CoverageResponse>(`/api/coverage?chain=${chainId}&first=12`, 60_000)
       .then((c) => {
         if (!live) return;
@@ -194,7 +204,7 @@ export default function Desk() {
     return () => {
       live = false;
     };
-  }, [chainId]);
+  }, [chainId, net.graphUrl, net.label]);
 
   /**
    * Approve if needed, then swap. The hookData is the candidate set the router

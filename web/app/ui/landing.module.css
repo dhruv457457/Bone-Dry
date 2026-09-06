@@ -48,7 +48,8 @@
   text-align: center;
   position: relative;
   z-index: 2;
-  padding: 40px 0;
+  /* The words sit high so the bottom band of the hero belongs to the drawing. */
+  padding: 10px 0 clamp(40px, 24vh, 240px);
 }
 
 .claim {
@@ -232,4 +233,38 @@
 @media (max-width: 900px) {
   /* The cards are decoration; on a narrow screen they would sit on the words. */
   .field, .darkField { display: none; }
+}
+
+/* ── the hero doodle ──────────────────────────────────────────────────── */
+/* Behind everything: the cards are data and the words are the argument, and
+   both have to win over a drawing. It sits under the bottom third of the hero,
+   which is why .heroBody is pushed off centre — the two were competing for the
+   same band of the screen and the text was losing. */
+.doodle {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible; /* the plateau lines run past the viewBox to the screen edges */
+  pointer-events: none;
+}
+
+.terra,
+.rope,
+.fig {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.terra { stroke: #98a3af; stroke-width: 3.2; }
+.terra .hatch { stroke-width: 2.2; opacity: 0.62; }
+.rope { stroke: #9c6b4d; stroke-width: 7; }
+.fig { stroke: var(--ink); stroke-width: 3.6; }
+.fig .face { stroke-width: 4.4; }
+.fig .bulge { stroke-width: 3; }
+
+@media (max-width: 700px) {
+  /* At this width the drawing is wider than it is legible. */
+  .doodle { display: none; }
 }

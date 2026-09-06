@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import s from "./landing.module.css";
+import Doodle from "./Doodle";
+import { useIsomorphicLayoutEffect } from "./useIsomorphicLayoutEffect";
 import { units, short } from "@/lib/format";
 
 type Row = {
@@ -33,12 +35,6 @@ const DARK_SPOTS = [
   { top: "40%", left: "26%", drift: 62, rot: 0.7 },
   { top: "44%", right: "24%", drift: -70, rot: -0.8 },
 ];
-
-/** gsap.from writes its start state when the tween is created. In useEffect that
- *  happens after paint, so the content flashes in and then hides itself before
- *  animating. Before paint, there is nothing to see. Falls back to useEffect on
- *  the server, where there is no layout to run against. */
-const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export default function Landing() {
   const root = useRef<HTMLDivElement>(null);
@@ -168,6 +164,8 @@ export default function Landing() {
             </Link>
           </span>
         </nav>
+
+        <Doodle />
 
         <div className={s.field} aria-hidden>
           {hero.map((r, i) => (

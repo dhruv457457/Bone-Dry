@@ -41,20 +41,31 @@ const transportFor = (id: 8453 | 84532) => {
   );
 };
 
+/**
+ * Which wallets to offer depends on whether WalletConnect is actually usable.
+ *
+ * RainbowKit's metaMaskWallet and rainbowWallet both fall back to WalletConnect
+ * for their mobile and QR paths. Given a placeholder project id they try to
+ * initialise against it and hang — the modal sits on "Opening MetaMask…" and no
+ * extension window ever appears, which looks like a broken wallet rather than a
+ * missing environment variable.
+ *
+ * So without a real id the list is only wallets that talk to the browser
+ * directly: injected (whatever extension is installed, MetaMask included) and
+ * Coinbase, whose SDK does not need WalletConnect. Set the id and the full list
+ * comes back, mobile and all.
+ */
 const connectors = connectorsForWallets(
-  [
-    {
-      groupName: "Popular",
-      wallets: [
-        metaMaskWallet,
-        rainbowWallet,
-        coinbaseWallet,
-        ...(projectId ? [walletConnectWallet] : []),
-      ],
-    },
-    { groupName: "Other", wallets: [injectedWallet] },
-  ],
-  { appName: "Bone Dry", projectId: projectId || "bone-dry-local" }
+  projectId
+    ? [
+        {
+          groupName: "Popular",
+          wallets: [metaMaskWallet, rainbowWallet, coinbaseWallet, walletConnectWallet],
+        },
+        { groupName: "Other", wallets: [injectedWallet] },
+      ]
+    : [{ groupName: "Installed", wallets: [injectedWallet, coinbaseWallet] }],
+  { appName: "Bone Dry", projectId: projectId || "00000000000000000000000000000000" }
 );
 
 const config = createConfig({
