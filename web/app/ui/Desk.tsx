@@ -13,6 +13,7 @@ import {
   sellingUsdcIsZeroForOne,
   tokensOf,
   type NetworkId,
+  type Network,
 } from "@/lib/networks";
 import type { Address, Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
@@ -403,6 +404,8 @@ export default function Desk() {
       </div>
 
       <Coverage coverage={coverage} error={coverageError} />
+
+      <Deployed net={net} />
     </div>
   );
 }
@@ -512,6 +515,59 @@ function indexLabel(makers: MakersResponse | null): string {
     return `rpc fallback — index ${behind} blocks behind`;
   }
   return `rpc fallback — index ${makers.index.state}`;
+}
+
+/* Every address, linked. A judge should be able to leave this page and confirm
+   on a block explorer that the contracts exist and the pool is empty, rather
+   than taking a screenshot's word for it. Aqua and the router are marked when
+   they are ours, because on a testnet they are — 1inch have never deployed Aqua
+   to one — and quietly implying otherwise would be the wrong kind of shortcut. */
+function Deployed({ net }: { net: Network }) {
+  const rows: [string, string, boolean][] = [
+    ["Tap — the v4 hook", net.hook, false],
+    ["Wellhead — the router your wallet calls", net.wellhead, false],
+    ["Lens — the solvency read", net.lens, false],
+    ["Aqua", net.aqua, net.aquaIsOurs],
+    ["SwapVM router", net.router, net.aquaIsOurs],
+    ["Uniswap v4 PoolManager", net.poolManager, false],
+  ];
+  return (
+    <section className={s.deployed}>
+      <div className={s.sectionHead}>
+        <h2 className="label">Deployed on {net.label}</h2>
+        <span className="label">verify every one of these</span>
+      </div>
+      <ul className={s.deployList}>
+        {rows.map(([what, addr, ours]) =>
+          addr ? (
+            <li key={what}>
+              <span className={s.deployWhat}>
+                {what}
+                {ours ? <span className={s.ours}>our deployment</span> : null}
+              </span>
+              <a
+                className="num hex"
+                href={`${net.explorer}/address/${addr}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {short(addr)}
+              </a>
+            </li>
+          ) : null
+        )}
+      </ul>
+      {net.aquaIsOurs && (
+        <p className={s.deployNote}>
+          1inch have never deployed Aqua to a testnet, so Aqua and the SwapVM router
+          here are ours — built unmodified from their sources, which their licence
+          permits and their team confirmed. The router is tag <code>v1.0.2</code>:
+          <code> main</code> has renumbered the opcodes and will not run the SDK&apos;s
+          own programs.
+        </p>
+      )}
+    </section>
+  );
 }
 
 /* Two networks, two jobs — said plainly rather than left as a chain id.
