@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
-import { useAccount, useSwitchChain, useWriteContract } from "wagmi";
+import { useAccount, useSwitchChain, useWriteContract, useSendTransaction } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 /** A user closing the wallet popup is not an error worth shouting about. */
 function describe(e: unknown): string {
@@ -23,7 +23,7 @@ import {
   type NetworkId,
   type Network,
 } from "@/lib/networks";
-import type { Address, Hex } from "viem";
+import { keccak256, type Address, type Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
 
 type Token = { address: string; symbol: string; decimals: number };
@@ -437,6 +437,15 @@ export default function Desk() {
         <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
         <HookData route={route} />
       </section>
+
+      <ShipStrategy
+        net={net}
+        tokenIn={tokenIn}
+        tokenOut={tokenOut}
+        address={address}
+        wrongChain={wrongChain}
+        onShipped={load}
+      />
 
       <Coverage
         coverage={coverage}
@@ -909,3 +918,192 @@ function HookData({ route }: { route: RouteResponse | null }) {
     </div>
   );
 }
+
+/* The maker side of the desk.
+   A maker claims an amount for each token and signs raw calldata from /api/strategy.
+   Funds stay in the maker's wallet until filled, but Aqua records the claim
+   immediately. Once confirmed, reloading the maker book picks up the new strategy. */
+function ShipStrategy({
+  net,
+  tokenIn,
+  tokenOut,
+  address,
+  wrongChain,
+  onShipped,
+}: {
+  net: Network;
+  tokenIn: Token;
+  tokenOut: Token;
+  address?: Address;
+  wrongChain: boolean;
+  onShipped: () => void;
+}) {
+  const [claimIn, setClaimIn] = useState("");
+  const [claimOut, setClaimOut] = useState("");
+  const [feeBps, setFeeBps] = useState("0");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [shippedHash, setShippedHash] = useState<Hex | null>(null);
+
+  const { sendTransactionAsync } = useSendTransaction();
+
+  useEffect(() => {
+    setShippedHash(null);
+    setError(null);
+    setBusy(false);
+  }, [net.id]);
+
+  const parsedIn = toRaw(claimIn, tokenIn.decimals);
+  const parsedOut = toRaw(claimOut, tokenOut.decimals);
+  const amountInvalid = parsedIn === 0n || parsedOut === 0n;
+
+  const disabled = !address || wrongChain || amountInvalid || busy;
+
+  const handleShip = async () => {
+    if (disabled || !address) return;
+    const forChain = net.id;
+    setBusy(true);
+    setError(null);
+    setShippedHash(null);
+
+    try {
+      const res = await fetch("/api/strategy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          maker: address,
+          chainId: net.id,
+          tokenIn: tokenIn.address,
+          tokenOut: tokenOut.address,
+          amountIn: parsedIn.toString(),
+          amountOut: parsedOut.toString(),
+          feeBps: feeBps ? Number(feeBps) : 0,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `failed to assemble strategy (${res.status})`);
+      }
+
+      const built = (await res.json()) as {
+        to: Address;
+        data: Hex;
+        strategy: Hex;
+      };
+
+      if (forChain !== net.id) return;
+
+      const hash = await sendTransactionAsync({
+        to: built.to,
+        data: built.data,
+      });
+
+      const rpc = publicClientFor(net);
+      const receipt = await rpc.waitForTransactionReceipt({ hash });
+
+      if (forChain !== net.id) return;
+
+      if (receipt.status !== "success") {
+        throw new Error("reverted on chain");
+      }
+
+      const strategyHash = keccak256(built.strategy);
+      setShippedHash(strategyHash);
+      onShipped();
+    } catch (e) {
+      if (forChain === net.id) {
+        setError(describe(e));
+      }
+    } finally {
+      if (forChain === net.id) {
+        setBusy(false);
+      }
+    }
+  };
+
+  return (
+    <section className={s.ship}>
+      <div className={s.sectionHead}>
+        <h2 className="label">Ship a strategy &mdash; {tokenIn.symbol} / {tokenOut.symbol}</h2>
+        <span className="label">become a maker</span>
+      </div>
+      <div className={s.shipCard}>
+        <div className={s.field}>
+          <div className={s.fieldHead}>
+            <span className="label">Claim {tokenIn.symbol}</span>
+          </div>
+          <div className={s.amountRow}>
+            <input
+              value={claimIn}
+              inputMode="decimal"
+              onChange={(e) => setClaimIn(e.target.value)}
+              aria-label={`Claim amount for ${tokenIn.symbol}`}
+              placeholder="0.0"
+            />
+            <span className={s.ticker}>{tokenIn.symbol}</span>
+          </div>
+        </div>
+
+        <div className={s.field}>
+          <div className={s.fieldHead}>
+            <span className="label">Claim {tokenOut.symbol}</span>
+          </div>
+          <div className={s.amountRow}>
+            <input
+              value={claimOut}
+              inputMode="decimal"
+              onChange={(e) => setClaimOut(e.target.value)}
+              aria-label={`Claim amount for ${tokenOut.symbol}`}
+              placeholder="0.0"
+            />
+            <span className={s.ticker}>{tokenOut.symbol}</span>
+          </div>
+        </div>
+
+        <div className={s.field}>
+          <div className={s.fieldHead}>
+            <span className="label">Your fee (bps)</span>
+          </div>
+          <div className={s.amountRow}>
+            <input
+              value={feeBps}
+              inputMode="numeric"
+              onChange={(e) => setFeeBps(e.target.value)}
+              aria-label="Fee in basis points"
+              placeholder="0"
+            />
+            <span className={s.ticker}>bps</span>
+          </div>
+          <p className={s.shipCaption}>Spread you earn on every fill. 0 is fine to start.</p>
+        </div>
+
+        <div className={s.actions}>
+          <button onClick={handleShip} disabled={disabled}>
+            {busy
+              ? "Shipping..."
+              : !address
+                ? "Connect wallet"
+                : wrongChain
+                  ? "Wrong network"
+                  : amountInvalid
+                    ? "Enter claim amounts"
+                    : "Ship this strategy"}
+          </button>
+        </div>
+
+        {shippedHash && (
+          <div className={s.shipSuccess}>
+            <p className={s.note}>
+              Shipped. You are now a maker on this pair. Strategy hash:{" "}
+              <span className="hex num">{short(shippedHash)}</span>
+            </p>
+          </div>
+        )}
+
+        {error && <p className={s.err}>{error}</p>}
+      </div>
+    </section>
+  );
+}
+

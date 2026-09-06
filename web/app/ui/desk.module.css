@@ -374,3 +374,21 @@
   padding: 22px 0 4px;
 }
 .coverageEmpty p { margin: 0; max-width: 54ch; color: var(--ink-soft); font-size: 15px; }
+
+/* ── ship strategy ─────────────────────────────────────────────────────── */
+.ship { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
+.shipCard {
+  border: 1px solid var(--ink);
+  padding: 26px 26px 22px;
+  background: var(--paper);
+  max-width: 520px;
+}
+.shipCard .amountRow input { font-size: 26px; }
+.shipCaption { margin: 6px 0 0; font-size: 13px; color: var(--ink-soft); }
+.shipSuccess {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--slate);
+  background: var(--paper-sunk);
+}
+
