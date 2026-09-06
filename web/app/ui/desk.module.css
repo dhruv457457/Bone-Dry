@@ -477,6 +477,26 @@
 
 /* ── exposure ─────────────────────────────────────────────────────────── */
 .exposure { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+}
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.badgeOk { color: var(--slate); }
+.badgeLoss { color: var(--red); }
 
 /* ── lookup ───────────────────────────────────────────────────────────── */
 .backLink { margin-left: auto; text-decoration: underline; }

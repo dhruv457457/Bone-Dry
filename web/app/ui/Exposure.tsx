@@ -53,7 +53,7 @@ export function ExposureTable({ positions }: { positions: ExposurePosition[] }) 
                 <td className={`num ${s.dim}`}>{compact(p.claimed, dec)}</td>
                 <td className="num">{compact(p.held, dec)}</td>
                 <td>
-                  <span className={`num ${p.covered ? s.full : s.zero}`}>
+                  <span className={`${s.badge} ${p.covered ? s.badgeOk : s.badgeLoss}`}>
                     {p.covered ? "covered" : "shortfall"}
                   </span>
                 </td>
