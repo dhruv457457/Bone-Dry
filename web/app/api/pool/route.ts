@@ -28,9 +28,18 @@ export async function GET(req: Request) {
     const fee = uintParam(url.searchParams.get("fee"), 0, 24, "fee");
     const tickSpacing = uintParam(url.searchParams.get("tickSpacing"), 60, 23, "tickSpacing");
 
-    // POOL_KEY holds the canonical ordering; fee and tickSpacing stay
-    // overridable so a caller can inspect a differently-configured pool.
-    const { currency0, currency1 } = poolKey(n);
+    // POOL_KEY holds the canonical ordering; fee, tickSpacing, and currencies
+    // stay overridable so a caller can inspect a differently-configured pool.
+    const paramC0 = url.searchParams.get("currency0");
+    const paramC1 = url.searchParams.get("currency1");
+    const defaultKey = poolKey(n);
+    const { currency0, currency1 } =
+      paramC0 && paramC1
+        ? {
+            currency0: addressParam(paramC0, defaultKey.currency0),
+            currency1: addressParam(paramC1, defaultKey.currency1),
+          }
+        : defaultKey;
 
     const poolId = keccak256(
       encodeAbiParameters(

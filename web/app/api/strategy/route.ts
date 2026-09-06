@@ -1,7 +1,7 @@
 import { encodeFunctionData, isAddress, getAddress } from "viem";
 import { AquaProgramBuilder, Order, MakerTraits } from "@1inch/swap-vm-sdk";
 import { Address as SdkAddress } from "@1inch/sdk-core";
-import { networkFrom, tokensOf } from "@/lib/networks";
+import { networkFrom } from "@/lib/networks";
 import { addressParam, amountParam, uintParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
 
@@ -44,18 +44,18 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const n = networkFrom(body.chainId != null ? String(body.chainId) : null);
-    const TOKENS = tokensOf(n);
 
     if (!body.maker || !isAddress(body.maker, { strict: false })) {
       throw new BadInput(`not an address: ${body.maker}`);
     }
     const maker = getAddress(body.maker);
+    // No allowlist here: a maker can ship a strategy on any ERC20 pair, known
+    // to this app's UI or not. ship() itself does not care, and gating it on
+    // a hardcoded token table is exactly the kind of single-pair assumption
+    // that would have to be re-litigated for every pair Bone Dry ever adds.
     const tokenIn = addressParam(body.tokenIn ?? null, n.usdc);
     const tokenOut = addressParam(body.tokenOut ?? null, n.weth);
     distinct(tokenIn, tokenOut);
-    if (!TOKENS[tokenIn.toLowerCase()] || !TOKENS[tokenOut.toLowerCase()]) {
-      throw new BadInput("token not recognised on this network");
-    }
     const amountIn = amountParam(body.amountIn != null ? String(body.amountIn) : null, 0n);
     const amountOut = amountParam(body.amountOut != null ? String(body.amountOut) : null, 0n);
     if (amountIn === 0n && amountOut === 0n) {

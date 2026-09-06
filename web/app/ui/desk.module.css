@@ -31,6 +31,8 @@
   font-size: 17px;
   color: var(--ink-soft);
 }
+.navControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.pairRow { display: flex; align-items: center; }
 .netRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .netTabs { display: flex; gap: 0; border: 1px solid var(--ink); }
 .netTab {

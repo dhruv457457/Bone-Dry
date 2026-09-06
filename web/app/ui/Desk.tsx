@@ -18,16 +18,21 @@ import {
   publicClientFor,
   NETWORKS,
   DEFAULT_NETWORK,
-  poolKey,
-  sellingUsdcIsZeroForOne,
-  tokensOf,
   type NetworkId,
   type Network,
 } from "@/lib/networks";
+import {
+  pairsFor,
+  defaultPairFor,
+  poolKeyFor,
+  isZeroForOne,
+  type PairConfig,
+} from "@/lib/pairs";
 import { keccak256, type Address, type Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
 
 type Token = { address: string; symbol: string; decimals: number };
+
 
 /** A hung RPC is worse than a refused one: nothing rejects, so the page sits on
  *  "reading chain" forever with no way back. Every request gets a deadline, and
@@ -60,19 +65,17 @@ export default function Desk() {
   const net = NETWORKS[chainId];
   const hook = net.hook;
 
-  // Token metadata is per chain: Circle deploys a different USDC on Sepolia, at
-  // a lower address than WETH, which also inverts the pool's currency order.
-  const tokens = useMemo(() => {
-    const t = tokensOf(net);
-    return {
-      usdc: t[net.usdc.toLowerCase()] as Token,
-      weth: t[net.weth.toLowerCase()] as Token,
-    };
-  }, [net]);
+  const availablePairs = useMemo(() => pairsFor(chainId), [chainId]);
+  const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
+
+  const currentPair = useMemo(() => {
+    return availablePairs.find((p) => p.id === pairId) ?? availablePairs[0] ?? defaultPairFor(chainId);
+  }, [availablePairs, pairId, chainId]);
 
   const [flipped, setFlipped] = useState(false);
-  const tokenIn = flipped ? tokens.weth : tokens.usdc;
-  const tokenOut = flipped ? tokens.usdc : tokens.weth;
+  const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
+  const tokenOut = flipped ? currentPair.token0 : currentPair.token1;
+  const pKey = useMemo(() => poolKeyFor(currentPair, net), [currentPair, net]);
 
   const [input, setInput] = useState("100");
   const [route, setRoute] = useState<RouteResponse | null>(null);
@@ -104,7 +107,7 @@ export default function Desk() {
   const amountIn = useMemo(() => toRaw(input, tokenIn.decimals), [input, tokenIn.decimals]);
 
   /**
-   * Drop everything the moment the chain changes.
+   * Drop everything the moment the chain or pair changes.
    *
    * A route carries hookData: the exact strategies the hook will fill from. Left
    * on screen after a switch, the Swap button would hand the wallet calldata
@@ -119,7 +122,7 @@ export default function Desk() {
     setBalance(null);
     setError(null);
     setTxState({ phase: "idle" });
-  }, [chainId]);
+  }, [chainId, currentPair.id]);
 
   // One in-flight generation. A slow request that resolves after a newer one
   // must not overwrite fresher state — the classic async race in a quote box.
@@ -134,7 +137,9 @@ export default function Desk() {
       const [r, m, p] = await Promise.all([
         getJson<RouteResponse>(`/api/route?${q}`),
         getJson<MakersResponse>(`/api/makers?chain=${chainId}&token=${tokenOut.address}`),
-        getJson<PoolResponse>(`/api/pool?chain=${chainId}${hook ? `&hook=${hook}` : ""}`),
+        getJson<PoolResponse>(
+          `/api/pool?chain=${chainId}&currency0=${pKey.currency0}&currency1=${pKey.currency1}&fee=${pKey.fee}&tickSpacing=${pKey.tickSpacing}${pKey.hooks ? `&hook=${pKey.hooks}` : ""}`
+        ),
       ]);
       if (mine !== gen.current) return;
       const bad = r.error ?? m.error ?? p.error;
@@ -147,7 +152,7 @@ export default function Desk() {
     } finally {
       if (mine === gen.current) setBusy(false);
     }
-  }, [tokenIn.address, tokenOut.address, amountIn, hook, chainId]);
+  }, [tokenIn.address, tokenOut.address, amountIn, pKey, chainId]);
 
   useEffect(() => {
     const t = setTimeout(load, 250); // debounce keystrokes
@@ -274,12 +279,9 @@ export default function Desk() {
       const quoted = BigInt(route.amountOut);
       const minOut = (quoted * 99n) / 100n;
 
-      // Derived, never assumed: the currency order inverts between the chains,
-      // so a fixed direction sells the wrong token on one of them.
-      const sellingUsdc = tokenIn.address.toLowerCase() === net.usdc.toLowerCase();
-      const zeroForOne = sellingUsdc
-        ? sellingUsdcIsZeroForOne(net)
-        : !sellingUsdcIsZeroForOne(net);
+      // Derived, never assumed: currency order is determined by token address,
+      // so zeroForOne depends on whether tokenIn is currency0.
+      const zeroForOne = isZeroForOne(tokenIn.address as Address, currentPair);
 
       setTxState({ phase: "swapping" });
       const hash = await writeContractAsync({
@@ -289,7 +291,7 @@ export default function Desk() {
         abi: wellheadAbi,
         functionName: "swap",
         args: [
-          poolKey(net),
+          pKey,
           zeroForOne,
           amount,
           minOut,
@@ -307,7 +309,7 @@ export default function Desk() {
     } catch (e) {
       if (stillHere()) setTxState({ phase: "idle", note: describe(e) });
     }
-  }, [route, address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net, chainId, writeContractAsync]);
+  }, [route, address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, currentPair, pKey, balance, load, net, chainId, writeContractAsync]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");
@@ -321,7 +323,10 @@ export default function Desk() {
           <Link className={s.appMark} href="/">
             BONE<em>&middot;</em>DRY
           </Link>
-          <NetworkSwitch chainId={chainId} onChange={setChainId} />
+          <div className={s.navControls}>
+            <PairSwitch pairs={availablePairs} pairId={currentPair.id} onChange={setPairId} />
+            <NetworkSwitch chainId={chainId} onChange={setChainId} />
+          </div>
         </div>
         <hr className={s.mastRule} />
         <div className={`${s.mastMeta} label`}>
@@ -664,6 +669,37 @@ function NetworkSwitch({
         ))}
       </div>
       <p className={s.netPurpose}>{net.purpose}</p>
+    </div>
+  );
+}
+
+/* Multiple pairs when available on this network.
+   Selecting a pair clears derived state and switches the trading desk's currencies. */
+function PairSwitch({
+  pairs,
+  pairId,
+  onChange,
+}: {
+  pairs: PairConfig[];
+  pairId: string;
+  onChange: (id: string) => void;
+}) {
+  if (pairs.length <= 1) return null;
+  return (
+    <div className={s.pairRow}>
+      <div className={s.netTabs} role="tablist" aria-label="Trading pair">
+        {pairs.map((p) => (
+          <button
+            key={p.id}
+            role="tab"
+            aria-selected={p.id === pairId}
+            className={`${s.netTab} ${p.id === pairId ? s.netTabOn : ""}`}
+            onClick={() => onChange(p.id)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
