@@ -1,7 +1,23 @@
 .shell { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
 
 /* ── masthead ─────────────────────────────────────────────────────────── */
-.masthead { padding: 40px 0 14px; }
+.masthead { padding: 22px 0 12px; }
+
+.appNav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+}
+.appMark {
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.appMark em { font-style: normal; color: var(--ink-faint); }
+.appMark:hover { text-decoration: underline; text-underline-offset: 4px; }
 .wordmark {
   font-size: clamp(44px, 8vw, 92px);
   line-height: 0.86;
@@ -15,7 +31,7 @@
   font-size: 17px;
   color: var(--ink-soft);
 }
-.netRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-top: 22px; }
+.netRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .netTabs { display: flex; gap: 0; border: 1px solid var(--ink); }
 .netTab {
   border: 0;
@@ -76,7 +92,7 @@
 /* ── two-column body ──────────────────────────────────────────────────── */
 .cols {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: 400px minmax(0, 1fr);
   gap: 0;
   align-items: start;
 }

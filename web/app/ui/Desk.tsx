@@ -268,14 +268,14 @@ export default function Desk() {
   return (
     <div className={s.shell}>
       <header className={s.masthead}>
-        <h1 className={s.wordmark}>
-          BONE<em>&middot;</em>DRY
-        </h1>
-        <p className={s.deck}>
-          A Uniswap v4 pool that holds nothing. Every fill is drawn from 1inch Aqua maker
-          wallets at the moment of the swap.
-        </p>
-        <NetworkSwitch chainId={chainId} onChange={setChainId} />
+        {/* Compact here, not a hero: the landing page already made the claim, and
+            this fold belongs to the thing the visitor came to use. */}
+        <div className={s.appNav}>
+          <a className={s.appMark} href="/">
+            BONE<em>&middot;</em>DRY
+          </a>
+          <NetworkSwitch chainId={chainId} onChange={setChainId} />
+        </div>
         <hr className={s.mastRule} />
         <div className={`${s.mastMeta} label`}>
           <span>{net.label} &middot; chain {net.id}</span>
