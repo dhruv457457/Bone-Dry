@@ -13,6 +13,7 @@ import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {BoneDryFork, IERC20} from "./Base.t.sol";
 import {Tap} from "../src/Tap.sol";
 import {Lens} from "../src/Lens.sol";
+import {Chains} from "../script/Chains.sol";
 import {Wellhead} from "../src/Wellhead.sol";
 
 /**
@@ -26,9 +27,31 @@ contract TapFillTest is BoneDryFork {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    IPoolManager constant PM = IPoolManager(0x498581fF718922c3f8e6A244956aF099B2652b2b);
+    /// @dev Assigned in setUp, not here: a state initialiser runs at construction,
+    ///      before createSelectFork, so block.chainid would still be anvil's.
+    IPoolManager PM;
     uint160 constant FLAGS = uint160(0x88); // beforeSwap | beforeSwapReturnDelta
     uint160 constant MAX_SQRT = 1461446703485210103287273052203988822378723970341;
+    uint160 constant MIN_SQRT = 4295128739;
+
+    /// @dev Selling USDC. Which side of the pool that is depends on the chain:
+    ///      WETH sorts below USDC on mainnet and above Circle's testnet USDC, so
+    ///      the direction inverts and cannot be written down as a constant.
+    function _sellingUsdcIsZeroForOne() internal view returns (bool) {
+        return !Chains.wethIsCurrency0();
+    }
+
+    function _limit() internal view returns (uint160) {
+        return _sellingUsdcIsZeroForOne() ? MIN_SQRT + 1 : MAX_SQRT;
+    }
+
+    function _params(uint256 sell) internal view returns (SwapParams memory) {
+        return SwapParams({
+            zeroForOne: _sellingUsdcIsZeroForOne(),
+            amountSpecified: -int256(sell),
+            sqrtPriceLimitX96: _limit()
+        });
+    }
 
     Tap tap;
     Lens lens;
@@ -38,6 +61,7 @@ contract TapFillTest is BoneDryFork {
 
     function setUp() public {
         _forkAndLoadFixture();
+        PM = IPoolManager(Chains.poolManager());
 
         lens = new Lens(aqua);
 
@@ -49,19 +73,30 @@ contract TapFillTest is BoneDryFork {
 
         swapRouter = new PoolSwapTest(PM);
 
-        // WETH (0x42..) sorts below USDC (0x83..), so it is currency0.
+        // Sorted, not assumed: the order flips between mainnet and Sepolia.
+        (address c0, address c1) = Chains.currencies();
         key = PoolKey({
-            currency0: Currency.wrap(address(WETH)),
-            currency1: Currency.wrap(address(USDC)),
+            currency0: Currency.wrap(c0),
+            currency1: Currency.wrap(c1),
             fee: 0,
             tickSpacing: 60,
             hooks: IHooks(hookAddr)
         });
-        PM.initialize(key, 79228162514264337593543950336);
+        // The pool may already exist — these tests are meant to run against a
+        // node Bone Dry is already deployed on, not only a virgin fork.
+        (uint160 existing,,,) = PM.getSlot0(key.toId());
+        if (existing == 0) PM.initialize(key, _startPrice());
 
         vm.label(hookAddr, "Tap");
         vm.label(address(PM), "PoolManager");
         vm.label(swapper, "swapper");
+    }
+
+    /// @dev Price is currency1/currency0, and the two chains order those
+    ///      oppositely, so the nominal starting price has to invert with them.
+    function _startPrice() internal view returns (uint160) {
+        uint160 wethFirst = 79228162514264337593543950336; // 1:1 in X96
+        return Chains.wethIsCurrency0() ? wethFirst : uint160((uint256(1) << 192) / wethFirst);
     }
 
     function _hookData(uint256 count) internal view returns (bytes memory) {
@@ -77,7 +112,7 @@ contract TapFillTest is BoneDryFork {
         USDC.approve(address(swapRouter), type(uint256).max);
         swapRouter.swap(
             key,
-            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            _params(sell),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             hookData
         );
@@ -203,7 +238,7 @@ contract TapFillTest is BoneDryFork {
         USDC.approve(address(swapRouter), type(uint256).max);
         swapRouter.swap(
             key,
-            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            _params(sell),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             _hookData(2)
         );
@@ -239,7 +274,7 @@ contract TapFillTest is BoneDryFork {
         USDC.approve(address(swapRouter), type(uint256).max);
         try swapRouter.swap(
             key,
-            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            _params(sell),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             _hookData(3)
         ) {
@@ -274,7 +309,7 @@ contract TapFillTest is BoneDryFork {
         USDC.approve(address(swapRouter), type(uint256).max);
         try swapRouter.swap(
             key,
-            SwapParams({zeroForOne: false, amountSpecified: -2, sqrtPriceLimitX96: MAX_SQRT}),
+            _params(2),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             _hookData(3)
         ) {
@@ -314,7 +349,7 @@ contract TapFillTest is BoneDryFork {
         vm.expectRevert();
         swapRouter.swap(
             key,
-            SwapParams({zeroForOne: false, amountSpecified: -int256(sell), sqrtPriceLimitX96: MAX_SQRT}),
+            _params(sell),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             _hookData(2)
         );
@@ -335,7 +370,10 @@ contract TapFillTest is BoneDryFork {
         assertGt(first, 0, "first swap should fill");
 
         uint160 afterFirst = _sqrtPrice();
-        assertLt(afterFirst, MAX_SQRT, "price was pinned at the limit by the first fill");
+        assertTrue(
+            _sellingUsdcIsZeroForOne() ? afterFirst > MIN_SQRT + 1 : afterFirst < MAX_SQRT,
+            "price was pinned at the limit by the first fill"
+        );
 
         uint256 second = _swap(1_000e6, _hookData(2));
         assertGt(second, 0, "the pool stopped being swappable after one fill");
@@ -360,7 +398,7 @@ contract TapFillTest is BoneDryFork {
 
         vm.startPrank(swapper, swapper);
         USDC.approve(address(wellhead), type(uint256).max);
-        uint256 reported = wellhead.swap(key, false, sell, 1, _hookData(2));
+        uint256 reported = wellhead.swap(key, _sellingUsdcIsZeroForOne(), sell, 1, _hookData(2));
         vm.stopPrank();
 
         uint256 gained = WETH.balanceOf(swapper) - wethBefore;
@@ -385,7 +423,7 @@ contract TapFillTest is BoneDryFork {
         vm.startPrank(swapper, swapper);
         USDC.approve(address(wellhead), type(uint256).max);
         vm.expectRevert();
-        wellhead.swap(key, false, 100e6, 100 ether, _hookData(1)); // absurd floor
+        wellhead.swap(key, _sellingUsdcIsZeroForOne(), 100e6, 100 ether, _hookData(1)); // absurd floor
         vm.stopPrank();
 
         assertEq(USDC.balanceOf(swapper), 100e6, "a reverted swap must cost nothing");

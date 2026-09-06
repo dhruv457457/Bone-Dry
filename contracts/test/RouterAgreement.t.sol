@@ -10,6 +10,7 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {Chains} from "../script/Chains.sol";
 
 interface IERC20 {
     function balanceOf(address) external view returns (uint256);
@@ -37,7 +38,7 @@ contract RouterAgreementTest is Test {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    IPoolManager constant PM = IPoolManager(0x498581fF718922c3f8e6A244956aF099B2652b2b);
+    IPoolManager PM;
     IERC20 constant USDC = IERC20(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);
     IERC20 constant WETH = IERC20(0x4200000000000000000000000000000000000006);
     address constant HOOK = 0x4444000000000000000000000000000000000088;
@@ -56,6 +57,7 @@ contract RouterAgreementTest is Test {
             vm.skip(true);
             return;
         }
+        PM = IPoolManager(Chains.poolManager());
         if (HOOK.code.length == 0) {
             // no Bone Dry pool deployed here; nothing to agree about
             vm.skip(true);
@@ -69,9 +71,10 @@ contract RouterAgreementTest is Test {
             uint256 quoted = vm.parseJsonUint(blob, ".quotedOut");
             bytes memory hookData = vm.parseJsonBytes(blob, ".hookData");
 
+            (address c0, address c1) = Chains.currencies();
             PoolKey memory key = PoolKey({
-                currency0: Currency.wrap(address(WETH)),
-                currency1: Currency.wrap(address(USDC)),
+                currency0: Currency.wrap(c0),
+                currency1: Currency.wrap(c1),
                 fee: 0,
                 tickSpacing: 60,
                 hooks: IHooks(HOOK)
@@ -87,9 +90,9 @@ contract RouterAgreementTest is Test {
             swapRouter.swap(
                 key,
                 SwapParams({
-                    zeroForOne: false,
+                    zeroForOne: !Chains.wethIsCurrency0(),
                     amountSpecified: -int256(amountIn),
-                    sqrtPriceLimitX96: MAX_SQRT
+                    sqrtPriceLimitX96: Chains.wethIsCurrency0() ? MAX_SQRT : uint160(4295128740)
                 }),
                 PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
                 hookData

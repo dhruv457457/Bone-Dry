@@ -114,3 +114,26 @@ so one `strategy.json` meant regenerating for Sepolia silently repointed the who
 mainnet test suite at contracts that do not exist there — nineteen tests failed
 with "Aqua has no code on Base". Fixtures are `strategy.<chainId>.json` now and
 every script and test reads the one for the chain it is on.
+
+## Strategies are immutable, permanently
+
+`ship()` requires `tokensCount == 0` and `dock()` sets it to `0xff`, never back to
+zero. So a strategy hash is spent the first time it is used and can never be
+shipped again — Aqua's own error is called `StrategiesMustBeImmutable`.
+
+Two consequences worth holding on to:
+
+- **A maker cannot edit a strategy.** Changing a curve means shipping a different
+  program, which is a different hash, and docking the old one. Any maker-facing
+  UI has to present that as "replace", never as "update".
+- **Tests need a chain where their hashes are unused.** Point `BASE_RPC_URL` at a
+  fork with Aqua deployed but nothing shipped against these makers; a fork that
+  has already been seeded will fail every test with an error about immutability
+  that has nothing to do with the code under test.
+
+## Status, 6 Sep
+
+Mainnet: 19 passing, 1 skipped. Base Sepolia: 4 of 11. The remaining seven revert
+with `NoSolventMaker` before the hook reaches its depth loop, which means the
+strategies array is arriving empty — fixture plumbing on the testnet path, not the
+contracts. Next session's first job.

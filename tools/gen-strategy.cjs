@@ -89,4 +89,5 @@ console.log('router (app) :', router);
 console.log('program      :', out.programHex, '  <- 2 bytes: opcode 0x11 (XYCSwap), 0 args');
 console.log('takerTraits  :', out.takerTraitsAndData);
 strategies.forEach((s, i) => console.log(`maker[${i}]     : ${s.maker}  hash ${s.strategyHash.slice(0, 18)}...`));
-console.log('\nwrote contracts/fixtures/strategy.json');
+console.log(`
+wrote contracts/fixtures/${file}`);
