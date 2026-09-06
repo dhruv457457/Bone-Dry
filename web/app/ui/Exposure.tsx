@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import s from "./desk.module.css";
 import { compact, short } from "@/lib/format";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import type { NetworkId } from "@/lib/networks";
 
@@ -114,7 +115,26 @@ export default function Exposure({
     };
   }, [chainId, address]);
 
-  if (!address) return null;
+  // No section to fall silent into any more -- this is the whole tab, so a
+  // disconnected wallet needs its own answer, not an empty page.
+  if (!address) {
+    return (
+      <section className={s.exposure}>
+        <div className={s.sectionHead}>
+          <h2 className="label">Your exposure &mdash; claimed against held</h2>
+          <span className="label">no wallet connected</span>
+        </div>
+        <div className={s.coverageEmpty}>
+          <p>
+            Connect a wallet to see your own coverage ratio: what you have claimed
+            across every strategy you have shipped, against what your wallet
+            actually holds.
+          </p>
+          <ConnectButton label="Connect wallet" chainStatus="none" showBalance={false} />
+        </div>
+      </section>
+    );
+  }
 
   if (error) {
     return (

@@ -70,6 +70,32 @@
 }
 .mastMeta span { white-space: nowrap; }
 
+/* ── page-level tabs ──────────────────────────────────────────────────── */
+/* Four jobs, four places: this is the thing that turns a scroll into a
+   dashboard. Underlined rather than boxed like the network/pair tabs above
+   it -- this is the primary nav, and it should read at a different weight. */
+.pageTabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--rule);
+}
+.pageTab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 10px 4px 12px;
+  margin-right: 22px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.pageTab:hover:not(:disabled) { color: var(--ink-soft); }
+.pageTabOn { color: var(--ink); border-bottom-color: var(--ink); }
+.pageTabOn:hover:not(:disabled) { color: var(--ink); }
+
 /* ── proof banner ─────────────────────────────────────────────────────── */
 .proof { display: grid; gap: 10px; }
 .proofFig {
@@ -212,6 +238,23 @@
   padding-top: 14px;
   border-top: 1px solid var(--rule);
 }
+/* A native <details>: no JS state, and the marker is the only thing telling
+   anyone this opens. That marker is worth the browser's default arrow. */
+.disclosure {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.disclosure summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.disclosure summary:hover { color: var(--ink-soft); }
+.disclosure[open] summary { color: var(--ink-soft); margin-bottom: 8px; }
 .blobBody {
   font-family: var(--mono);
   font-size: 11px;
@@ -378,6 +421,31 @@
   padding: 22px 0 4px;
 }
 .coverageEmpty p { margin: 0; max-width: 54ch; color: var(--ink-soft); font-size: 15px; }
+
+/* ── cross-link to the public lookup page ────────────────────────────── */
+.exploreLink {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 26px;
+  padding: 30px 0 0;
+  margin-top: 30px;
+  border-top: 1px solid var(--ink);
+}
+.exploreLink p { margin: 0; max-width: 54ch; color: var(--ink-soft); font-size: 15px; }
+.exploreLinkBtn {
+  border: 1px solid var(--ink);
+  padding: 9px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--ink);
+  white-space: nowrap;
+  transition: background 140ms linear, color 140ms linear;
+}
+.exploreLinkBtn:hover { background: var(--ink); color: var(--paper); }
 
 /* ── ship strategy ─────────────────────────────────────────────────────── */
 .ship { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }

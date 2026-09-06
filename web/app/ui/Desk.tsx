@@ -72,6 +72,11 @@ export default function Desk() {
     return availablePairs.find((p) => p.id === pairId) ?? availablePairs[0] ?? defaultPairFor(chainId);
   }, [availablePairs, pairId, chainId]);
 
+  // Four jobs, four views. Everything below used to be one long scroll --
+  // swap, become a maker, check your own exposure, and browse anyone else's --
+  // stacked on top of each other regardless of which one a visitor came for.
+  const [tab, setTab] = useState<"swap" | "provide" | "portfolio" | "explore">("swap");
+
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
   const tokenOut = flipped ? currentPair.token0 : currentPair.token1;
@@ -338,6 +343,10 @@ export default function Desk() {
         </div>
       </header>
 
+      <TabNav tab={tab} onChange={setTab} />
+
+      {tab === "swap" && (
+      <>
       {/* Swap first. The proof sits beside it rather than as a full-width band
           above: it is the reason to trust the number, not the headline. */}
       <div className={s.trade}>
@@ -442,32 +451,104 @@ export default function Desk() {
           </span>
         </div>
         <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
-        <HookData route={route} />
       </section>
 
-      <ShipStrategy
-        net={net}
-        tokenIn={tokenIn}
-        tokenOut={tokenOut}
-        address={address}
-        wrongChain={wrongChain}
-        onShipped={load}
-      />
+      {/* Real, and not the first thing anyone should have to look at. Collapsed
+          by default -- <details> costs no JS and needs no state of its own. */}
+      <HookDataDisclosure route={route} />
+      </>
+      )}
 
-      <Exposure
-        chainId={chainId}
-        address={address}
-        onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
-      />
+      {tab === "provide" && (
+        <ShipStrategy
+          net={net}
+          tokenIn={tokenIn}
+          tokenOut={tokenOut}
+          address={address}
+          wrongChain={wrongChain}
+          onShipped={load}
+        />
+      )}
 
-      <Coverage
-        coverage={coverage}
-        error={coverageError}
-        onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
-      />
+      {tab === "portfolio" && (
+        <Exposure
+          chainId={chainId}
+          address={address}
+          onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
+        />
+      )}
 
-      <Deployed net={net} />
+      {tab === "explore" && (
+        <>
+          <Coverage
+            coverage={coverage}
+            error={coverageError}
+            onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
+          />
+          <section className={s.exploreLink}>
+            <p>
+              Checking a wallet that has never touched this dashboard? The lookup
+              page takes any address, on either network, no connection required.
+            </p>
+            <Link href="/app/lookup" className={s.exploreLinkBtn}>
+              Check any wallet &rarr;
+            </Link>
+          </section>
+          <Deployed net={net} />
+        </>
+      )}
     </div>
+  );
+}
+
+/* The four jobs this dashboard does, as four places rather than one scroll.
+   Same tab visual language as the network/pair switchers above it, so the
+   page reads as one system rather than three different widgets bolted
+   together. */
+function TabNav({
+  tab,
+  onChange,
+}: {
+  tab: "swap" | "provide" | "portfolio" | "explore";
+  onChange: (t: "swap" | "provide" | "portfolio" | "explore") => void;
+}) {
+  const items: { id: typeof tab; label: string }[] = [
+    { id: "swap", label: "Swap" },
+    { id: "provide", label: "Provide" },
+    { id: "portfolio", label: "Portfolio" },
+    { id: "explore", label: "Explore" },
+  ];
+  return (
+    <div className={s.pageTabs} role="tablist" aria-label="Section">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          role="tab"
+          aria-selected={it.id === tab}
+          className={`${s.pageTab} ${it.id === tab ? s.pageTabOn : ""}`}
+          onClick={() => onChange(it.id)}
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* HookData, unwrapped only on request. It is the realest proof on this page --
+   the exact bytes Tap.beforeSwap acts on -- and also the least useful thing to
+   put in front of someone deciding whether to swap. */
+function HookDataDisclosure({ route }: { route: RouteResponse | null }) {
+  if (!route?.hookData) return null;
+  const bytes = (route.hookData.length - 2) / 2;
+  return (
+    <details className={s.disclosure}>
+      <summary className="label">
+        Technical proof &mdash; hookData handed to Tap.beforeSwap ({bytes} bytes,{" "}
+        {route.slices.length} {route.slices.length === 1 ? "strategy" : "strategies"})
+      </summary>
+      <div className={s.blobBody}>{route.hookData}</div>
+    </details>
   );
 }
 
@@ -942,24 +1023,6 @@ function CrossCheck({ check }: { check: CoverageResponse["onchainCrossCheck"] })
         </span>
       )}
     </p>
-  );
-}
-
-/* The calldata: shown, not hidden. This blob is the part of the system that
-   cannot live on-chain, and a judge should be able to see and decode it. */
-function HookData({ route }: { route: RouteResponse | null }) {
-  if (!route?.hookData) return null;
-  const bytes = (route.hookData.length - 2) / 2;
-  return (
-    <div className={s.blob}>
-      <div className={`${s.sectionHead} ${s.sectionHeadBare}`}>
-        <h2 className="label">hookData handed to Tap.beforeSwap</h2>
-        <span className="label">
-          {bytes} bytes &middot; {route.slices.length} strategies
-        </span>
-      </div>
-      <div className={s.blobBody}>{route.hookData}</div>
-    </div>
   );
 }
 
