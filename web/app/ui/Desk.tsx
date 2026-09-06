@@ -72,7 +72,7 @@ export default function Desk() {
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
 
-  const wallet = useWallet();
+  const wallet = useWallet(chainId);
   const [balance, setBalance] = useState<bigint | null>(null);
   const chainIdRef = useRef<NetworkId>(chainId);
   chainIdRef.current = chainId;
@@ -191,7 +191,7 @@ export default function Desk() {
    */
   const executeSwap = useCallback(async () => {
     if (!route?.hookData || !wallet.address || !net.wellhead) return;
-    const wc = walletClient();
+    const wc = walletClient(chainId);
     const account = wallet.address;
     // The chain this transaction belongs to. Everything below is async, and the
     // switcher is one click away.
@@ -407,6 +407,7 @@ export default function Desk() {
             balance={balance}
             decimals={tokenIn.decimals}
             wellhead={net.wellhead}
+            chainLabel={net.label}
             tx={txState}
             onSwap={executeSwap}
             onReload={load}
@@ -639,6 +640,7 @@ function SwapAction({
   balance,
   decimals,
   wellhead,
+  chainLabel,
   onSwap,
   onReload,
 }: {
@@ -649,6 +651,7 @@ function SwapAction({
   balance: bigint | null;
   decimals: number;
   wellhead: string;
+  chainLabel: string;
   onSwap: () => void;
   onReload: () => void;
 }) {
@@ -661,9 +664,8 @@ function SwapAction({
     <div className={s.actions}>
       {!wellhead ? (
         <p className={s.note}>
-          Read-only: no Wellhead router is configured for this chain. Deploy one with{" "}
-          <code>script/Deploy.s.sol</code> and set{" "}
-          <code>NEXT_PUBLIC_WELLHEAD_ADDRESS</code>.
+          Read-only on this network: no Wellhead router is deployed here. Everything
+          above still reads the chain directly — switch to Base Sepolia to trade.
         </p>
       ) : !wallet.available ? (
         <p className={s.note}>
@@ -675,7 +677,7 @@ function SwapAction({
           {wallet.connecting ? "Check your wallet..." : "Connect wallet"}
         </button>
       ) : wallet.wrongChain ? (
-        <button onClick={wallet.switchChain}>Switch to Base</button>
+        <button onClick={wallet.switchChain}>Switch to {chainLabel}</button>
       ) : (
         <button onClick={onSwap} disabled={pending || busy || nothingToFill || short_}>
           {tx.phase === "approving"

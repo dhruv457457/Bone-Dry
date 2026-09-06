@@ -8,8 +8,8 @@ import {
   type Hex,
   type EIP1193Provider,
 } from "viem";
-import { base } from "viem/chains";
-import { CHAIN_ID } from "@/lib/chain";
+import { base, baseSepolia } from "viem/chains";
+import type { NetworkId } from "@/lib/networks";
 
 /**
  * Wallet plumbing, deliberately small.
@@ -36,7 +36,16 @@ export type WalletState = {
   error: string | null;
 };
 
-export function useWallet() {
+/**
+ * @param expected the chain the app is currently pointed at.
+ *
+ * This used to compare against a module constant, which was true while the app
+ * only ever spoke to one network. Once the network became a thing the visitor
+ * picks, that constant made a wallet correctly on Base Sepolia read as "wrong
+ * chain" — and the button offered to move it to mainnet, where the router this
+ * app calls does not exist.
+ */
+export function useWallet(expected: NetworkId) {
   const [state, setState] = useState<WalletState>({
     available: false,
     address: null,
@@ -64,10 +73,10 @@ export function useWallet() {
             ...s,
             address: accounts[0],
             chainId,
-            wrongChain: chainId !== CHAIN_ID,
+            wrongChain: chainId !== expected,
           }));
         } else {
-          setState((s) => ({ ...s, chainId, wrongChain: chainId !== CHAIN_ID }));
+          setState((s) => ({ ...s, chainId, wrongChain: chainId !== expected }));
         }
       } catch {
         /* a provider that refuses to answer is the same as no provider */
@@ -80,7 +89,7 @@ export function useWallet() {
     };
     const onChain = (chainHex: unknown) => {
       const chainId = Number(BigInt(chainHex as Hex));
-      setState((s) => ({ ...s, chainId, wrongChain: chainId !== CHAIN_ID }));
+      setState((s) => ({ ...s, chainId, wrongChain: chainId !== expected }));
     };
 
     eth.on?.("accountsChanged", onAccounts);
@@ -89,7 +98,7 @@ export function useWallet() {
       eth.removeListener?.("accountsChanged", onAccounts);
       eth.removeListener?.("chainChanged", onChain);
     };
-  }, []);
+  }, [expected]);
 
   const connect = useCallback(async () => {
     if (typeof window === "undefined" || !window.ethereum) return;
@@ -104,33 +113,43 @@ export function useWallet() {
         ...s,
         address: accounts[0] ?? null,
         chainId,
-        wrongChain: chainId !== CHAIN_ID,
+        wrongChain: chainId !== expected,
         connecting: false,
       }));
     } catch (e) {
       setState((s) => ({ ...s, connecting: false, error: describe(e) }));
     }
-  }, []);
+  }, [expected]);
 
   const switchChain = useCallback(async () => {
     if (typeof window === "undefined" || !window.ethereum) return;
     try {
       await window.ethereum.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: `0x${CHAIN_ID.toString(16)}` }],
+        params: [{ chainId: `0x${expected.toString(16)}` }],
       });
     } catch (e) {
       setState((s) => ({ ...s, error: describe(e) }));
     }
-  }, []);
+  }, [expected]);
 
   return { ...state, connect, switchChain };
 }
 
-export function walletClient() {
+/**
+ * A wallet client for the chain the app is pointed at.
+ *
+ * This hardcoded Base, which was fine when Base was the only option and wrong
+ * the moment the network became selectable: viem checks the client's chain
+ * against the wallet's before it sends, so every Sepolia transaction — the whole
+ * free-to-try path — would have been rejected as a mismatch.
+ */
+export function walletClient(chainId: NetworkId) {
   if (typeof window === "undefined" || !window.ethereum) throw new Error("no wallet");
-  // The fork reports Base's own id, so Base's chain definition is the right one.
-  return createWalletClient({ chain: base, transport: custom(window.ethereum) });
+  return createWalletClient({
+    chain: chainId === 8453 ? base : baseSepolia,
+    transport: custom(window.ethereum),
+  });
 }
 
 /** A user closing the wallet popup is not an error worth shouting about. */

@@ -1,59 +1,12 @@
-import { createPublicClient, http, type Address } from "viem";
-import { base } from "viem/chains";
-
 /**
- * Bone Dry reads chain state directly. Everything here works unchanged against
- * Base mainnet or a local anvil fork of it — only RPC_URL changes.
- */
-export const RPC_URL = process.env.RPC_URL ?? "https://mainnet.base.org";
-
-export const client = createPublicClient({ chain: base, transport: http(RPC_URL) });
-
-export const AQUA: Address = "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a";
-export const ROUTER: Address = "0x111111338c5091E8440b67B168bAe16a668AC0De";
-export const POOL_MANAGER: Address = "0x498581fF718922c3f8e6A244956aF099B2652b2b";
-
-/** The Tap hook. Its low bits encode BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA,
- *  which is why the address is mined rather than chosen. */
-export const HOOK: Address = (process.env.HOOK_ADDRESS ??
-  "0x4444000000000000000000000000000000000088") as Address;
-
-/** Lens, if one is deployed on the chain we are pointed at. Optional: the
- *  coverage view works without it, and gains an on-chain cross-check with it. */
-export const LENS = (process.env.LENS_ADDRESS ?? "") as Address | "";
-
-/** Wellhead, the router a wallet actually calls. Set per deployment. */
-export const WELLHEAD = (process.env.NEXT_PUBLIC_WELLHEAD_ADDRESS ?? "") as Address | "";
-
-/** Chain the app expects a wallet to be on. A fork of Base reports 8453 too. */
-export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 8453);
-
-export const USDC: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-export const WETH: Address = "0x4200000000000000000000000000000000000006";
-
-/**
- * The Bone Dry pool, defined once.
+ * ABIs only.
  *
- * A PoolKey is a hash preimage: change any field and it is a different pool. It
- * was written out in the pool endpoint, in the swap call and in the deploy
- * script, which is three chances to drift into quoting one pool and swapping
- * against another.
- *
- * currency0 must be the lower address. WETH (0x42..) sorts below USDC (0x83..).
+ * Every address, RPC client and pool key used to live here as a module constant,
+ * which was correct while Bone Dry spoke to one chain. They are in networks.ts
+ * now, keyed by network — and they are not re-exported from here, because a
+ * single POOL_KEY or CHAIN_ID left lying about is how the currency ordering and
+ * the wrong-chain check silently went back to assuming Base.
  */
-export const POOL_KEY = {
-  currency0: WETH,
-  currency1: USDC,
-  fee: 0,
-  tickSpacing: 60,
-  hooks: HOOK,
-} as const;
-
-export const TOKENS: Record<string, { address: Address; symbol: string; decimals: number }> = {
-  [USDC.toLowerCase()]: { address: USDC, symbol: "USDC", decimals: 6 },
-  [WETH.toLowerCase()]: { address: WETH, symbol: "WETH", decimals: 18 },
-};
-
 export const aquaAbi = [
   {
     type: "event",
@@ -90,7 +43,6 @@ export const aquaAbi = [
     ],
   },
 ] as const;
-
 export const erc20Abi = [
   {
     type: "function",
@@ -117,7 +69,6 @@ export const erc20Abi = [
     outputs: [{ type: "uint256" }],
   },
 ] as const;
-
 export const wellheadAbi = [
   {
     type: "function",
@@ -143,7 +94,6 @@ export const wellheadAbi = [
     outputs: [{ name: "amountOut", type: "uint256" }],
   },
 ] as const;
-
 export const erc20WriteAbi = [
   {
     type: "function",
@@ -156,7 +106,6 @@ export const erc20WriteAbi = [
     outputs: [{ type: "bool" }],
   },
 ] as const;
-
 export const lensAbi = [
   {
     type: "function",
@@ -175,7 +124,6 @@ export const lensAbi = [
     ],
   },
 ] as const;
-
 export const poolManagerAbi = [
   {
     type: "function",
