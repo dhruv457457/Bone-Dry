@@ -338,8 +338,8 @@
 
 .swapCard {
   border: 1px solid var(--ink);
-  padding: 26px 26px 22px;
-  background: var(--paper);
+  padding: 31px 31px 26px;
+  background: var(--paper-sunk);
   /* Clips the flip control's divider to the card. Without it the 100vw rule
      runs out across the page, which reads as a stray border rather than a seam
      between the two amounts. */
