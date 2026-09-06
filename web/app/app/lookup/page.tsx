@@ -28,7 +28,7 @@ export default function LookupPage() {
       if (!raw) return;
 
       if (!isAddress(raw, { strict: false })) {
-        setError("Please enter a valid Ethereum address");
+        setError("not a valid address");
         setData(null);
         setQueriedAddress(null);
         return;
@@ -43,7 +43,7 @@ export default function LookupPage() {
         const res = await fetch(`/api/exposure?chain=${activeChain}&maker=${addr}`);
         const json = (await res.json()) as ExposureResponse;
         if (!res.ok) {
-          setError(json.error ?? `Query failed with status ${res.status}`);
+          setError(json.error ?? `query failed (${res.status})`);
           setData(null);
         } else {
           setData(json);
