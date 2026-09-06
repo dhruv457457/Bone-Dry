@@ -118,6 +118,47 @@ over it.
 
 **Suggestion:** state it on the capability-status page, one line, in bold.
 
+### 4. The SDK and `swap-vm` main are on different opcode tables, and nothing says so
+
+This one cost most of a day, so it is worth spelling out.
+
+1inch have never deployed Aqua to a testnet — `AQUA_CONTRACT_ADDRESSES` lists
+sixteen chains and every one is a mainnet. The advice in Discord is to deploy your
+own, which works: both repos build cleanly and `AquaRouter` needs one constructor
+argument. Aqua, the SwapVM router, and a whole v4 hook stack went onto Base
+Sepolia for under 0.0002 ETH of gas.
+
+Then every `quote` reverts.
+
+The reason is that `@1inch/swap-vm-sdk` emits `0x1100` for an XYC strategy —
+opcode `0x11` — which is what the routers on mainnet dispatch on. Building from
+`main` gets you a router where `XYCSwap` is `0x50`. Same SDK, same repo, an
+instruction set that does not match. The failure surfaces as a bare revert inside
+`quote`, so from the outside it is indistinguishable from an unfunded maker or a
+malformed order, and the natural assumption is that your own strategy encoding is
+wrong.
+
+Working out which tag matches the deployment is not obvious either. At `v1.0.2`
+the opcodes are a function-pointer jump table whose element 0 is deliberately
+overwritten with the array length, so the dispatched opcode is the static index
+minus one — `XYCSwap` sits at static 18 and dispatches as `0x11`. On `main` the
+same instruction is an enum entry at `0x50` in `src/libs/OpcodeList.sol`. Neither
+file mentions the other numbering, and the SDK does not declare which router
+version it targets.
+
+Three things would have saved the day:
+
+- A line in the SDK's README naming the `swap-vm` tag its programs are built for.
+- A `version()` on the router that a client can compare against, or an opcode-set
+  identifier in the EIP-712 domain.
+- An `UnknownOpcode(uint8)` revert instead of falling through to a generic one, so
+  a mismatch says what it is.
+
+The wider point: telling hackathon teams to self-deploy is generous and it works,
+but it silently opts them into whatever `main` looks like that week. A testnet
+deployment of Aqua at the canonical address would remove the whole class of
+problem.
+
 ### 3. Docs and package are on different opcode numbering
 
 `OpcodeList.sol` has `XYCSwap = 0x50`, but `AquaXYCAmmStrategy.new().build()` emits
