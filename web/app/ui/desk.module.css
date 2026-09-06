@@ -56,7 +56,7 @@
   border: 1px solid currentColor;
   opacity: 0.7;
 }
-.netPurpose { margin: 0; font-size: 13px; color: var(--ink-soft); max-width: 52ch; }
+.netPurpose { margin: 0; font-size: 12px; color: var(--ink-faint); max-width: 40ch; }
 
 .mastRule { border: 0; border-top: 2px solid var(--ink); margin: 28px 0 0; }
 .mastMeta {
@@ -69,25 +69,18 @@
 .mastMeta span { white-space: nowrap; }
 
 /* ── proof banner ─────────────────────────────────────────────────────── */
-.proof {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 24px;
-  padding: 26px 0;
-  border-bottom: 1px solid var(--rule);
-}
+.proof { display: grid; gap: 10px; }
 .proofFig {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-size: clamp(38px, 7vw, 68px);
+  font-size: clamp(44px, 6vw, 72px);
   line-height: 1;
   letter-spacing: -0.05em;
 }
 .proofDry { color: var(--slate); }
 .proofWet { color: var(--red); }
-.proofNote { max-width: 46ch; color: var(--ink-soft); font-size: 15px; }
-.proofSide { text-align: right; display: grid; gap: 3px; }
+.proofNote { max-width: 40ch; color: var(--ink-soft); font-size: 14px; margin: 6px 0 0; }
+.proofSide { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline; margin-top: 4px; }
 
 /* ── two-column body ──────────────────────────────────────────────────── */
 .cols {
@@ -281,3 +274,94 @@
   color: var(--ink-soft);
 }
 .deployNote code { font-family: var(--mono); font-size: 11px; }
+
+/* ── the trade row ────────────────────────────────────────────────────────
+   The old layout gave the swap, the maker table and the coverage list the same
+   visual weight, which is what "too texty" actually means: nothing tells the eye
+   where to start. The swap card is heavier than everything around it now, and
+   the proof supports it from the side instead of shouting from a band above. */
+.trade {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+  padding: 30px 0 40px;
+}
+@media (max-width: 900px) { .trade { grid-template-columns: 1fr; gap: 26px; } }
+
+.swapCard {
+  border: 1px solid var(--ink);
+  padding: 26px 26px 22px;
+  background: var(--paper);
+  /* Clips the flip control's divider to the card. Without it the 100vw rule
+     runs out across the page, which reads as a stray border rather than a seam
+     between the two amounts. */
+  overflow: hidden;
+}
+
+.fieldHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+/* Balance doubles as the max button — one affordance instead of a label and a
+   separate control nobody notices. */
+.maxBtn {
+  border: 0;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.maxBtn:hover:not(:disabled) { background: none; color: var(--ink); }
+
+.swapCard .amountRow input { font-size: 38px; }
+.swapCard .readout { font-size: 38px; }
+
+.flipBtn {
+  display: block;
+  margin: 18px auto;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-soft);
+  position: relative;
+  z-index: 1;
+}
+/* A hairline through the middle, so the control reads as a hinge between the two
+   amounts rather than a button someone forgot to place. */
+.swapCard .field + .flipBtn::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100vw;
+  height: 1px;
+  background: var(--rule-faint);
+  transform: translate(-50%, -50%);
+  z-index: -1;
+}
+
+.beat { margin: 12px 0 0; font-size: 13px; color: var(--ink-soft); }
+.beat b { font-weight: 400; color: var(--slate); font-family: var(--mono); }
+
+.proofCard { border: 1px solid var(--rule); padding: 22px 22px 14px; }
+
+/* Definition list rather than a seven-row table of small type: the numbers a
+   swapper acts on, and nothing else. The rest is in the maker book below. */
+.facts { margin: 22px 0 0; padding: 0; display: grid; gap: 0; }
+.facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule-faint);
+}
+.facts dt, .facts dd { margin: 0; }
+
+.book { padding-top: 6px; }

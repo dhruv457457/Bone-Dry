@@ -337,27 +337,22 @@ export default function Desk() {
         </div>
       </header>
 
-      <PoolProof pool={pool} />
-
-      <div className={s.cols}>
-        <section className={s.left}>
-          <div className={s.sectionHead}>
-            <h2 className="label">Swap</h2>
-            <span className="label">
-              {route?.makersUsed ?? 0} of {route?.makersConsidered ?? 0} makers
-            </span>
-          </div>
-
+      {/* Swap first. The proof sits beside it rather than as a full-width band
+          above: it is the reason to trust the number, not the headline. */}
+      <div className={s.trade}>
+        <section className={s.swapCard}>
           <div className={s.field}>
-            <span className="label">
-              You pay
+            <div className={s.fieldHead}>
+              <span className="label">You pay</span>
               {balance !== null && (
-                <span className={s.balance}>
-                  {" "}
-                  &middot; wallet holds {units(balance, tokenIn.decimals, 4)}
-                </span>
+                <button
+                  className={s.maxBtn}
+                  onClick={() => setInput(units(balance, tokenIn.decimals, 6).replace(/,/g, ""))}
+                >
+                  {units(balance, tokenIn.decimals, 4)} {tokenIn.symbol}
+                </button>
               )}
-            </span>
+            </div>
             <div className={s.amountRow}>
               <input
                 value={input}
@@ -369,11 +364,13 @@ export default function Desk() {
             </div>
           </div>
 
-          <div className={s.flip}>
-            <button className={s.flipBtn} onClick={() => setFlipped((f) => !f)}>
-              flip direction
-            </button>
-          </div>
+          <button
+            className={s.flipBtn}
+            onClick={() => setFlipped((f) => !f)}
+            aria-label="Swap the direction"
+          >
+            &#8645;
+          </button>
 
           <div className={s.field}>
             <span className="label">You receive</span>
@@ -383,52 +380,18 @@ export default function Desk() {
               {route ? units(route.amountOut, tokenOut.decimals, 6) : "--"}{" "}
               <span className={s.ticker}>{tokenOut.symbol}</span>
             </div>
-          </div>
-
-          <ul className={s.stats}>
-            <li>
-              <span className="label">Deepest maker alone</span>
-              <span className="num">
-                {route ? units(route.singleMakerAmountOut, tokenOut.decimals, 6) : "--"}
-              </span>
-            </li>
-            <li>
-              <span className="label">Split routing gains</span>
-              <span className={`num ${improvement >= 0 ? s.gain : s.loss}`}>
-                {route ? `${improvement >= 0 ? "+" : ""}${improvement} bps` : "--"}
-              </span>
-            </li>
-            <li>
-              <span className="label">Skipped as insolvent</span>
-              <span className="num">{route?.makersSkipped.length ?? 0}</span>
-            </li>
-            <li>
-              <span className="label">Quote reverts (gated)</span>
-              <span className="num">{route?.makersUnfillable?.length ?? 0}</span>
-            </li>
-            <li>
-              <span className="label">Cut back to real depth</span>
-              <span className={`num ${route?.clamped?.length ? s.loss : ""}`}>
-                {route?.clamped?.length ?? 0}
-              </span>
-            </li>
-            {route && route.unfilled !== "0" && (
-              <li>
-                <span className="label">Unfillable at this size</span>
-                <span className={`num ${s.loss}`}>
-                  {units(route.unfilled, tokenIn.decimals, 2)} {tokenIn.symbol}
-                </span>
-              </li>
+            {route && improvement > 0 && (
+              <p className={s.beat}>
+                <b>+{improvement} bps</b> better than the deepest maker alone, by splitting
+                across {route.makersUsed}
+              </p>
             )}
-            <li>
-              <span className="label">Pool liquidity consumed</span>
-              <span className="num">0</span>
-            </li>
-          </ul>
+          </div>
 
           <SwapAction
             route={route}
             busy={busy}
+            tx={txState}
             balance={balance}
             decimals={tokenIn.decimals}
             wellhead={net.wellhead}
@@ -436,26 +399,50 @@ export default function Desk() {
             address={address}
             wrongChain={wrongChain}
             onSwitch={() => switchChain({ chainId })}
-            tx={txState}
             onSwap={executeSwap}
             onReload={load}
           />
-
-          {route?.reason && <p className={s.err}>{route.reason}</p>}
-          {error && <p className={s.err}>{error}</p>}
         </section>
 
-        <section className={s.right}>
-          <div className={s.sectionHead}>
-            <h2 className="label">Maker book &mdash; {tokenOut.symbol}</h2>
-            <span className="label">
-              {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : "..."}
-            </span>
-          </div>
-          <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
-          <HookData route={route} />
-        </section>
+        <aside className={s.proofCard}>
+          <PoolProof pool={pool} />
+          <dl className={s.facts}>
+            <div>
+              <dt className="label">Filled from</dt>
+              <dd className="num">
+                {route?.makersUsed ?? 0} of {route?.makersConsidered ?? 0} wallets
+              </dd>
+            </div>
+            <div>
+              <dt className="label">Skipped, cannot pay</dt>
+              <dd className="num">{route?.makersSkipped.length ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="label">Quote reverts</dt>
+              <dd className="num">{route?.makersUnfillable?.length ?? 0}</dd>
+            </div>
+            {route && route.unfilled !== "0" && (
+              <div>
+                <dt className="label">Unfillable at this size</dt>
+                <dd className={`num ${s.loss}`}>
+                  {units(route.unfilled, tokenIn.decimals, 2)} {tokenIn.symbol}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </aside>
       </div>
+
+      <section className={s.book}>
+        <div className={s.sectionHead}>
+          <h2 className="label">Maker book &mdash; {tokenOut.symbol}</h2>
+          <span className="label">
+            {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : "..."}
+          </span>
+        </div>
+        <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
+        <HookData route={route} />
+      </section>
 
       <Coverage coverage={coverage} error={coverageError} />
 
@@ -758,8 +745,11 @@ function PoolProof({ pool }: { pool: PoolResponse | null }) {
           {pool ? pool.liquidity : "--"}
         </div>
         <p className={s.proofNote}>
-          {pool?.note ??
-            "Reading slot 6 of the PoolManager for this pool id. A Bone Dry pool never holds a position, so this figure is zero before a swap and zero after one."}
+          {pool
+            ? pool.initialized
+              ? "Live pool. Zero before a swap, zero after one."
+              : "Not initialized on this chain, so this zero proves nothing."
+            : "Reading PoolManager storage…"}
         </p>
       </div>
       <div className={s.proofSide}>
