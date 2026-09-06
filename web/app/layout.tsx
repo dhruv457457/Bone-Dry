@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import "lenis/dist/lenis.css";
 import "./globals.css";
+import Motion from "./ui/Motion";
 
 export const metadata: Metadata = {
   title: "Bone Dry",
@@ -10,7 +12,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <Motion>{children}</Motion>
+      </body>
     </html>
   );
 }

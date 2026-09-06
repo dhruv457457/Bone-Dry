@@ -1,5 +1,5 @@
-import Desk from "./ui/Desk";
+import Landing from "./ui/Landing";
 
 export default function Home() {
-  return <Desk />;
+  return <Landing />;
 }

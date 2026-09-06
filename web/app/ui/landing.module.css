@@ -1,0 +1,235 @@
+/* The landing page. Same bone/beige system as the app — the motion is the new
+   thing here, not the palette. */
+
+.wrap { overflow-x: clip; }
+
+/* ── hero ─────────────────────────────────────────────────────────────── */
+.hero {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 26px 24px 40px;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.nav {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  position: relative;
+  z-index: 3;
+}
+.mark {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+.mark em { font-style: normal; color: var(--ink-faint); }
+.navLinks { display: flex; gap: 20px; align-items: baseline; }
+
+.enter {
+  border: 1px solid var(--ink);
+  padding: 7px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: background 140ms linear, color 140ms linear;
+}
+.enter:hover { background: var(--ink); color: var(--paper); }
+
+.heroBody {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  position: relative;
+  z-index: 2;
+  padding: 40px 0;
+}
+
+.claim {
+  font-size: clamp(46px, 10.5vw, 152px);
+  line-height: 0.85;
+  letter-spacing: -0.045em;
+  margin: 0;
+  max-width: 14ch;
+}
+/* Each line rides in separately, so the sentence assembles rather than fades. */
+.claimLine { display: block; overflow: hidden; }
+.claimLine > span { display: block; will-change: transform; }
+
+.deck {
+  margin: 30px 0 0;
+  max-width: 46ch;
+  font-size: clamp(16px, 1.5vw, 19px);
+  color: var(--ink-soft);
+}
+
+.heroFoot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+}
+
+/* ── the floating maker cards ─────────────────────────────────────────── */
+.field {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.card {
+  position: absolute;
+  width: 232px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: 9px 11px;
+  will-change: transform;
+}
+/* The unbacked ones are drawn as outlines: present, promising, hollow. */
+.ghost {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--red);
+}
+.cardTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cardTag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.cardTag::before { content: "\25B8  "; }
+.cardAddr {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: -0.02em;
+  margin-top: 3px;
+}
+.cardRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.cardRow span:first-child { color: var(--ink-faint); }
+.gone { color: var(--red); }
+.ok { color: var(--slate); }
+
+/* ── the dark panel ───────────────────────────────────────────────────── */
+.dark {
+  position: relative;
+  background: var(--ink);
+  color: var(--paper);
+  margin-top: 8vh;
+  padding: clamp(80px, 14vh, 170px) 24px;
+  /* the notched corner, same trick as the reference */
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 34px), calc(100% - 34px) 100%, 0 100%);
+  overflow: hidden;
+}
+.darkInner {
+  max-width: 1240px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 2;
+  text-align: center;
+}
+.finding {
+  font-size: clamp(28px, 5.2vw, 66px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  margin: 0 auto;
+  max-width: 19ch;
+}
+.finding b { font-weight: 400; color: var(--red-bright); }
+.findingNote {
+  margin: 26px auto 0;
+  max-width: 54ch;
+  color: rgba(251, 250, 246, 0.62);
+  font-size: 16px;
+}
+
+/* Cards behind the statement, dimmed so the sentence still wins the squint test */
+.darkField { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.darkCard {
+  position: absolute;
+  width: 250px;
+  border: 1px solid rgba(251, 250, 246, 0.16);
+  padding: 9px 11px;
+  will-change: transform;
+  background: rgba(251, 250, 246, 0.03);
+}
+.darkCard .cardTag { color: rgba(251, 250, 246, 0.42); }
+.darkCard .cardRow span:first-child { color: rgba(251, 250, 246, 0.42); }
+.darkGhost { border-style: dashed; border-color: rgba(214, 78, 43, 0.55); }
+
+/* ── proof strip ──────────────────────────────────────────────────────── */
+.proofStrip {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(70px, 12vh, 130px) 24px;
+  display: grid;
+  gap: 46px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.proofItem { border-top: 1px solid var(--ink); padding-top: 14px; }
+.proofFig {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(34px, 4.4vw, 56px);
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+.proofSay { margin: 10px 0 0; color: var(--ink-soft); font-size: 15px; max-width: 34ch; }
+
+/* ── closing ──────────────────────────────────────────────────────────── */
+.close {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px clamp(80px, 14vh, 150px);
+  text-align: center;
+}
+.closeClaim {
+  font-size: clamp(30px, 5vw, 62px);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  margin: 0 auto 30px;
+  max-width: 17ch;
+}
+.cta {
+  display: inline-block;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 13px 30px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: opacity 140ms linear;
+}
+.cta:hover { opacity: 0.84; }
+.ctaNote { margin: 16px 0 0; font-size: 13px; color: var(--ink-faint); }
+
+@media (max-width: 900px) {
+  /* The cards are decoration; on a narrow screen they would sit on the words. */
+  .field, .darkField { display: none; }
+}
