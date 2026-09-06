@@ -27,7 +27,7 @@ abstract contract BoneDryFork is Test {
     function _forkAndLoadFixture() internal {
         vm.createSelectFork(vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org")));
 
-        string memory j = vm.readFile("fixtures/strategy.json");
+        string memory j = vm.readFile(string.concat("fixtures/strategy.", vm.toString(block.chainid), ".json"));
         aqua = IAqua(vm.parseJsonAddress(j, ".aqua"));
         router = ISwapVM(vm.parseJsonAddress(j, ".router"));
         takerTraits = vm.parseJsonBytes(j, ".takerTraitsAndData");

@@ -85,3 +85,32 @@ other people's real behaviour.
 
 **Base Sepolia — the playground.** Our Aqua, our pool, our makers, free tokens.
 Connect a wallet and actually swap, actually make markets, for nothing.
+
+## Rehearsed on a fork, 6 Sep
+
+The whole stack went up against `anvil --fork-url https://sepolia.base.org`:
+
+| | |
+|---|---|
+| Aqua (AquaRouter) | `0x889B728bCb44E614B464bB71d1e70666bA2683DF` |
+| AquaSwapVMRouter | `0x18A3a929FfdeBC586D07aEBFCDF6496DccCF89c3` |
+| Lens | `0x382f5bbCe04f50D5CD6DE7991fE666E718E39bBE` |
+| Tap | `0x4444000000000000000000000000000000000088` |
+| Wellhead | `0x88739809c2fe3f69bE7D04cac43afbe2D2CdF3A4` |
+
+Makers shipped against our own Aqua and the pool initialized. Two things only a
+rehearsal would have found:
+
+**The currency order flips between the chains.** Mainnet has WETH `0x4200..` below
+USDC `0x8335..`; Sepolia has Circle's USDC at `0x036C..`, below WETH. So WETH is
+currency0 on one chain and currency1 on the other. A pool key written for mainnet
+is rejected outright with `CurrenciesOutOfOrderOrEqual` — the loud failure — but
+`zeroForOne` inverts too, which is the quiet one: a hardcoded direction sells the
+wrong token. `Chains.currencies()` sorts, and the initial sqrt price is inverted
+to match, since price is quoted currency1/currency0.
+
+**The fixture is per chain.** Aqua sits at a different address on every network,
+so one `strategy.json` meant regenerating for Sepolia silently repointed the whole
+mainnet test suite at contracts that do not exist there — nineteen tests failed
+with "Aqua has no code on Base". Fixtures are `strategy.<chainId>.json` now and
+every script and test reads the one for the chain it is on.

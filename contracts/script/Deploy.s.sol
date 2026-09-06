@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Script, console} from "forge-std/Script.sol";
+import {Chains} from "./Chains.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -28,9 +29,10 @@ interface IExtsload {
 }
 
 contract Deploy is Script {
-    address constant PM = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
-    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant WETH = 0x4200000000000000000000000000000000000006;
+    address immutable PM = Chains.poolManager();
+    address immutable USDC = Chains.usdc();
+    address immutable WETH = Chains.weth();
+
 
     uint160 constant FLAGS = 0x88; // BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA
     address constant HOOK = address(uint160(0x4444 << 144) | FLAGS);
@@ -38,11 +40,15 @@ contract Deploy is Script {
     /// @dev PoolManager._pools lives at slot 6; slot0 is the first word of the state.
     uint256 constant POOLS_SLOT = 6;
 
-    // 1 WETH ~ 3300 USDC. sqrtPriceX96 for currency1/currency0 at that ratio.
+    // Nominal. A Bone Dry pool never prices anything — the hook consumes the whole
+    // swap and the makers' own curves set the rate — so this only has to be a
+    // valid, non-extreme starting point. What is NOT cosmetic is the direction:
+    // sqrtPrice is currency1/currency0, and the two chains order those oppositely,
+    // so the value has to be inverted on whichever chain puts USDC first.
     uint160 constant SQRT_PRICE = 4543168963294864840402813952; // ~ sqrt(3300e6/1e18) << 96
 
     function run() external {
-        string memory jsonBlob = vm.readFile("fixtures/strategy.json");
+        string memory jsonBlob = vm.readFile(string.concat("fixtures/strategy.", vm.toString(block.chainid), ".json"));
         IAqua aqua = IAqua(vm.parseJsonAddress(jsonBlob, ".aqua"));
         ISwapVM router = ISwapVM(vm.parseJsonAddress(jsonBlob, ".router"));
 
@@ -58,9 +64,10 @@ contract Deploy is Script {
         // Move the code to the address whose bits declare the permissions.
         vm.rpc("anvil_setCode", string.concat('["', vm.toString(HOOK), '","', vm.toString(address(staging).code), '"]'));
 
+        (address c0, address c1) = Chains.currencies();
         PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(WETH),
-            currency1: Currency.wrap(USDC),
+            currency0: Currency.wrap(c0),
+            currency1: Currency.wrap(c1),
             fee: 0,
             tickSpacing: 60,
             hooks: IHooks(HOOK)
@@ -72,9 +79,13 @@ contract Deploy is Script {
         bytes32 stateSlot = keccak256(abi.encode(poolId, uint256(POOLS_SLOT)));
         uint160 sqrtPrice = uint160(uint256(IExtsload(PM).extsload(stateSlot)));
 
+        // 2**192 / p inverts a sqrtX96 price, because (2**96)**2 == 2**192.
+        uint160 startPrice =
+            Chains.wethIsCurrency0() ? SQRT_PRICE : uint160((1 << 192) / uint256(SQRT_PRICE));
+
         if (sqrtPrice == 0) {
             vm.startBroadcast(pk);
-            IPoolManager(PM).initialize(key, SQRT_PRICE);
+            IPoolManager(PM).initialize(key, startPrice);
             vm.stopBroadcast();
             console.log("pool initialized");
         } else {

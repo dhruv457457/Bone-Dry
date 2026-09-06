@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Script, console} from "forge-std/Script.sol";
+import {Chains} from "./Chains.sol";
 import {IAqua} from "../src/interfaces/IAqua.sol";
 
 interface IWETH {
@@ -22,8 +23,9 @@ interface IERC20 {
  *   forge script script/Seed.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
  */
 contract Seed is Script {
-    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant WETH = 0x4200000000000000000000000000000000000006;
+    address immutable USDC = Chains.usdc();
+    address immutable WETH = Chains.weth();
+
 
     // Anvil's first three deterministic accounts. These are published in the
     // anvil banner and shipped inside forge-std's own tests — they are test
@@ -38,7 +40,7 @@ contract Seed is Script {
     uint256[3] REAL = [3 ether, 2 ether, 0];
 
     function run() external {
-        string memory j = vm.readFile("fixtures/strategy.json");
+        string memory j = vm.readFile(string.concat("fixtures/strategy.", vm.toString(block.chainid), ".json"));
         IAqua aqua = IAqua(vm.parseJsonAddress(j, ".aqua"));
         address router = vm.parseJsonAddress(j, ".router");
 

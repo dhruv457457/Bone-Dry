@@ -45,8 +45,17 @@ contract RouterAgreementTest is Test {
 
     function test_apiQuoteMatchesWhatTheChainPays() public {
         // The hook and the seeded makers only exist on the chain the API is
-        // pointed at, so this forks that same node rather than public Base.
-        vm.createSelectFork(vm.envOr("LOCAL_RPC_URL", string("http://127.0.0.1:8545")));
+        // pointed at, so this forks that same node rather than public Base. When
+        // nothing is running there the test has nothing to say — createSelectFork
+        // throws on a refused connection, which reads as a failure rather than an
+        // absent fixture, so the connection is tried before it is trusted.
+        string memory rpc = vm.envOr("LOCAL_RPC_URL", string("http://127.0.0.1:8545"));
+        try vm.createSelectFork(rpc) {
+            // node is up; carry on
+        } catch {
+            vm.skip(true);
+            return;
+        }
         if (HOOK.code.length == 0) {
             // no Bone Dry pool deployed here; nothing to agree about
             vm.skip(true);

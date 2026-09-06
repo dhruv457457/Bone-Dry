@@ -23,8 +23,22 @@ const MAKERS = [
   '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
 ];
 
-const router = String(AQUA_SWAP_VM_CONTRACT_ADDRESSES[CHAIN]);
-const aqua = String(AQUA_CONTRACT_ADDRESSES[CHAIN]);
+// The SDK only knows mainnets — sixteen of them, no testnets. On a chain where
+// we deployed Aqua ourselves the lookup returns undefined, which stringifies to
+// "undefined" and produces strategies pointing at nothing, silently. So an
+// override is required rather than optional on any chain the SDK does not know.
+const known = (table, name) => {
+  const found = table[CHAIN];
+  if (found) return String(found);
+  throw new Error(
+    `no ${name} address for chain ${CHAIN} in the 1inch SDK (it ships mainnets only).
+` +
+    `Deploy it and pass the address: ${name.toUpperCase()}_ADDRESS=0x... node gen-strategy.cjs`
+  );
+};
+
+const router = process.env.ROUTER_ADDRESS ?? known(AQUA_SWAP_VM_CONTRACT_ADDRESSES, 'router');
+const aqua = process.env.AQUA_ADDRESS ?? known(AQUA_CONTRACT_ADDRESSES, 'aqua');
 
 const program = AquaXYCAmmStrategy.new().build();
 const traits = MakerTraits.default().with({ useAquaInsteadOfSignature: true });
@@ -63,7 +77,11 @@ const out = {
 
 const dir = path.resolve(__dirname, '../contracts/fixtures');
 fs.mkdirSync(dir, { recursive: true });
-fs.writeFileSync(path.join(dir, 'strategy.json'), JSON.stringify(out, null, 2));
+// One fixture per chain. Aqua lives at a different address on every network we
+// deploy it to, and a single strategy.json means regenerating for one chain
+// silently repoints every test and script at the other one's contracts.
+const file = `strategy.${CHAIN}.json`;
+fs.writeFileSync(path.join(dir, file), JSON.stringify(out, null, 2));
 
 console.log('chain        :', CHAIN);
 console.log('aqua         :', aqua);
