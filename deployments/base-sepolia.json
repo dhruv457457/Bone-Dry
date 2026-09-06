@@ -1,0 +1,19 @@
+{
+  "chainId": 84532,
+  "network": "base-sepolia",
+  "note": "Aqua and the SwapVM router are our own deployments, built unmodified from 1inch/aqua and 1inch/swap-vm. 1inch have never deployed Aqua to a testnet.",
+  "aqua": "0x7a062f824FAbdf2360354Ad52B3752065150Da61",
+  "swapVmRouter": "0x92435B930B6bD8F931f7B2c1366864ff5257c25a",
+  "lens": "0x4A428273D8AEeDEf5cd45a8fc6c6Cf7c2C813297",
+  "tap": "0x2ae6ABe034A4eF4979bFA766aCB978856E574088",
+  "wellhead": "0xba3f67db8697aeCfAb6Bd35F3146368B61E24Cd2",
+  "poolManager": "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
+  "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "makers": [
+    "0xe4436BCfcb3FB515035e6880328197195D45eC3B",
+    "0xEeA25b4D709fF72E8443f27a2719b11B1342d28B",
+    "0x4c8A0D6aB1a43ce95caa0462379D27e92326546A"
+  ],
+  "status": "deployed and seeded; swaps blocked on a SwapVM opcode mismatch, see DEPLOY-TESTNET.md"
+}

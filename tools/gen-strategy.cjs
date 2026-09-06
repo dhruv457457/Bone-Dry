@@ -17,10 +17,13 @@ const { keccak256 } = require('viem');
 const CHAIN = Number(process.env.CHAIN_ID || 8453); // Base
 
 // Anvil's deterministic accounts 0..2 — three independent makers.
+// Anvil's published accounts by default, which is right for a local fork and
+// wrong for a public chain — anyone holding those keys could dock the strategies
+// out from under a live demo. Override on any network that is not throwaway.
 const MAKERS = [
-  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
-  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  process.env.MAKER0 ?? '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+  process.env.MAKER1 ?? '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  process.env.MAKER2 ?? '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
 ];
 
 // The SDK only knows mainnets — sixteen of them, no testnets. On a chain where
@@ -40,7 +43,12 @@ const known = (table, name) => {
 const router = process.env.ROUTER_ADDRESS ?? known(AQUA_SWAP_VM_CONTRACT_ADDRESSES, 'router');
 const aqua = process.env.AQUA_ADDRESS ?? known(AQUA_CONTRACT_ADDRESSES, 'aqua');
 
+// The SDK emits 0x1100 — opcode 0x11 — which is what the routers 1inch deployed
+// to mainnet dispatch on. The swap-vm main branch has since renumbered XYCSwap to
+// 0x50, so a router you build from source today does not understand the SDK's own
+// output and every quote reverts. Override when your router is not theirs.
 const program = AquaXYCAmmStrategy.new().build();
+if (process.env.PROGRAM) program.hexString = process.env.PROGRAM;
 const traits = MakerTraits.default().with({ useAquaInsteadOfSignature: true });
 
 const strategies = MAKERS.map((m) => {

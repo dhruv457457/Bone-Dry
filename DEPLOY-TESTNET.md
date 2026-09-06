@@ -137,3 +137,43 @@ Mainnet: 19 passing, 1 skipped. Base Sepolia: 4 of 11. The remaining seven rever
 with `NoSolventMaker` before the hook reaches its depth loop, which means the
 strategies array is arriving empty — fixture plumbing on the testnet path, not the
 contracts. Next session's first job.
+
+## Live on Base Sepolia, 6 Sep
+
+Everything is deployed and seeded. Addresses in `deployments/base-sepolia.json`.
+
+The hook address is mined, not chosen: a v4 hook advertises its permissions
+through the low fourteen bits of its own address, so `Deploy.s.sol` grinds a
+CREATE2 salt until the result carries exactly BEFORE_SWAP |
+BEFORE_SWAP_RETURNS_DELTA and nothing else. `0x2ae6…4088` — and
+`0x4088 & 0x3FFF == 0x0088`. Total gas for the whole stack was under 0.0002 ETH.
+
+`Lens` reads correctly against it. All three makers promise 0.015 WETH:
+
+| Maker | Promises | Deliverable |
+|---|---|---|
+| `0xe4436B…` | 0.015 | 0.015 |
+| `0xEeA25b…` | 0.015 | 0.010 |
+| `0x4c8A0D…` | 0.015 | 0 |
+
+### Blocked: the SwapVM opcode numbering moved
+
+Swaps revert. Every `router.quote` fails, so every maker is skipped and the hook
+raises `NoSolventMaker`.
+
+The cause is a version skew, not our code. The SDK emits `0x1100` for an XYC
+strategy — opcode `0x11` — which is what the routers 1inch deployed to mainnet
+dispatch on. But `swap-vm` `main` numbers `XYCSwap` as `0x50`
+(`src/libs/OpcodeList.sol`), so a router built from source today does not
+understand the SDK's own output. Rebuilding with `PROGRAM=0x5000` did not fix it
+either, so the program encoding differs by more than the opcode byte.
+
+Three ways out, cheapest first:
+
+1. Build the router from the tag 1inch actually deployed rather than `main`, so
+   the SDK's programs are valid again. `v1.0.0`, `v1.0.1` and `v1.0.2` exist; the
+   clone here is shallow and their trees were never fetched.
+2. Read the program encoder in `swap-vm` and hand-build a program `main` accepts,
+   abandoning the SDK's builder for testnet.
+3. Ask 1inch in Discord which commit matches the mainnet deployment — the fastest
+   answer if they are awake, and worth asking regardless.

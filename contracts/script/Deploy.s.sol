@@ -35,7 +35,8 @@ contract Deploy is Script {
 
 
     uint160 constant FLAGS = 0x88; // BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA
-    address constant HOOK = address(uint160(0x4444 << 144) | FLAGS);
+    // No fixed hook address: it is mined per chain, because the init code
+    // embeds the PoolManager and router, which differ between them.
 
     /// @dev PoolManager._pools lives at slot 6; slot0 is the first word of the state.
     uint256 constant POOLS_SLOT = 6;
@@ -47,6 +48,27 @@ contract Deploy is Script {
     // so the value has to be inverted on whichever chain puts USDC first.
     uint160 constant SQRT_PRICE = 4543168963294864840402813952; // ~ sqrt(3300e6/1e18) << 96
 
+    /**
+     * @dev forge's `new C{salt:}` goes through the deterministic CREATE2 factory
+     *      that ships on every OP-stack chain, so the address depends only on the
+     *      init code and the salt. Fourteen permission bits means one address in
+     *      16,384 fits; a few hundred thousand candidates is plenty of headroom
+     *      and costs nothing, because none of this touches the chain.
+     */
+    uint160 constant FLAG_MASK = 0x3FFF;
+
+    function _mine(bytes memory initCode) internal pure returns (address addr, bytes32 salt) {
+        bytes32 initHash = keccak256(initCode);
+        for (uint256 i; i < 500_000; ++i) {
+            salt = bytes32(i);
+            addr = address(
+                uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_FACTORY, salt, initHash))))
+            );
+            if (uint160(addr) & FLAG_MASK == FLAGS) return (addr, salt);
+        }
+        revert("no salt found");
+    }
+
     function run() external {
         string memory jsonBlob = vm.readFile(string.concat("fixtures/strategy.", vm.toString(block.chainid), ".json"));
         IAqua aqua = IAqua(vm.parseJsonAddress(jsonBlob, ".aqua"));
@@ -57,12 +79,25 @@ contract Deploy is Script {
 
         vm.startBroadcast(pk);
         Lens lens = new Lens(aqua);
-        Tap staging = new Tap(IPoolManager(PM), router, lens);
         Wellhead wellhead = new Wellhead(IPoolManager(PM));
         vm.stopBroadcast();
 
-        // Move the code to the address whose bits declare the permissions.
-        vm.rpc("anvil_setCode", string.concat('["', vm.toString(HOOK), '","', vm.toString(address(staging).code), '"]'));
+        // A v4 hook advertises its permissions through its own address: the low
+        // fourteen bits ARE the flag set, so the address cannot be chosen, only
+        // mined. Grind a CREATE2 salt until the resulting address carries exactly
+        // BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA and nothing else — any stray bit
+        // would promise the PoolManager a callback this hook does not implement.
+        bytes memory initCode =
+            abi.encodePacked(type(Tap).creationCode, abi.encode(IPoolManager(PM), router, lens));
+        (address hookAddr, bytes32 salt) = _mine(initCode);
+
+        if (hookAddr.code.length == 0) {
+            vm.startBroadcast(pk);
+            Tap deployed = new Tap{salt: salt}(IPoolManager(PM), router, lens);
+            vm.stopBroadcast();
+            require(address(deployed) == hookAddr, "mined address did not match");
+        }
+        address HOOK_ADDR = hookAddr;
 
         (address c0, address c1) = Chains.currencies();
         PoolKey memory key = PoolKey({
@@ -70,7 +105,7 @@ contract Deploy is Script {
             currency1: Currency.wrap(c1),
             fee: 0,
             tickSpacing: 60,
-            hooks: IHooks(HOOK)
+            hooks: IHooks(HOOK_ADDR)
         });
 
         // Re-running this script is normal — the hook changes far more often than
@@ -93,7 +128,7 @@ contract Deploy is Script {
         }
 
         console.log("lens     ", address(lens));
-        console.log("tap      ", HOOK);
+        console.log("tap      ", HOOK_ADDR);
         console.log("wellhead ", address(wellhead));
     }
 }
