@@ -74,6 +74,8 @@ export default function Desk() {
 
   const wallet = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
+  const chainIdRef = useRef<NetworkId>(chainId);
+  chainIdRef.current = chainId;
   const [txState, setTxState] = useState<{
     phase: "idle" | "approving" | "swapping" | "done";
     hash?: Hex;
@@ -83,6 +85,24 @@ export default function Desk() {
   const [error, setError] = useState<string | null>(null);
 
   const amountIn = useMemo(() => toRaw(input, tokenIn.decimals), [input, tokenIn.decimals]);
+
+  /**
+   * Drop everything the moment the chain changes.
+   *
+   * A route carries hookData: the exact strategies the hook will fill from. Left
+   * on screen after a switch, the Swap button would hand the wallet calldata
+   * addressed to the other chain's makers against a pool that does not exist
+   * there. It would revert rather than lose money, but showing a live quote for
+   * the wrong chain is not a state this should ever be in.
+   */
+  useEffect(() => {
+    setRoute(null);
+    setMakers(null);
+    setPool(null);
+    setBalance(null);
+    setError(null);
+    setTxState({ phase: "idle" });
+  }, [chainId]);
 
   // One in-flight generation. A slow request that resolves after a newer one
   // must not overwrite fresher state — the classic async race in a quote box.
@@ -173,6 +193,10 @@ export default function Desk() {
     if (!route?.hookData || !wallet.address || !net.wellhead) return;
     const wc = walletClient();
     const account = wallet.address;
+    // The chain this transaction belongs to. Everything below is async, and the
+    // switcher is one click away.
+    const forChain = chainId;
+    const stillHere = () => forChain === chainIdRef.current;
     const amount = BigInt(route.amountFilled);
     if (amount === 0n) return;
 
@@ -252,6 +276,7 @@ export default function Desk() {
         ],
       });
       const receipt = await rpc.waitForTransactionReceipt({ hash });
+      if (!stillHere()) return;
       setTxState({
         phase: "done",
         hash,
@@ -259,9 +284,9 @@ export default function Desk() {
       });
       void load();
     } catch (e) {
-      setTxState({ phase: "idle", note: describe(e) });
+      if (stillHere()) setTxState({ phase: "idle", note: describe(e) });
     }
-  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net]);
+  }, [route, wallet.address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, balance, load, net, chainId]);
 
   const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
   const improvement = Number(route?.improvementBps ?? "0");

@@ -77,12 +77,20 @@ export default function Landing() {
     };
   }, []);
 
+  /**
+   * The intro plays once, on mount.
+   *
+   * It used to live in the same effect as the card drift, keyed on the fetched
+   * data — so when the makers arrived a second later, GSAP reverted and rebuilt
+   * everything and the headline animated in a second time. The reveal belongs to
+   * the page load; the parallax belongs to the cards, which do not exist until
+   * their data does. Two effects, two lifetimes.
+   */
   useIsomorphicLayoutEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     gsap.registerPlugin(ScrollTrigger);
 
     const ctx = gsap.context(() => {
-      // The claim assembles line by line rather than fading in as a block.
       gsap.from("[data-claim] > span", {
         yPercent: 108,
         duration: 1.05,
@@ -91,26 +99,6 @@ export default function Landing() {
       });
       gsap.from("[data-fade]", { opacity: 0, y: 14, duration: 0.8, delay: 0.35, stagger: 0.07 });
 
-      // Cards drift at their own rate against the scroll.
-      gsap.utils.toArray<HTMLElement>("[data-drift]").forEach((el) => {
-        const drift = Number(el.dataset.drift ?? 0);
-        gsap.fromTo(
-          el,
-          { y: -drift * 0.4 },
-          {
-            y: drift,
-            ease: "none",
-            scrollTrigger: {
-              trigger: el.closest("section") ?? el,
-              start: "top bottom",
-              end: "bottom top",
-              scrub: 0.6,
-            },
-          }
-        );
-      });
-
-      // The finding arrives as the panel does, not before.
       gsap.from("[data-finding]", {
         opacity: 0,
         y: 26,
@@ -132,7 +120,35 @@ export default function Landing() {
     }, root);
 
     return () => ctx.revert();
-  }, [rows.length, finding]);
+  }, []);
+
+  /** The drift, rebuilt whenever the set of cards changes — and only then. */
+  useIsomorphicLayoutEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (rows.length === 0) return;
+
+    const ctx = gsap.context(() => {
+      gsap.utils.toArray<HTMLElement>("[data-drift]").forEach((el) => {
+        const drift = Number(el.dataset.drift ?? 0);
+        gsap.fromTo(
+          el,
+          { y: -drift * 0.4 },
+          {
+            y: drift,
+            ease: "none",
+            scrollTrigger: {
+              trigger: el.closest("section") ?? el,
+              start: "top bottom",
+              end: "bottom top",
+              scrub: 0.6,
+            },
+          }
+        );
+      });
+    }, root);
+
+    return () => ctx.revert();
+  }, [rows.length]);
 
   const hero = rows.slice(0, 4);
   const dark = rows.length ? [...rows, ...rows].slice(0, 6) : [];
