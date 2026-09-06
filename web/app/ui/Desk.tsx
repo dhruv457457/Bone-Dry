@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import s from "./desk.module.css";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
 import { useWallet, walletClient, describe } from "./useWallet";
@@ -297,9 +298,9 @@ export default function Desk() {
         {/* Compact here, not a hero: the landing page already made the claim, and
             this fold belongs to the thing the visitor came to use. */}
         <div className={s.appNav}>
-          <a className={s.appMark} href="/">
+          <Link className={s.appMark} href="/">
             BONE<em>&middot;</em>DRY
-          </a>
+          </Link>
           <NetworkSwitch chainId={chainId} onChange={setChainId} />
         </div>
         <hr className={s.mastRule} />

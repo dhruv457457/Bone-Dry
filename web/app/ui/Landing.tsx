@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import s from "./landing.module.css";
@@ -162,9 +163,9 @@ export default function Landing() {
           </span>
           <span className={`${s.navLinks} label`}>
             <a href="https://github.com/dhruv457457/Bone-Dry">Source</a>
-            <a className={s.enter} href="/app">
+            <Link className={s.enter} href="/app">
               Open the app
-            </a>
+            </Link>
           </span>
         </nav>
 
@@ -255,9 +256,9 @@ export default function Landing() {
         <h2 className={s.closeClaim} data-proof>
           Your money never leaves your wallet.
         </h2>
-        <a className={s.cta} href="/app">
+        <Link className={s.cta} href="/app">
           Open the app
-        </a>
+        </Link>
         <p className={s.ctaNote}>
           Base Sepolia, free tokens, nothing to lose. Mainnet is there too, read-only.
         </p>
