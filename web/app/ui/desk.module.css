@@ -279,6 +279,18 @@
 
 .spin { color: var(--ink-faint); }
 
+/* A quiet pulse instead of a static ellipsis -- still says "loading",
+   without reading as if something stalled. */
+.loadingDots {
+  display: inline-block;
+  animation: loadingPulse 1.4s ease-in-out infinite;
+  color: var(--ink-faint);
+}
+@keyframes loadingPulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 .crossCheck {
   margin: -8px 0 20px;
   padding: 8px 0;

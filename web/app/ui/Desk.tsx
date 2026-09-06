@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import s from "./desk.module.css";
 import Exposure from "./Exposure";
@@ -447,7 +447,7 @@ export default function Desk() {
         <div className={s.sectionHead}>
           <h2 className={s.sectionTitle}>Maker book &mdash; {tokenOut.symbol}</h2>
           <span className="label">
-            {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : "..."}
+            {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : <span className={s.loadingDots}>reading…</span>}
           </span>
         </div>
         <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
@@ -659,8 +659,8 @@ function Coverage({
 /** What is answering, and if it is the fallback, how far the index still has to
  *  go. A subgraph mid-sync answers every query truthfully and uselessly, so the
  *  distinction belongs on screen rather than buried in a JSON field. */
-function indexLabel(makers: MakersResponse | null): string {
-  if (!makers) return "...";
+function indexLabel(makers: MakersResponse | null): ReactNode {
+  if (!makers) return <span className={s.loadingDots}>reading…</span>;
   if (!makers.index) return "rpc log paging";
   if (makers.index.ready) return "aquifer subgraph";
   if (makers.index.state === "syncing") {
