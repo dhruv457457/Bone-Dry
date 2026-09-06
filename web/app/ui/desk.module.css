@@ -392,3 +392,7 @@
   background: var(--paper-sunk);
 }
 
+/* ── exposure ─────────────────────────────────────────────────────────── */
+.exposure { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
+
+

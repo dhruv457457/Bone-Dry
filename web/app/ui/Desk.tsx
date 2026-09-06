@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import s from "./desk.module.css";
+import Exposure from "./Exposure";
 import { units, compact, toRaw, short, pct } from "@/lib/format";
 import { useAccount, useSwitchChain, useWriteContract, useSendTransaction } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
@@ -445,6 +446,12 @@ export default function Desk() {
         address={address}
         wrongChain={wrongChain}
         onShipped={load}
+      />
+
+      <Exposure
+        chainId={chainId}
+        address={address}
+        onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
       />
 
       <Coverage
