@@ -29,15 +29,28 @@ export async function GET(req: Request) {
     const first = uintParam(url.searchParams.get("first"), 25, 10, "first");
 
     const positions = await positionsFromGraph(n, first);
+
+    // Not an error: this network simply has no index, or its index is not caught
+    // up. A 503 here put a red line in the console on every load and told the
+    // reader nothing they could act on, and the client cannot decide this for
+    // itself — GRAPH_URL is server-only, so in the browser it always looks unset.
     if (positions === null) {
-      return fail(
-        n.graphUrl
-          ? "the index is unavailable or still syncing; coverage is a subgraph-only view"
-          : "GRAPH_URL is not configured; coverage cannot be computed from RPC alone",
-        503
-      );
+      return j({
+        source: "none",
+        available: false,
+        chain: { id: n.id, label: n.label, testnet: n.testnet },
+        reason: !n.graphUrl
+          ? `no subgraph is indexing ${n.label} yet`
+          : `the ${n.label} index is unavailable or still catching up`,
+        positions: 0,
+        underCollateralised: 0,
+        unknown: 0,
+        onchainCrossCheck: null,
+        rows: [],
+      });
     }
-    if (positions.length === 0) return j({ source: "aquifer-subgraph", positions: [] });
+    if (positions.length === 0)
+      return j({ source: "aquifer-subgraph", available: true, positions: 0, rows: [] });
 
     // Decimals come from the token, not from an assumption. Committing 12,694 of
     // an 18-decimal token and 12,694 of a 6-decimal one are the same integer and
@@ -129,6 +142,7 @@ export async function GET(req: Request) {
     const uncovered = rows.filter((r) => r.known && r.coverageBps < 10_000n);
     return j({
       source: "aquifer-subgraph",
+      available: true,
       chain: { id: n.id, label: n.label, testnet: n.testnet },
       note:
         "committed is summed across every live strategy for that maker and token, " +

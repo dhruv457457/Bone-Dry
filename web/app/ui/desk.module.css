@@ -365,3 +365,12 @@
 .facts dt, .facts dd { margin: 0; }
 
 .book { padding-top: 6px; }
+
+.coverageEmpty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 26px;
+  padding: 22px 0 4px;
+}
+.coverageEmpty p { margin: 0; max-width: 54ch; color: var(--ink-soft); font-size: 15px; }

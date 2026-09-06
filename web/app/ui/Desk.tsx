@@ -184,27 +184,21 @@ export default function Desk() {
     let live = true;
     setCoverage(null);
     setCoverageError(null);
-    // Coverage is an index-only view — totalling a maker's commitments across
-    // strategies is precisely the thing a contract cannot do. On a network with
-    // no subgraph there is nothing to ask, so asking anyway just prints a 503 in
-    // the console and tells the reader nothing they could act on.
-    if (!net.graphUrl) {
-      setCoverageError(
-        `No subgraph is indexing ${net.label} yet, and coverage can only come from one.`
-      );
-      return;
-    }
     getJson<CoverageResponse>(`/api/coverage?chain=${chainId}&first=12`, 60_000)
       .then((c) => {
         if (!live) return;
+        // The server says whether this network has an index; the client used to
+        // decide from an env var it cannot see, and so reported "no subgraph" on
+        // a chain that has one.
         if (c.error) setCoverageError(c.error);
+        else if (c.available === false) setCoverageError(c.reason ?? "no index for this network");
         else setCoverage(c);
       })
       .catch((e) => live && setCoverageError((e as Error).message));
     return () => {
       live = false;
     };
-  }, [chainId, net.graphUrl, net.label]);
+  }, [chainId]);
 
   /**
    * Approve if needed, then swap. The hookData is the candidate set the router
@@ -444,7 +438,11 @@ export default function Desk() {
         <HookData route={route} />
       </section>
 
-      <Coverage coverage={coverage} error={coverageError} />
+      <Coverage
+        coverage={coverage}
+        error={coverageError}
+        onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
+      />
 
       <Deployed net={net} />
     </div>
@@ -459,20 +457,31 @@ export default function Desk() {
 function Coverage({
   coverage,
   error,
+  onGoToBase,
 }: {
   coverage: CoverageResponse | null;
   error: string | null;
+  onGoToBase?: () => void;
 }) {
+  // A dead end with an apology in it is worse than no section. This one names
+  // the reason once and hands over the way out, because the view does exist —
+  // just not on this network.
   if (error)
     return (
       <section className={s.coverage}>
         <div className={s.sectionHead}>
           <h2 className="label">Coverage &mdash; promised against held, per maker</h2>
+          <span className="label">{error}</span>
         </div>
-        <p className={s.empty}>
-          Unavailable: {error}. This view is computed from the Aquifer subgraph, which
-          is the only thing that can total a maker&apos;s commitments across strategies.
-        </p>
+        <div className={s.coverageEmpty}>
+          <p>
+            Totalling what one maker has promised across every strategy is the thing no
+            contract can do, so this view needs an index. There is one on Base.
+          </p>
+          {onGoToBase && (
+            <button onClick={onGoToBase}>See it on Base</button>
+          )}
+        </div>
       </section>
     );
   if (!coverage || coverage.rows.length === 0) return null;

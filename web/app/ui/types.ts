@@ -69,6 +69,8 @@ export type CoverageRow = {
 
 export type CoverageResponse = {
   source: string;
+  available?: boolean;
+  reason?: string;
   note: string;
   positions: number;
   underCollateralised: number;

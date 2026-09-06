@@ -31,7 +31,10 @@ pids
 *.seed
 *.pid.lock
 lib-cov
-coverage
+# Anchored: unanchored, this also matched web/app/api/coverage — a route, not
+# a report — so anything new added beside it would have been silently ignored.
+/coverage
+web/coverage
 *.lcov
 .nyc_output
 .grunt
