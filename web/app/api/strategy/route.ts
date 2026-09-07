@@ -1,7 +1,6 @@
 import { encodeFunctionData, isAddress, getAddress } from "viem";
 import { AquaProgramBuilder, Order, MakerTraits, instructions } from "@1inch/swap-vm-sdk";
 import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
-import { BytesBuilder } from "@1inch/byte-utils";
 import { networkFrom } from "@/lib/networks";
 import { addressParam, amountParam, uintParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
@@ -25,21 +24,6 @@ const AQUA_ABI = [
 
 const { extruction } = instructions;
 const BEACON_STRATEGY_ADDRESS = "0xAe91aEea982563F69ff6D8B97043A7a79c77340a"; // Base Sepolia only
-
-// ExtructionArgsCoder in swap-vm-sdk encodes args via BytesBuilder.addBytes(args.extructionArgs.toString()),
-// which throws if extructionArgs is empty ("0x") because byte-utils regex requires >= 1 hex digit.
-// Ensure empty bytes do not fail encoding.
-const origExtructionEncode = extruction.extruction.coder.encode.bind(extruction.extruction.coder);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-extruction.extruction.coder.encode = function (args: any) {
-  const hexStr = args.extructionArgs.toString();
-  if (hexStr === "0x" || hexStr === "") {
-    const builder = new BytesBuilder();
-    builder.addAddress(args.target.toString());
-    return new HexString(builder.asHex());
-  }
-  return origExtructionEncode(args);
-};
 
 
 /**
@@ -121,7 +105,7 @@ export async function POST(req: Request) {
       program = builder
         .add(
           extruction.extruction.createIx(
-            new extruction.ExtructionArgs(new SdkAddress(BEACON_STRATEGY_ADDRESS), HexString.EMPTY)
+            new extruction.ExtructionArgs(new SdkAddress(BEACON_STRATEGY_ADDRESS), new HexString("0x00"))
           )
         )
         .build();
