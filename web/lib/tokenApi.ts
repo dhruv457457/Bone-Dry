@@ -31,8 +31,13 @@ type PinaxBalancesResponse = {
 /**
  * Fetch token balances for a wallet via The Graph's Token API.
  *
+ * Pinax issues two distinct credentials per project (shown separately in
+ * their dashboard): a short API key for the `X-Api-Key` header, and a JWT
+ * for `Authorization: Bearer`. They are not interchangeable -- sending one
+ * value in both headers is a mismatch, not a valid fallback.
+ *
  * Returns null if:
- * - TOKEN_API_KEY environment variable is unset or empty
+ * - TOKEN_API_KEY or TOKEN_API_JWT environment variable is unset or empty
  * - Network is unsupported by Token API (e.g. Base Sepolia)
  * - The remote request times out, throws, or returns non-200
  *
@@ -44,19 +49,19 @@ export async function tokenBalances(
   holder: Address
 ): Promise<Map<string, bigint> | null> {
   const apiKey = process.env.TOKEN_API_KEY?.trim();
-  if (!apiKey) return null;
+  const jwt = process.env.TOKEN_API_JWT?.trim();
+  if (!apiKey || !jwt) return null;
 
   const networkSlug = PINAX_NETWORKS[n.id];
   if (!networkSlug) return null;
 
   try {
     const url = `${PINAX_API_URL}?network=${networkSlug}&address=${holder}&limit=1000`;
-    const authHeader = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
 
     const res = await fetch(url, {
       headers: {
-        Authorization: authHeader,
-        "X-Api-Key": apiKey.replace(/^Bearer\s+/i, ""),
+        Authorization: `Bearer ${jwt}`,
+        "X-Api-Key": apiKey,
         Accept: "application/json",
       },
       signal: AbortSignal.timeout(10_000),
