@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { iconUrl } from "@/lib/tokenIcons";
 import type { Address } from "viem";
 
@@ -25,6 +25,21 @@ export function TokenIcon({
 }) {
   const [failed, setFailed] = useState(false);
   const url = iconUrl(chainId, address);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // A repeat 404 (any Sepolia token, most of the time -- Trust Wallet only
+  // lists mainnet addresses) is served from the browser's HTTP cache, which
+  // can resolve as failed before React finishes hydrating and wires up
+  // onError below. The browser never refires `error` for an element whose
+  // load already settled, so that race silently strands a broken <img>
+  // with no fallback. Checking the element directly on mount catches
+  // exactly that case, without replacing onError -- onError still covers a
+  // slow failure that settles after this effect has already run once.
+  useEffect(() => {
+    if (imgRef.current?.complete && imgRef.current.naturalWidth === 0) {
+      setFailed(true);
+    }
+  }, [url]);
 
   if (!url || failed) {
     return (
@@ -52,6 +67,7 @@ export function TokenIcon({
   return (
     // eslint-disable-next-line @next/next/no-img-element -- external CDN, not a local asset
     <img
+      ref={imgRef}
       src={url}
       alt=""
       aria-hidden
