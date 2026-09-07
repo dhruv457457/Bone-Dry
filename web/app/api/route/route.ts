@@ -1,5 +1,5 @@
 import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
-import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData } from "@/lib/router";
+import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData, attachOracleDeviations } from "@/lib/router";
 import { networkFrom, tokensOf } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
@@ -97,12 +97,19 @@ export async function GET(req: Request) {
       makersUnfillable: unfillable,
       /** makers whose quote exceeded their real depth and had to be cut back */
       clamped,
-      slices: slices.map((s, i) => ({
-        maker: s.maker,
-        amountIn: s.amountIn,
-        depth: s.depth,
-        amountOut: split.perMaker[i]?.amountOut ?? 0n,
-      })),
+      slices: await attachOracleDeviations(
+        n,
+        slices.map((s, i) => ({
+          maker: s.maker,
+          amountIn: s.amountIn,
+          depth: s.depth,
+          amountOut: split.perMaker[i]?.amountOut ?? 0n,
+        })),
+        tokenIn,
+        tokenOut,
+        TOKENS[tokenIn.toLowerCase()]?.decimals ?? 18,
+        TOKENS[tokenOut.toLowerCase()]?.decimals ?? 18
+      ),
       amountOut: split.amountOut,
       singleMakerAmountOut: single.amountOut,
       improvementBps,

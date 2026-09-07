@@ -19,8 +19,10 @@ const AGGREGATOR_V3_ABI = [
 ] as const;
 
 // Chainlink can go quiet without erroring -- an old-but-successful read is
-// the dangerous case, not a revert. Past this age, treat it as unavailable.
-const MAX_STALENESS_SECONDS = 3600n;
+// the dangerous case, not a revert. Volatile pairs (ETH/USD) have 1-hour heartbeats,
+// but pegged stablecoins (USDC/USD) have standard 24-hour heartbeats on Chainlink.
+// 90,000s (25 hours) accommodates 24h heartbeats with a slight buffer for network jitter.
+const MAX_STALENESS_SECONDS = 90_000n;
 
 export type OracleQuote = { priceUsdE18: bigint; updatedAt: bigint; stale: boolean };
 

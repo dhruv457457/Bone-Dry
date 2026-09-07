@@ -1,6 +1,7 @@
 import { encodeAbiParameters, parseAbiParameters, decodeAbiParameters, type Address, type Hex } from "viem";
 import { clientFor, type Network } from "./networks";
 import type { MakerDepth } from "./aqua";
+import { oraclePriceUsd, deviationBps } from "./oracle";
 
 /** Packed TakerTraits for a plain exact-in Aqua fill.
  *  bit 0x01 = isExactIn, bit 0x40 = useTransferFromAndAquaPush.
@@ -14,6 +15,91 @@ export const byDepthDesc = (a: { depth: bigint }, b: { depth: bigint }) =>
   a.depth === b.depth ? 0 : b.depth > a.depth ? 1 : -1;
 
 export type Slice = { maker: Address; strategyHash: Hex; strategy: Hex; amountIn: bigint; depth: bigint };
+
+export type QuotedSlice = {
+  maker: Address;
+  amountIn: bigint;
+  depth: bigint;
+  amountOut: bigint;
+  oracleDeviationBps: bigint | null;
+};
+
+/**
+ * Compute the oracle deviation in basis points for a slice swap.
+ *
+ * Math and decimal normalization:
+ * Given:
+ * - amountIn of tokenIn (decimals decimalsIn, oracle price priceIn normalized to 18 decimals)
+ * - amountOut of tokenOut (decimals decimalsOut, oracle price priceOut normalized to 18 decimals)
+ *
+ * Expected USD value of input at oracle price:
+ *   valIn = (amountIn * priceIn) / 10^decimalsIn
+ * Delivered USD value of output at oracle price:
+ *   valOut = (amountOut * priceOut) / 10^decimalsOut
+ *
+ * To avoid any loss of precision from intermediate integer division before comparison,
+ * we place both over a common denominator 10^(decimalsIn + decimalsOut):
+ *   termOut = amountOut * priceOut * 10^decimalsIn
+ *   termIn  = amountIn * priceIn * 10^decimalsOut
+ *
+ * deviationBps(termOut, termIn) = ((termOut - termIn) * 10_000) / termIn
+ *
+ * Worked example:
+ * 1 WETH (amountIn = 1e18, decimalsIn = 18, priceIn = 2500e18)
+ * for 2490 USDC (amountOut = 2490e6, decimalsOut = 6, priceOut = 1e18):
+ *   termOut = 2490e6 * 1e18 * 10^18 = 2490 * 10^42
+ *   termIn  = 1e18 * 2500e18 * 10^6 = 2500 * 10^42
+ *   deviation = ((2490 * 10^42 - 2500 * 10^42) * 10_000) / (2500 * 10^42)
+ *             = (-10 * 10^42 * 10_000) / (2500 * 10^42)
+ *             = -40 bps (maker delivers 40 bps below par).
+ */
+export function computeSliceDeviationBps(
+  amountIn: bigint,
+  amountOut: bigint,
+  decimalsIn: number,
+  decimalsOut: number,
+  priceIn: bigint,
+  priceOut: bigint
+): bigint | null {
+  if (amountIn <= 0n || amountOut <= 0n) return null;
+  const termOut = amountOut * priceOut * 10n ** BigInt(decimalsIn);
+  const termIn = amountIn * priceIn * 10n ** BigInt(decimalsOut);
+  if (termIn === 0n) return null;
+  return deviationBps(termOut, termIn);
+}
+
+export async function attachOracleDeviations(
+  n: Network,
+  slices: { maker: Address; amountIn: bigint; depth: bigint; amountOut: bigint }[],
+  tokenIn: Address,
+  tokenOut: Address,
+  decimalsIn: number,
+  decimalsOut: number
+): Promise<QuotedSlice[]> {
+  const [oracleIn, oracleOut] = await Promise.all([
+    oraclePriceUsd(n, tokenIn),
+    oraclePriceUsd(n, tokenOut),
+  ]);
+
+  const hasOracles = oracleIn && oracleOut && !oracleIn.stale && !oracleOut.stale;
+
+  return slices.map((s) => {
+    const deviation = hasOracles
+      ? computeSliceDeviationBps(
+          s.amountIn,
+          s.amountOut,
+          decimalsIn,
+          decimalsOut,
+          oracleIn.priceUsdE18,
+          oracleOut.priceUsdE18
+        )
+      : null;
+    return {
+      ...s,
+      oracleDeviationBps: deviation,
+    };
+  });
+}
 
 /**
  * Split the input across makers pro-rata to REAL depth.

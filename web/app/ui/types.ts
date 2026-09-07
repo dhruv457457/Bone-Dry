@@ -32,7 +32,7 @@ export type RouteResponse = {
   makersUsed: number;
   makersSkipped: string[];
   makersUnfillable: string[];
-  slices: { maker: string; amountIn: string; depth: string; amountOut: string }[];
+  slices: { maker: string; amountIn: string; depth: string; amountOut: string; oracleDeviationBps: string | null }[];
   amountOut: string;
   singleMakerAmountOut: string;
   improvementBps: string;
