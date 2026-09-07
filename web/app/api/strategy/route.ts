@@ -1,6 +1,7 @@
 import { encodeFunctionData, isAddress, getAddress } from "viem";
-import { AquaProgramBuilder, Order, MakerTraits } from "@1inch/swap-vm-sdk";
-import { Address as SdkAddress } from "@1inch/sdk-core";
+import { AquaProgramBuilder, Order, MakerTraits, instructions } from "@1inch/swap-vm-sdk";
+import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
+import { BytesBuilder } from "@1inch/byte-utils";
 import { networkFrom } from "@/lib/networks";
 import { addressParam, amountParam, uintParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
@@ -21,6 +22,25 @@ const AQUA_ABI = [
     outputs: [{ name: "strategyHash", type: "bytes32" }],
   },
 ] as const;
+
+const { extruction } = instructions;
+const BEACON_STRATEGY_ADDRESS = "0xAe91aEea982563F69ff6D8B97043A7a79c77340a"; // Base Sepolia only
+
+// ExtructionArgsCoder in swap-vm-sdk encodes args via BytesBuilder.addBytes(args.extructionArgs.toString()),
+// which throws if extructionArgs is empty ("0x") because byte-utils regex requires >= 1 hex digit.
+// Ensure empty bytes do not fail encoding.
+const origExtructionEncode = extruction.extruction.coder.encode.bind(extruction.extruction.coder);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+extruction.extruction.coder.encode = function (args: any) {
+  const hexStr = args.extructionArgs.toString();
+  if (hexStr === "0x" || hexStr === "") {
+    const builder = new BytesBuilder();
+    builder.addAddress(args.target.toString());
+    return new HexString(builder.asHex());
+  }
+  return origExtructionEncode(args);
+};
+
 
 /**
  * POST /api/strategy
@@ -64,19 +84,51 @@ export async function POST(req: Request) {
     // Fee is basis points on the flat-fee opcode's own scale (parts per 1e4,
     // matching the router's fee unit elsewhere in this codebase).
     const feeBps = uintParam(body.feeBps != null ? String(body.feeBps) : null, 0, 32, "feeBps");
-    // Salt is a uint64. Random by default so two makers shipping in the same
-    // block don't collide; a maker adding a second strategy passes their own.
+    // Pricing model: "xyc" (default constant-product curve) or "oracle" (Chainlink via BeaconStrategy).
+    const pricing = body.pricing ?? "xyc";
+    if (pricing !== "xyc" && pricing !== "oracle") {
+      throw new BadInput(`unknown pricing model: ${pricing}`);
+    }
+
+    if (pricing === "oracle") {
+      if (n.id !== 84532) {
+        throw new BadInput("BeaconStrategy is only deployed on Base Sepolia");
+      }
+      const isWethUsdc =
+        (tokenIn.toLowerCase() === n.weth.toLowerCase() && tokenOut.toLowerCase() === n.usdc.toLowerCase()) ||
+        (tokenIn.toLowerCase() === n.usdc.toLowerCase() && tokenOut.toLowerCase() === n.weth.toLowerCase());
+      if (!isWethUsdc) {
+        throw new BadInput("BeaconStrategy is only deployed for the WETH/USDC pair");
+      }
+    }
+
+    // Salt is a uint64. Random by default for xyc so two makers shipping in the same
+    // block don't collide; for oracle, salt is only applied if explicitly requested.
     const salt =
       body.salt != null
         ? uintParam(String(body.salt), 0, 64, "salt")
-        : Number(BigInt(Math.floor(Math.random() * 2 ** 32)) & 0xffffffffn);
+        : pricing === "oracle"
+          ? 0
+          : Number(BigInt(Math.floor(Math.random() * 2 ** 32)) & 0xffffffffn);
 
-    // Build the program in the order proven against a live router: salt (if
-    // any) and fee (if any) as gates/modifiers before the swap itself.
+    // Build the program: for oracle, use SwapVM opcode 0x20 (Extruction) targeting
+    // BeaconStrategy without layering flat fee on top. For xyc, apply salt and fee as gates/modifiers.
     let builder = new AquaProgramBuilder();
     if (salt !== 0) builder = builder.salt({ salt: BigInt(salt) });
-    if (feeBps !== 0) builder = builder.flatFeeAmountInXD({ fee: BigInt(feeBps) });
-    const program = builder.xycSwapXD().build();
+
+    let program;
+    if (pricing === "oracle") {
+      program = builder
+        .add(
+          extruction.extruction.createIx(
+            new extruction.ExtructionArgs(new SdkAddress(BEACON_STRATEGY_ADDRESS), HexString.EMPTY)
+          )
+        )
+        .build();
+    } else {
+      if (feeBps !== 0) builder = builder.flatFeeAmountInXD({ fee: BigInt(feeBps) });
+      program = builder.xycSwapXD().build();
+    }
 
     const traits = MakerTraits.default().with({ useAquaInsteadOfSignature: true });
     const order = Order.new({ maker: new SdkAddress(maker), traits, program });
@@ -100,7 +152,7 @@ export async function POST(req: Request) {
       strategy,
       programHex: String(program),
       salt,
-      feeBps,
+      feeBps: pricing === "oracle" ? 0 : feeBps,
       tokens,
       amounts,
       note: "Sign and send this as a transaction from the maker's own wallet. It only records a claim in Aqua — no funds move.",
