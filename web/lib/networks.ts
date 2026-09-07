@@ -42,6 +42,10 @@ export type Network = {
   aquaGenesis: bigint;
   /** Where the strategies came from, so the UI can be honest about provenance. */
   aquaIsOurs: boolean;
+  /** Chainlink AggregatorV3-compatible feeds, keyed by the token address (
+   *  lowercase) they price against USD. Empty object if none configured for
+   *  this network. */
+  oracleFeeds: Record<string, Address>;
 };
 
 const WETH_PREDEPLOY: Address = "0x4200000000000000000000000000000000000006";
@@ -71,6 +75,10 @@ export const NETWORKS: Record<NetworkId, Network> = {
     graphUrl: process.env.GRAPH_URL ?? "",
     aquaGenesis: 48_839_900n,
     aquaIsOurs: false,
+    oracleFeeds: {
+      "0x4200000000000000000000000000000000000006": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", // WETH, "ETH / USD"
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B", // USDC, "USDC / USD"
+    },
   },
   84532: {
     id: 84532,
@@ -99,6 +107,10 @@ export const NETWORKS: Record<NetworkId, Network> = {
     graphUrl: process.env.SEPOLIA_GRAPH_URL ?? "",
     aquaGenesis: 46_459_400n,
     aquaIsOurs: true,
+    oracleFeeds: {
+      "0x4200000000000000000000000000000000000006": "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1", // WETH, feed says "ETH / USD"
+      "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165", // USDC, feed says "USDC / USD"
+    },
   },
 };
 
