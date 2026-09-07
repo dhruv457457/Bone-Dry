@@ -425,7 +425,7 @@ export default function Desk() {
             </div>
             {route && improvement > 0 && (
               <p className={s.beat}>
-                <b>+{improvement} bps</b> better than the deepest maker alone, by splitting
+                <b>+{improvement} bps</b> better than any single maker alone, by splitting
                 across {route.makersUsed}
               </p>
             )}
@@ -461,7 +461,7 @@ export default function Desk() {
               <dd className="num">{route?.makersSkipped.length ?? 0}</dd>
             </div>
             <div>
-              <dt className="label">Quote reverts</dt>
+              <dt className="label">Unfillable quote</dt>
               <dd className="num">{route?.makersUnfillable?.length ?? 0}</dd>
             </div>
             {route && route.unfilled !== "0" && (
