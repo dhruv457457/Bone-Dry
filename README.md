@@ -21,9 +21,33 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | `Aquifer` — the subgraph | deployed and synced on Base |
 | Coverage view — the number Aqua cannot compute | live, cross-checked on-chain |
 | `Wellhead` — the router a wallet calls | live, wallet connect + swap |
-| Frontend | live |
+| Multi-pair support (USDC/WETH and WETH/MOCK) | live, reuses existing Tap hook |
+| Maker strategy shipping (`/api/strategy`, `ShipStrategy`) | live on Base Sepolia |
+| Oracle-deviation check (Chainlink feeds + `Beacon.sol`) | live in book, per-slice bps in route |
+| Cross-app standardized schema proof (`/api/apps`) | live query across independent apps |
+| Token icons with generative fallback | live across dashboard |
+| Frontend trading desk (Swap, Provide, Portfolio, Explore) | live |
 
 Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
+
+## Where to look
+
+For judges verifying our code and contract integrations:
+
+| Judging Concern | Exact File & Line | What happens there |
+|---|---|---|
+| **Uniswap v4 Hook** | [`contracts/src/Tap.sol:83`](contracts/src/Tap.sol#L83) (`beforeSwap`) | Fully overrides the swap (`BEFORE_SWAP_RETURNS_DELTA_FLAG`), reads maker solvency via Lens, pulls tokens straight from maker wallets via Aqua, and settles with PoolManager without touching pool liquidity (0 TVL before and after). |
+| **Hook Address Mining** | [`contracts/script/Deploy.s.sol:60`](contracts/script/Deploy.s.sol#L60) (`_mine`) | Brute-forces CREATE2 salt to match Uniswap v4's `BEFORE_SWAP_FLAG` prefix before broadcasting deployment. |
+| **Solvency Filter** | [`contracts/src/Lens.sol:30`](contracts/src/Lens.sol#L30) (`quotableDepth`) | Reads `min(virtualBalance, walletBalance, allowance)` directly on-chain so phantom liquidity cannot be quoted or filled. |
+| **Maker Coverage Check** | [`contracts/src/Lens.sol:49`](contracts/src/Lens.sol#L49) (`coverage`) | Computes a maker's whole-book backing ratio on-chain given their live strategy hashes. |
+| **Pool Re-use Script** | [`contracts/script/InitPool.s.sol:41`](contracts/script/InitPool.s.sol#L41) (`run`) | Initializes new token pairs against the existing Tap hook and PoolManager without redeploying contracts. |
+| **Oracle Pricing Contract** | [`contracts/src/Beacon.sol:34`](contracts/src/Beacon.sol#L34) (`oraclePriceUsd`) | Standalone contract reading Chainlink feeds and calculating deviation basis points ([`line 47`](contracts/src/Beacon.sol#L47)). |
+| **Oracle Pricing Service** | [`web/lib/oracle.ts:33`](web/lib/oracle.ts#L33) (`oraclePriceUsd`) | Fetches live Chainlink AggregatorV3 prices and computes deviation for every maker curve slice ([`line 55`](web/lib/oracle.ts#L55)). |
+| **Maker Strategy Assembly** | [`web/app/api/strategy/route.ts:43`](web/app/api/strategy/route.ts#L43) (`POST`) | Encodes ungated, permissionless Aqua strategies with custom spread fees and salt for wallet signing. |
+| **Multi-Pair Configuration** | [`web/lib/pairs.ts:25`](web/lib/pairs.ts#L25) (`PAIRS`) | Configures pair tokens, pool keys, and tick spacings across Base mainnet and Base Sepolia. |
+| **Standardized Subgraph Schema** | [`subgraph/schema.graphql:1-11`](subgraph/schema.graphql#L1) | Proposed reusable schema for any Aqua consumer; indexes protocol-wide events rather than filtering to one app. |
+| **Cross-App Subgraph Proof** | [`web/app/api/apps/route.ts:15`](web/app/api/apps/route.ts#L15) (`GET`) | Live endpoint querying [`web/lib/graph.ts:304`](web/lib/graph.ts#L304) (`appBreakdown`), proving the schema indexes multiple independent apps on Base mainnet. |
+
 
 ## Live on Base Sepolia
 
@@ -106,6 +130,8 @@ cd subgraph && npx graph test -d      # -d runs it in Docker
 | `GET /api/route?tokenIn=&tokenOut=&amountIn=` | the split, a real quote for it, and the `hookData` the pool needs |
 | `GET /api/pool?hook=` | the pool's own liquidity, read out of PoolManager storage |
 | `GET /api/coverage?first=` | promised against held, per maker — subgraph only |
+| `POST /api/strategy` | encodes ungated Aqua strategy calldata for wallet signing |
+| `GET /api/apps?chain=` | every app shipping live strategies across Aqua per the subgraph |
 
 Connect a wallet on the fork and press Swap, or take the same path without a
 browser:
