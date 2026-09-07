@@ -577,4 +577,90 @@
 .lookupResults { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
 .sourcesLine { margin-top: 14px; color: var(--ink-soft); }
 
+/* ── mcp discovery ─────────────────────────────────────────────────────── */
+.mcpDiscoverySection {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ink);
+}
+.mcpTokenList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+.mcpTokenCard {
+  border: 1px solid var(--ink);
+  padding: 14px 18px;
+  background: var(--paper-sunk);
+}
+.mcpTokenHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.mcpTokenAddr {
+  font-family: var(--mono);
+  font-size: 13px;
+  word-break: break-all;
+}
+.mcpPrompt {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 6px 0 10px;
+}
+.mcpEmpty {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.mcpList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mcpListItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--ink-faint, #d0d0d0);
+}
+.mcpListItem:last-child {
+  border-bottom: none;
+}
+.mcpDeployMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mcpDeployHash {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-all;
+}
+.mcpNetworkTag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--ink-soft);
+  text-transform: uppercase;
+}
+.mcpFees {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+
 

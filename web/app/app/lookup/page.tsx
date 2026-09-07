@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import s from "@/app/ui/desk.module.css";
 import { ExposureTable, type ExposureResponse } from "@/app/ui/Exposure";
 import { NETWORKS, DEFAULT_NETWORK, type NetworkId } from "@/lib/networks";
 import { isAddress, getAddress } from "viem";
+import { searchSubgraphsForTokens, type TokenDiscoveryResult } from "@/lib/subgraphMcp";
 
 /* A public verification tool for Aqua maker solvency.
    Aqua's balance mapping is not enumerable, so no contract can verify what a maker
@@ -18,6 +19,69 @@ export default function LookupPage() {
   const [data, setData] = useState<ExposureResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mcpResults, setMcpResults] = useState<Record<string, TokenDiscoveryResult>>({});
+  const [mcpLoading, setMcpLoading] = useState(false);
+
+  // Unrecognised tokens are those displaying as a truncated hex symbol (e.g. 0x3681…)
+  const unrecognisedTokens = useMemo(() => {
+    if (!data?.available || !data.positions) return [];
+    const seen = new Set<string>();
+    for (const p of data.positions) {
+      const isUnrecognised =
+        p.symbol === `${p.token.slice(0, 6)}…` ||
+        (p.symbol.startsWith("0x") && (p.symbol.includes("…") || p.symbol.length <= 8));
+      if (isUnrecognised) {
+        seen.add(p.token.toLowerCase());
+      }
+    }
+    return Array.from(seen);
+  }, [data]);
+
+function formatFees(raw: string): string {
+  try {
+    const val = BigInt(raw);
+    if (val === 0n) return "0 query fees";
+    const oneGrt = 10n ** 18n;
+    if (val >= oneGrt) {
+      const whole = val / oneGrt;
+      const rem = val % oneGrt;
+      const dec = (Number(rem) / 1e18).toFixed(2).slice(2);
+      return `${whole}.${dec} GRT query fees`;
+    }
+    const floatVal = Number(val) / 1e18;
+    return `${floatVal.toFixed(4)} GRT query fees`;
+  } catch {
+    return `${raw} fees`;
+  }
+}
+
+  useEffect(() => {
+    if (unrecognisedTokens.length === 0) {
+      setMcpResults({});
+      setMcpLoading(false);
+      return;
+    }
+
+    let active = true;
+    setMcpLoading(true);
+
+    searchSubgraphsForTokens(unrecognisedTokens, chainId)
+      .then((results) => {
+        if (!active) return;
+        setMcpResults(results);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.error("Subgraph MCP query error:", err);
+      })
+      .finally(() => {
+        if (active) setMcpLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [unrecognisedTokens, chainId]);
 
   const net = NETWORKS[chainId];
 
@@ -37,6 +101,7 @@ export default function LookupPage() {
       const addr = getAddress(raw);
       setBusy(true);
       setError(null);
+      setMcpResults({});
       setQueriedAddress(addr);
 
       try {
@@ -179,7 +244,59 @@ export default function LookupPage() {
               This address has no Aqua positions on this network.
             </p>
           ) : (
-            <ExposureTable positions={data.positions} chainId={chainId} sources={data.sources} />
+            <>
+              <ExposureTable positions={data.positions} chainId={chainId} sources={data.sources} />
+
+              {unrecognisedTokens.length > 0 && (
+                <div className={s.mcpDiscoverySection}>
+                  <div className={s.sectionHead}>
+                    <h3 className="label">Cross-protocol discovery</h3>
+                    <span className="label">Subgraph MCP</span>
+                  </div>
+
+                  <div className={s.mcpTokenList}>
+                    {unrecognisedTokens.map((tokenAddr) => {
+                      const res = mcpResults[tokenAddr];
+                      const isLoading = mcpLoading && !res;
+                      const deployments = res?.deployments ?? [];
+
+                      return (
+                        <div key={tokenAddr} className={s.mcpTokenCard}>
+                          <div className={s.mcpTokenHead}>
+                            <span className="label">Token address:</span>
+                            <span className={`num ${s.mcpTokenAddr}`}>{tokenAddr}</span>
+                          </div>
+
+                          <p className={s.mcpPrompt}>Other subgraphs mentioning this address:</p>
+
+                          {isLoading ? (
+                            <p className={s.mcpEmpty}>Querying Subgraph MCP...</p>
+                          ) : deployments.length === 0 ? (
+                            <p className={s.mcpEmpty}>No other subgraphs found for this address</p>
+                          ) : (
+                            <ul className={s.mcpList}>
+                              {deployments.map((d) => (
+                                <li key={d.ipfsHash} className={s.mcpListItem}>
+                                  <div className={s.mcpDeployMeta}>
+                                    <span className={`num ${s.mcpDeployHash}`}>{d.ipfsHash}</span>
+                                    {d.network ? (
+                                      <span className={`label ${s.mcpNetworkTag}`}>{d.network}</span>
+                                    ) : null}
+                                  </div>
+                                  <span className={`num ${s.mcpFees}`}>
+                                    {formatFees(d.queryFeesAmount)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
