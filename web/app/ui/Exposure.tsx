@@ -7,35 +7,20 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import type { NetworkId } from "@/lib/networks";
 import { TokenIcon } from "./TokenIcon";
+import type { ExposurePosition, ExposureResponse, ExposureSources } from "./types";
 
-export type ExposurePosition = {
-  token: Address;
-  symbol: string;
-  decimals: number;
-  claimed: string;
-  held: string;
-  backed?: string;
-  covered: boolean;
-};
-
-export type ExposureResponse = {
-  available: boolean;
-  reason?: string;
-  maker: Address;
-  positions: ExposurePosition[];
-  fullyCoveredCount: number;
-  totalPositions: number;
-  error?: string;
-};
+export type { ExposurePosition, ExposureResponse, ExposureSources };
 
 /* The table of a single maker's Aqua commitments against their actual wallet balance.
    Shared between the connected-wallet exposure card and the public lookup page. */
 export function ExposureTable({
   positions,
   chainId = 8453,
+  sources,
 }: {
   positions: ExposurePosition[];
   chainId?: number;
+  sources?: ExposureSources;
 }) {
   return (
     <div className={s.tableWrap}>
@@ -72,6 +57,13 @@ export function ExposureTable({
           })}
         </tbody>
       </table>
+      {sources && (
+        <p className={`label ${s.sourcesLine}`}>
+          Commitments from the Aquifer subgraph &middot; balances from{" "}
+          {sources.balances === "token-api" ? "The Graph Token API" : "RPC"}{" "}
+          &middot; allowances from RPC
+        </p>
+      )}
     </div>
   );
 }
@@ -209,7 +201,7 @@ export default function Exposure({
           {data.fullyCoveredCount} of {data.totalPositions} fully covered
         </span>
       </div>
-      <ExposureTable positions={data.positions} chainId={chainId} />
+      <ExposureTable positions={data.positions} chainId={chainId} sources={data.sources} />
     </section>
   );
 }

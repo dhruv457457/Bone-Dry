@@ -575,5 +575,6 @@
 .addressInput { font-size: 16px !important; letter-spacing: 0.02em; }
 .lookupActions { margin-top: 16px; }
 .lookupResults { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
+.sourcesLine { margin-top: 14px; color: var(--ink-soft); }
 
 

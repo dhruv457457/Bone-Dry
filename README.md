@@ -47,6 +47,8 @@ For judges verifying our code and contract integrations:
 | **Multi-Pair Configuration** | [`web/lib/pairs.ts:25`](web/lib/pairs.ts#L25) (`PAIRS`) | Configures pair tokens, pool keys, and tick spacings across Base mainnet and Base Sepolia. |
 | **Standardized Subgraph Schema** | [`subgraph/schema.graphql:1-11`](subgraph/schema.graphql#L1) | Proposed reusable schema for any Aqua consumer; indexes protocol-wide events rather than filtering to one app. |
 | **Cross-App Subgraph Proof** | [`web/app/api/apps/route.ts:15`](web/app/api/apps/route.ts#L15) (`GET`) | Live endpoint querying [`web/lib/graph.ts:304`](web/lib/graph.ts#L304) (`appBreakdown`), proving the schema indexes multiple independent apps on Base mainnet. |
+| **Standards Leverage Spec** | [`subgraph/STANDARD.md:1`](subgraph/STANDARD.md#L1) | Specification of the Aquifer schema as a reusable standard, live cross-app proof, and composition with Token API. |
+| **Token API Balance Integration** | [`web/lib/tokenApi.ts:42`](web/lib/tokenApi.ts#L42) (`tokenBalances`) | Composes The Graph's Token API for live wallet balance lookups with automatic fallback to RPC multicall. |
 
 
 ## Live on Base Sepolia
@@ -347,3 +349,7 @@ The router API prefers the subgraph and falls back to paging `eth_getLogs` when
 cd subgraph && npm i && npm run codegen && npm run build
 npm run deploy          # needs a Subgraph Studio deploy key
 ```
+
+## Standards leverage
+
+One schema covers every Aqua app rather than requiring an app-specific indexer, because Aquifer indexes Aqua's protocol-level events (`Shipped`, `Docked`, `Pushed`, `Pulled`, `Swapped`) across all routers. On Base mainnet today, a single query against this schema surfaces 132 active strategies across two independent Aqua applications without modification (documented in [`subgraph/STANDARD.md`](subgraph/STANDARD.md)). Furthermore, composing The Graph's Token API for wallet balances required no change to position-tracking because commitments and balances are decoupled concerns in the schema: Token API efficiently serves holder balances with an RPC fallback, while Aquifer tracks contract commitments.

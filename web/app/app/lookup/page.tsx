@@ -179,7 +179,7 @@ export default function LookupPage() {
               This address has no Aqua positions on this network.
             </p>
           ) : (
-            <ExposureTable positions={data.positions} chainId={chainId} />
+            <ExposureTable positions={data.positions} chainId={chainId} sources={data.sources} />
           )}
         </section>
       )}
