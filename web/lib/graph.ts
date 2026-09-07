@@ -274,3 +274,56 @@ export async function positionsForMaker(n: Network, maker: Address): Promise<Pos
     };
   });
 }
+
+const APPS_QUERY = `
+  query Apps($first: Int!) {
+    strategies(where: { active: true }, first: $first) {
+      app
+      maker { id }
+    }
+  }
+`;
+
+export type AppBreakdown = {
+  app: Address;
+  /** Whether this is the app Bone Dry's own router points at -- the rest
+   *  are other Aqua consumers this subgraph happens to also index, since it
+   *  listens to Aqua's own events rather than filtering to one app. */
+  isOurs: boolean;
+  activeStrategies: number;
+  distinctMakers: number;
+};
+
+/**
+ * Every app currently shipping live strategies on Aqua, per the same index
+ * that already answers Bone Dry's own coverage questions. This is not a
+ * new capability -- it is the existing schema, queried without the `app`
+ * filter every other query in this file applies. Proof that the schema
+ * generalizes, not a new feature.
+ */
+export async function appBreakdown(n: Network, ourApp: Address, first = 1000): Promise<AppBreakdown[] | null> {
+  if (!(await indexFresh(n))) return null;
+  const data = await gql<{ strategies: { app: Address; maker: { id: Address } }[] }>(
+    n, APPS_QUERY, { first }
+  );
+  if (!data) return null;
+
+  const byApp = new Map<string, { makers: Set<string>; count: number }>();
+  for (const s of data.strategies) {
+    const key = s.app.toLowerCase();
+    const entry = byApp.get(key) ?? { makers: new Set<string>(), count: 0 };
+    entry.count += 1;
+    entry.makers.add(s.maker.id.toLowerCase());
+    byApp.set(key, entry);
+  }
+
+  return [...byApp.entries()]
+    .map(([app, v]) => ({
+      app: app as Address,
+      isOurs: app === ourApp.toLowerCase(),
+      activeStrategies: v.count,
+      distinctMakers: v.makers.size,
+    }))
+    .sort((a, b) => b.activeStrategies - a.activeStrategies);
+}
+
