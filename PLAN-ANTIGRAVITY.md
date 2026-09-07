@@ -1,264 +1,193 @@
-# Bone Dry — closing both tracks' literal requirements
+# Bone Dry — Subgraph MCP: the unambiguous second Graph product
 
-Two tracks have gaps against their own written qualification criteria. This
-plan closes both. It also corrects a mistake I made earlier in this project
-that is still sitting in this file's git history.
+Context, so the "why" is clear: the Graph track requires composing two or
+more Graph products. Token API (Pinax-operated, Substreams-powered) is
+already built but sits in a gray area — it's officially linked from
+`thegraph.com`'s docs, but branded and run by a partner company, not The
+Graph Foundation directly. Defensible, but arguable.
 
----
+The **Subgraph MCP** (`subgraphs.mcp.thegraph.com`) is not arguable — it's
+on The Graph's own domain, and this project's existing Subgraph Studio API
+key already authenticates against it (verified: `HTTP 200` on `/sse` with
+that key, no second signup). This plan builds one real, honest use of it,
+to remove any doubt about the "two products" claim rather than resting it
+on Token API alone.
 
-## 0. Correction, read first
-
-An earlier version of this plan stated, as a hard rule, that the SwapVM
-`Extruction` opcode does not exist at tag `v1.0.2` (the version our router
-is built from) and must not be used. **That was wrong.**
-
-The cause was a typo in a search pattern: `extrud` (as in "extrude") instead
-of `extruc` — the identifier is `Extruc**t**ion`. The grep returned nothing
-and the false negative was reported as a verified fact.
-
-Verified now, three ways:
-- `https://raw.githubusercontent.com/1inch/swap-vm/v1.0.2/src/instructions/Extruction.sol` → HTTP 200
-- `v1.0.2`'s `AquaOpcodes.sol` imports it, inherits it, and dispatches it
-- Its opcode number is **`0x20`**, cross-checked against three opcode values
-  this project has independently generated and proven live (`0x11` XYCSwap,
-  `0x14` salt, `0x15` flatFee — all match the same table)
-
-If anything in this repo's history contradicts the above, this section wins.
+**This plan has a go/no-go gate as Task 1.** MCP's own docs say it covers
+subgraphs on The Graph's decentralized network. Our subgraph
+(`api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`) is on the **free
+Studio hosted service** — it is not confirmed that this is the same
+population MCP can see. Task 1 finds out. Task 2 is two different builds
+depending on the answer, written out below — do not guess which one applies
+before Task 1 reports back.
 
 ---
 
-## 1. What each track literally requires, and where we stand
-
-### 1inch — Build an Aqua App
-
-| Requirement | Status |
-|---|---|
-| Official Aqua/SwapVM contracts used | met |
-| Onchain token transfers demonstrated | met, beyond (real testnet, not a fork) |
-| Proper git history | met (17/38/24 commits across three days) |
-| Demonstrated via tests, scripts or UI | met, all three |
-| "Sophisticated DeFi position" | **weak** — our strategies are plain XYC + salt + fee |
-| "Define your own instructions" | **not claimed** |
-
-### The Graph — Composable or Standardized
-
-| Requirement | Status |
-|---|---|
-| Consume live data from a Graph provider | met |
-| Public repo | met |
-| **Compose 2+ Graph products, OR build on a standardized schema** | **NOT MET** |
-| "Simply querying one Subgraph… does not qualify" | **this describes us today** |
-| Show what became easier because of the shared schema | not written anywhere |
-| Demo video (2-4 min) | outstanding, not yours |
-
-Task 1 below is the only item in this plan that closes a **pass/fail**
-requirement. Do it first, and do not start anything else until it is
-verified working.
-
----
-
-## 2. Hard rules (unchanged, and one addition)
+## 0. Hard rules (same as every plan here)
 
 1. **Never `git add -A` or `git add .`.** Exact paths only.
 2. **Do not touch:** `web/app/ui/Landing.tsx`, `landing.module.css`,
    `Doodle.tsx`, `useIsomorphicLayoutEffect.ts`, `web/app/page.tsx`.
 3. **Ask before touching:** `web/app/layout.tsx`, `globals.css`,
    `Motion.tsx`, `Web3.tsx`.
-4. **Do not touch `contracts/src/Tap.sol`, its address, or the hook-mining
-   logic in `Deploy.s.sol`.** Changing Tap's bytecode changes its mined
-   address, which orphans every pool already initialised against it.
-5. **Tasks 3 and 4 are contracts work and are NOT yours** — they are listed
-   here so you understand the whole shape, but do not start them. If you
-   finish Tasks 1 and 2, stop and report.
-6. **Verify, then report.** Actual command output, not descriptions.
-7. Commit per task, exact paths, trailer:
+4. **Do not touch `contracts/` at all.** Nothing here needs a contract.
+5. **Do not fake agentic behaviour.** MCP tools exist for an AI client to
+   reason over — search, pick a result, decide what to query next. This
+   plan is explicit everywhere about what is a fixed, deterministic call
+   and what would require actual reasoning. If a step in your build starts
+   needing judgment calls about which subgraph is "relevant" or what a
+   result "means", stop — that is exactly the line between "we used the
+   tool" and "we're pretending to have an agent we don't have."
+6. **The MCP session key is already in this repo's `.env.local` as the
+   existing Studio key** (used for `GRAPH_URL` already) — do not request a
+   new key, do not hardcode it anywhere, read it the same way `GRAPH_URL`
+   is already read.
+7. **Every task ends with real verification.** Actual tool responses
+   pasted, not descriptions of what should happen.
+8. Commit per task, exact paths, trailer:
    `Co-Authored-By: Antigravity <noreply@google.com>`
-8. **Unsure whether something is in scope? It is not.** Ask.
+9. **Unsure whether something is in scope? It is not.** Ask.
 
 ---
 
-## Task 1 — Token API: a second Graph product (THE priority)
+## Task 1 — Prove the handshake, and find out which world we're in
 
-**Goal:** the Graph track requires composing two or more of The Graph's
-products. We use exactly one (our subgraph). This adds a second — The
-Graph's **Token API** — for the balance reads that currently go out as raw
-`eth_call` multicalls.
+**Goal:** a real MCP tool call and response, end to end, from plain Node —
+not a raw SSE connect (already proven), a full JSON-RPC round trip:
+`initialize` → `tools/list` → call one real tool → get real data back.
 
-This is not box-ticking. It genuinely removes work: `/api/exposure`
-currently does a 3-call multicall per position (`balanceOf`, `allowance`,
-`decimals`) against a rate-limited public RPC, which is the slowest part of
-that route.
+MCP over SSE is a stateful protocol (session semantics, not a plain REST
+call) — this is the one place in this plan real protocol complexity lives.
+Read `https://thegraph.com/docs/en/subgraphs/subgraph-mcp/introduction/`
+and `https://github.com/graphops/subgraph-mcp` before writing a client by
+guesswork.
 
-### Before writing code
+### What to do
 
-The Token API needs an account and a bearer token. Check with me before
-signing anything up — the key goes in `web/.env.local` as
-`TOKEN_API_KEY`, server-side only, **never** `NEXT_PUBLIC_`.
+1. Write a small standalone Node script (scratch file, not committed to
+   `web/`) that does the full handshake against
+   `https://subgraphs.mcp.thegraph.com/sse` (or `/mcp` if the docs say
+   that's now preferred — check, don't assume the URL from an earlier
+   probe is still current) using the existing Studio key.
+2. Call `tools/list`. Paste the **real, complete** list of tool names and
+   their input schemas in your report — this project needs to know exactly
+   what's callable, not a summary from search results.
+3. **The go/no-go check**: call whichever tool searches subgraphs by
+   keyword with the query `"aqua"` or `"aquifer"`. Does our own subgraph
+   (deployed at `api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`)
+   show up in the results, under any name?
+   - **If yes** — proceed to Task 2A.
+   - **If no** — our subgraph is Studio-hosted-only and outside what MCP
+     indexes. Proceed to Task 2B instead. Do not attempt to "publish" the
+     subgraph to the decentralized network to force a yes — that's a
+     billing/staking action on a live project this far into a deadline,
+     out of scope for you to decide, ask first if you think it's warranted.
+4. Separately, call the search tool with a keyword that should have many
+   real results regardless of our own subgraph's status (e.g. `"uniswap"`
+   or `"aave"`) — confirms the tool works at all, independent of question 3.
 
-Then verify the endpoint yourself before building on it, the same way every
-Chainlink address in this repo was verified — a real request, real
-response, pasted into your report. Do not take the docs' word for the URL
-shape. Two candidate hosts appear in The Graph's own docs and its
-provider's docs; confirm which one actually answers:
-```
-https://token-api.thegraph.com/v1/evm/balances?network=base&address=0x...
-https://api.pinax.network/v1/evm/balances?network=base&address=0x...
-```
-Report which worked, the exact response shape, and **whether Base Sepolia
-is supported at all** (I expect not — plan for that, see below).
+### Verification
+
+Paste, verbatim: the full `tools/list` response, the exact query you sent
+for the "aqua"/"aquifer" search and its full response, and the
+"uniswap"/"aave" search and its response. State plainly which of Task 2A /
+2B applies.
+
+### Commit
+
+Nothing to commit yet — Task 1 is investigation. Report and wait.
+
+---
+
+## Task 2A — if our subgraph IS visible to MCP
+
+**Goal:** an honest "indexed by The Graph" panel — MCP's own view of our
+subgraph, shown next to our own claims about it, so a visitor (or a judge)
+can see two independent sources agree. Same "verify, don't assert" instinct
+as everything else in this project.
 
 ### What to build
 
-New file `web/lib/tokenApi.ts`:
-- `tokenBalances(n: Network, holder: Address): Promise<Map<string, bigint> | null>`
-- Returns `null` — not a throw, not an empty map — when the API key is
-  missing, the network is unsupported, or the call fails. `null` means "this
-  source could not answer", which the caller must be able to distinguish
-  from "this wallet holds nothing".
-- Key it by lowercase token address, matching every other address-keyed
-  lookup in this codebase.
+`web/lib/subgraphMcp.ts` — a minimal client wrapping the handshake proven
+in Task 1: one function, `mcpSubgraphInfo(): Promise<{schema: string; deploymentId: string; queryCount30d: number | null} | null>`.
+Null on any failure — this must never break the page it's used on.
 
-Then in `web/app/api/exposure/route.ts`:
-- Try Token API first for `balanceOf`.
-- Fall back to the existing multicall path when it returns `null`.
-- **Keep the `allowance` reads on RPC regardless** — allowance is not a
-  balance and the Token API does not serve it. This is the honest split:
-  Token API for balances, RPC for allowance, subgraph for commitments.
-- Add a `sources` field to the response naming which source answered each
-  part, e.g.
-  `{ balances: "token-api" | "rpc", commitments: "subgraph", allowances: "rpc" }`.
-  This is what makes the composition **visible** rather than a claim — the
-  track explicitly asks you to "show what became easier".
+New route `web/app/api/mcp-check/route.ts` — calls it, returns the result,
+`available: false` shape on failure (same pattern as every other route in
+this codebase — check `coverage/route.ts` again if you need reminding of
+the shape).
+
+On the Explore tab, a small addition near the existing "Across Aqua"
+section: fetched schema entity names from MCP, compared against
+`subgraph/schema.graphql`'s own entity names (read at build time or hit the
+committed file — do not hardcode the list twice). Show agreement plainly:
+*"N of N entities match between our schema file and what The Graph's own
+MCP reports."* If they don't match, show that honestly too — a mismatch is
+a real finding, not a bug to hide.
 
 ### Verification
 
 1. `npx tsc --noEmit` clean.
-2. `curl /api/exposure?chain=8453&maker=0x181b8E10c8ffE94984964904908C312aB3CF380b`
-   — paste the full response. `sources.balances` must read `token-api`.
-3. Same call with `TOKEN_API_KEY` temporarily unset — must still return
-   correct data with `sources.balances: "rpc"`. **Test this explicitly.**
-   A composition that breaks the app when one source is down is worse than
-   not composing.
-4. `curl /api/exposure?chain=84532&maker=...` — Sepolia. Must not error.
-5. Compare a balance from Token API against the same balance read via
-   `cast call ... "balanceOf(address)"`. They must match exactly. Paste both.
+2. Screenshot the panel.
+3. Paste the actual MCP response your comparison is built on.
 
 ### Commit
 ```
-git add web/lib/tokenApi.ts web/app/api/exposure/route.ts web/app/ui/types.ts
-git commit -m "Read balances from The Graph's Token API, with an RPC fallback"
+git add web/lib/subgraphMcp.ts web/app/api/mcp-check/ web/app/ui/Desk.tsx web/app/ui/desk.module.css
+git commit -m "Cross-check our subgraph schema against The Graph's own Subgraph MCP"
 ```
 
 ---
 
-## Task 2 — Make the composition and the standard visible
+## Task 2B — if our subgraph is NOT visible to MCP
 
-**Goal:** the track asks you to "make the standards leverage clear: show
-what became easier". Right now nothing in the repo or UI says this.
+**Goal:** don't force a self-referential feature that can't work. Use MCP
+for what it's actually good at instead — real cross-protocol discovery on
+the public lookup page, which is closer to the track's literal wording
+("cross-protocol analysis") anyway.
 
 ### What to build
 
-**2a. A `sources` line in the UI.** On the Portfolio and `/app/lookup`
-views, under the exposure table, one quiet line naming where each number
-came from, e.g.:
-> Commitments from the Aquifer subgraph · balances from The Graph Token API · allowances from RPC
+On `/app/lookup`, after a maker's positions load, for each **unrecognised**
+token (the ones currently rendering as a truncated hex address with no
+symbol — check `ExposureTable` for how that's detected today), call MCP's
+subgraph-search tool with the token's address as the query. This is a fixed,
+deterministic call — one input, one search, no judgment calls about what
+the results mean.
 
-Use the `.label` class. This is not decoration — it is the evidence for the
-composition claim, and it is honest about the fallback (if
-`sources.balances` came back `rpc`, say `rpc`, not `token-api`).
+Render whatever comes back as a plain list: subgraph name, and a link to
+query it in Graph Explorer if the response includes an ID that maps to one.
+**No synthesis.** Do not write copy that claims to explain what the token
+is or what those subgraphs say about it — that would require reasoning this
+feature does not have. The honest framing is: *"Other subgraphs mentioning
+this address:"* — a discovery aid, not an analysis.
 
-**2b. `subgraph/STANDARD.md`.** The schema header already claims to be "a
-reusable schema any Aqua app can adopt". Promote that from a comment to a
-document:
-- The entities and what each field means
-- The join key (`Swapped.orderHash == Shipped.strategyHash`, per 1inch's docs)
-- **The evidence it generalises**: `/api/apps` shows this one schema
-  indexing two independent Aqua apps on Base mainnet today — 1inch's own
-  router and one unrelated app — because it indexes Aqua's contract events
-  rather than filtering to one app. Include the live numbers and how to
-  re-run the query.
-- What another Aqua app would have to do to adopt it (short — change the
-  network and start block, nothing else)
-
-**2c. A "Standards leverage" section in `README.md`** — three or four
-sentences, concrete: one schema covers every Aqua app rather than one per
-app; adding Token API for balances required no change to position-tracking
-because commitments and balances are separate concerns in the schema.
+If a search returns nothing, say so plainly (`"No other subgraphs found for
+this address"`), don't hide the row.
 
 ### Verification
 
-1. Screenshot the sources line on Portfolio with a connected wallet.
-2. Screenshot it on `/app/lookup` after a real lookup.
-3. Confirm the line changes to `rpc` when the Token API key is unset —
-   screenshot that too.
-4. Paste the `/api/apps?chain=8453` output you cite in `STANDARD.md`.
+1. `npx tsc --noEmit` clean.
+2. Look up a real, well-known address (not a Bone Dry test wallet) that's
+   likely to appear elsewhere — paste what came back.
+3. Look up one of Bone Dry's own test maker addresses — likely near-empty,
+   confirm it renders the "no results" state cleanly rather than erroring.
 
 ### Commit
 ```
-git add web/app/ui/Exposure.tsx web/app/app/lookup/page.tsx web/app/ui/desk.module.css subgraph/STANDARD.md README.md
-git commit -m "Show which product answered each number, and write the schema down as a standard"
+git add web/lib/subgraphMcp.ts web/app/app/lookup/page.tsx web/app/ui/desk.module.css
+git commit -m "Surface related subgraphs for unrecognised tokens via Subgraph MCP"
 ```
-
-**Stop here and report. Tasks 3 and 4 are mine.**
 
 ---
 
-## Task 3 (MINE, not Antigravity's) — an Extruction-priced strategy
+## What "done" means
 
-Closes 1inch's "sophisticated DeFi position" and "define your own
-instructions" in one move, **on official unmodified contracts** — no router
-fork, no EIP-170 budget, no redeploy of anything already working.
-
-`Extruction` (opcode `0x20`) lets a maker delegate pricing to an external
-contract implementing both `IExtruction` (swap path, state-modifying) and
-`IStaticExtruction` (quote path, view). A `BeaconStrategy` contract prices
-from the Chainlink feed `Beacon.sol` already reads, instead of a constant
-product curve — oracle-priced market making, which is a materially more
-sophisticated position than XYC + salt + fee.
-
-Encoding is already known and proven from this project's own generated
-bytes — `<opcode><arg length><args>`:
-```
-0x11 00                      XYCSwap, no args
-0x14 08 <8-byte salt>        salt
-0x15 04 <4-byte fee>         flat fee
-0x20 14 <20-byte target>     Extruction, target only     ← new
-```
-The SDK's `AquaProgramBuilder` has no `extruction()` helper, but
-`tools/gen-strategy.cjs` already accepts a raw `PROGRAM` hex override, so
-the program can be hand-assembled.
-
-**The hard part, and why this is mine:** `IExtruction` and
-`IStaticExtruction` must return identical results for identical inputs, or
-quote and swap diverge and fills revert. The contract must be immutable and
-deterministic. That is a subtle correctness property, not a coding task.
-
-## Task 4 (MINE) — the Extruction validator
-
-1inch's own `Extruction.sol` documentation says takers **"MUST validate
-strategy consistency before execution"**, **"verify target contract is
-non-upgradeable"**, and **"review target contract code"** — and ships no
-tooling to do any of it.
-
-That is the same shape as the gap this project already exists to close.
-Claim one was *"I have the liquidity"* → `Lens`. Claim two is *"my pricing
-contract is safe and consistent"* → a validator that, for any strategy
-using opcode `0x20`:
-- extracts the 20-byte target from the program
-- checks it has code, and checks EIP-1967 proxy slots for upgradeability
-- calls the static path twice and compares, and compares against a
-  simulated swap-path result
-- surfaces pass/fail beside the existing solvency badge
-
-This is the natural second instance of the project's own thesis, it is
-differentiated from what any other team is building, and it is the strongest
-available answer to "why does this project deserve the Aqua prize".
-
----
-
-## Definition of done for your part
-
-Report per task: files changed, real verification output (responses and
-screenshots, not descriptions), and anything you stopped on. Task 1's
-fallback test (key unset → `rpc`, still correct) is the one I will check
-first, so make sure it is real.
+Task 1's report is the most important one in this file — everything after
+it depends on what it finds. Do not start Task 2A or 2B before Task 1 is
+reported and confirmed. If the MCP handshake itself turns out to be too
+unreliable to complete in reasonable time (session drops, undocumented
+behaviour), say so plainly and stop — a flaky integration demoed live is
+worse than no integration, and Token API alone (already built) plus the
+"authenticates against MCP" fact already established is still a real,
+honest position to submit from.
