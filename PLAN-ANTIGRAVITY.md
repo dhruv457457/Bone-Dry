@@ -1,204 +1,411 @@
-# Bone Dry — put BeaconStrategy in the actual product, not just the repo
+# Bone Dry — Next Phase: become a real Aqua front-end, not a demo of one
 
-Context: `BeaconStrategy` (a maker strategy priced off Chainlink via SwapVM's
-Extruction opcode, `0x20`, instead of the built-in XYC curve) is written,
-tested, and **already deployed for real** on Base Sepolia:
+Context for whoever reads this (Antigravity, or Dhruv reading it back): the
+previous Claude session that wrote this is ending (weekly limit). This is a
+multi-day roadmap, not a single sprint — six phases, meant to be worked
+through over the next 2-3 days without a session actively steering each
+step. Each phase has its own verification section; treat those as gates,
+not suggestions. Commit per phase, not per file, so there's a clean
+checkpoint to roll back to if a phase goes sideways.
 
-```
-address:  0xAe91aEea982563F69ff6D8B97043A7a79c77340a
-deployTx: 0xdce896e38b6a3516b7f4316ef34539aac98762f8b6515cc936cf79561bbc450b
-pair:     WETH (0x4200000000000000000000000000000000000006)
-        / USDC (0x036CbD53842c5426634e7929541eC2318f3dCF7e)
-spread:   20 bps below oracle mid, fixed at deploy time
-```
+**The framing, stated plainly:** 1inch's own track says "build an Aqua
+app." Their own Aqua app (app.1inch.io — Aqua tab) is good: real charts,
+a leaderboard, a Learn section, open token search across any pair, and an
+onboarding flow that gets a new user swapping or providing liquidity in a
+few clicks. Ours, right now, is a working, honest, real-data product — the
+Lens/coverage/solvency-checking work this whole project is built on is
+real and 1inch's own app doesn't have it — but it looks and feels
+unfinished next to theirs. The goal of this phase is not to copy their
+product; it's to reach their production bar on breadth and polish, on top
+of the thing we already have that they don't: proof a maker's promises
+are actually backed.
 
-Also recorded in `contracts/fixtures/beacon-strategy.84532.json`. I called
-`extruction()` on it live against the real on-chain Chainlink feed (not a
-mock) as part of verifying the deploy: 1 WETH exact-in returned 2,478.72
-USDC, real oracle mid minus the spread, computed for real on testnet.
-
-**What's still missing:** nothing in the app knows this contract exists. A
-maker can't choose it. This plan wires it into the real "Ship a strategy"
-flow that already exists (`ShipStrategy` in `Desk.tsx`, `/api/strategy`) —
-not a new page, not a script, the same flow every other maker on this app
-already uses.
-
-**What this plan does NOT include:** actually shipping a strategy through
-this new option and swapping against it for a real transaction hash. That
-needs a funded wallet signing real transactions, which is the same
-`contracts/` / broadcasting boundary every plan here has kept off your
-plate — I'll do that myself once your part is live, using the exact code
-path you build (proving the product code is real, not a separate demo
-script).
+If this phase succeeds, a judge (or any real user) should be able to land
+on this app, see real market pairs beyond WETH/USDC/MOCK, watch a real
+price chart, understand the solvency angle from the Learn section, and
+come away thinking "this is a legitimate Aqua front-end, and it does one
+thing 1inch's own app doesn't."
 
 ---
 
-## 0. Hard rules (same as every plan here)
+## 0. What research turned up (read before building anything)
+
+Fetched from `1inch.com/aqua/learn` directly — this is what their own app
+teaches a new user, and what "good" looks like for this track:
+
+- **Aqua's own framing**: "a shared liquidity layer for self-custodial
+  liquidity provision." One wallet balance backs multiple positions
+  simultaneously — this is exactly the "not enumerable, claims can exceed
+  reality" property this whole project is already built around. We
+  understand this primitive better than most Aqua apps will, because we
+  built a solvency checker for it.
+- **Position shapes**: "Straight" (concentrated in a price range) and
+  "Curved" (for pegged/parity assets, e.g. stablecoin pairs) — two
+  distinct range-chart visualizations, not one generic chart.
+- **Per-position setup**: price range (lower/upper bound), swap fee
+  (auto/preset/custom), and backing amount — configured against a live
+  price chart with range-preset buttons (±10%, ±20%, full range, custom).
+- **"Coverage"**: their own term for "how much of a position's quote its
+  current wallet backing supports" — this is functionally the same
+  concept our own Lens/coverage work already measures, just without the
+  enforcement/verification layer we built. Worth naming this connection
+  explicitly somewhere in the UI or Learn content: we're not doing
+  something unrelated to Aqua's own vocabulary, we're the missing half of
+  it.
+- **Fee model**: fees accrue directly to the position holder, not pooled —
+  explicitly designed to prevent JIT fee-sniping.
+- **Onboarding flow**: connect wallet → pick pair + shape → configure range
+  on a live chart → set fee → set backing amount → "Ship" (their own verb
+  too — signs and publishes in one step).
+- **Leaderboard**: ranks liquidity providers by volume/liquidity/fees/APY,
+  filterable by time window, with a network-share breakdown and a live
+  recent-swaps feed.
+- **Learn section**: risk disclaimers stated plainly (smart-contract risk,
+  impermanent loss, market risk), video walkthroughs, an Aave-looping
+  guide for advanced users.
+- **Token breadth**: their pair picker searches an open token list (name,
+  symbol, or pasted address) across categories (Top/Trending/Gainers/
+  New/Most viewed) with live price/volume data — this is not something
+  special to Aqua, it's their existing 1inch token/price API surface
+  applied to the pair picker. We already integrate two real Graph
+  products (Token API, Subgraph MCP) for balance/discovery data — Phase C
+  below is about reusing that muscle for price/market data, not building
+  something unrelated from scratch.
+
+---
+
+## 1. Hard rules (same spirit as every plan before this one, one change)
 
 1. **Never `git add -A` or `git add .`.** Exact paths only.
 2. **Do not touch:** `web/app/ui/Landing.tsx`, `landing.module.css`,
-   `Doodle.tsx`, `useIsomorphicLayoutEffect.ts`, `web/app/page.tsx`.
+   `Doodle.tsx`, `useIsomorphicLayoutEffect.ts`, `web/app/page.tsx`. The
+   landing page's spare, editorial look is a deliberate choice and stays
+   exactly as it is — this phase is about the `/app` product surface, not
+   the landing page. Do not let "make it look more like a real product"
+   bleed into "make the landing page busier."
 3. **Ask before touching:** `web/app/layout.tsx`, `globals.css`,
    `Motion.tsx`, `Web3.tsx`.
 4. **Do not touch `contracts/` at all**, and do not broadcast any
-   transaction from any script. `BeaconStrategy` is already deployed; you
-   are only teaching the web app about the address above.
-5. **This strategy only exists for one pair, on one chain.** WETH/USDC on
-   Base Sepolia (84532) only — there is no mainnet deployment yet, and no
-   other pair is supported. The UI must make this a hard constraint, not a
-   soft suggestion: hide or disable the option entirely when the connected
-   network or selected pair doesn't match, rather than letting a maker
-   select it and hit a confusing revert.
-6. **Every task ends with real verification.** Actual output pasted, not
-   descriptions of what should happen.
-7. Commit per task, exact paths, trailer:
+   transaction from any script.
+5. **The one rule that changes this phase**: `globals.css`'s comment
+   ("Radius 0, no shadows, no gradients") was a deliberate constraint for
+   the swap-card era of this app. It's now actively working against the
+   goal — 1inch's own app (and every serious DeFi app) uses depth, color,
+   and motion to communicate state. This phase explicitly supersedes that
+   rule for `/app` pages (not the landing page, see rule 2). Don't remove
+   the comment without asking, but treat "flat, colorless, no shadows" as
+   no longer binding for anything under `web/app/app/` and `web/app/ui/
+   Desk.tsx` and its siblings.
+6. **Every phase ends with real verification** — screenshots of the
+   actual running app, real API responses, `npx tsc --noEmit` clean. The
+   standard set by every previous plan in this repo does not relax just
+   because the session steering it changed.
+7. Commit per phase (not per file), exact paths, trailer:
    `Co-Authored-By: Antigravity <noreply@google.com>`
-8. **Unsure whether something is in scope? It is not.** Ask.
+8. **Unsure whether something is in scope? It is not — ask Dhruv directly**
+   rather than guessing, especially for anything touching money amounts,
+   real API keys, or contract addresses.
+9. **Never fake data.** If a chart has no real data source yet, show an
+   honest empty/loading state, the same standard every other feature in
+   this codebase already holds itself to. A fabricated-looking price
+   chart is worse than no chart.
 
 ---
 
-## Task 1 — teach `/api/strategy` to build an Extruction-priced program
+## 2. Phase A — Visual system overhaul (do this first, everything else builds on it)
 
-**The one non-obvious part, read this first:** the SDK's `AquaProgramBuilder`
-does NOT have a convenience method for Extruction — `.xycSwapXD()` exists,
-`.salt()` exists, `.extruction()` does not, even though opcode `0x20` is in
-the Aqua instruction set the deployed router actually dispatches (verified
-directly against `@1inch/swap-vm-sdk@0.4.1`'s compiled `aquaInstructions`
-array — it's real, just missing a wrapper method). Use the base class's
-generic escape hatch instead:
+**Goal:** `/app` (Swap, Provide, Portfolio, Explore, Lookup) reads like a
+real trading product, not a document. This is foundational — building
+charts and a leaderboard on top of the current flat card system will just
+mean redoing their styling later.
 
-```ts
-import { AquaProgramBuilder, Order, MakerTraits, instructions } from "@1inch/swap-vm-sdk";
-import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
+### What to do
 
-const { extruction } = instructions;
-
-const BEACON_STRATEGY_ADDRESS = "0xAe91aEea982563F69ff6D8B97043A7a79c77340a"; // Base Sepolia only
-
-const program = new AquaProgramBuilder()
-  .add(
-    extruction.extruction.createIx(
-      new extruction.ExtructionArgs(new SdkAddress(BEACON_STRATEGY_ADDRESS), HexString.EMPTY)
-    )
-  )
-  .build();
-```
-
-`ExtructionArgs`' second argument (`extructionArgs`) is per-call data passed
-to the target contract — `BeaconStrategy` ignores it entirely (its spread is
-fixed at deploy time), so `HexString.EMPTY` is correct, not a placeholder to
-fill in later.
-
-### What to change
-
-`web/app/api/strategy/route.ts`:
-
-1. Accept a new optional body field: `pricing: "xyc" | "oracle"`, default
-   `"xyc"` — every existing call to this route must keep behaving exactly as
-   it does today.
-2. When `pricing === "oracle"`:
-   - Validate `n.id === 84532`. Anything else is a `BadInput` with a message
-     naming the reason (`"BeaconStrategy is only deployed on Base Sepolia"`),
-     not a silent fallback to XYC.
-   - Validate the pair is WETH/USDC in either direction (compare against
-     `n.weth` / `n.usdc`, already available on `Network` — check
-     `web/lib/networks.ts` for the exact field names, don't hardcode
-     addresses a second time in this file). Anything else is a `BadInput`
-     naming the reason.
-   - Build the program as shown above instead of calling `.xycSwapXD()`.
-     Do NOT also apply `flatFeeAmountInXD` on top even if `feeBps` was sent —
-     `BeaconStrategy`'s spread is the only fee this strategy has; layering a
-     second, independent fee on top muddies what the strategy is actually
-     demonstrating. Ignore `feeBps` when `pricing === "oracle"` (the UI in
-     Task 2 will stop sending it in this mode, but the route should not
-     trust that alone).
-   - `salt()` may still be applied if one was requested — it doesn't affect
-     price, only order-hash uniqueness, no reason to block it.
-3. The response already includes `programHex` — no change needed there,
-   but it's your primary verification tool: decode it and confirm the
-   Extruction opcode is really what got encoded (see Verification).
+1. Read `web/app/globals.css` and `web/app/ui/desk.module.css` in full
+   first — understand the existing token system (`--paper`, `--ink`,
+   `--red`, `--mono`, `--serif`, etc.) before changing it. Extend it,
+   don't replace it wholesale; the mono/serif typographic identity is
+   good and should survive this pass.
+2. Introduce real depth and hierarchy for `/app` surfaces: shadows,
+   subtle gradients where they communicate state (e.g. a covered/backed
+   position vs a shortfall), spacing that breathes, and a richer color
+   role beyond `--ink`/`--red` for things like APY, volume, and coverage
+   badges — 1inch's app leans on a blue/purple accent system against dark
+   surfaces; ours doesn't have to copy that palette, but it should have
+   an equivalently confident one, consistent with the mono/serif identity
+   already established.
+3. Dark mode / dark surface option for `/app` (their dashboard defaults
+   dark) is worth strongly considering, but confirm with Dhruv before
+   committing to it as the default — it's a big visual identity decision,
+   not a styling tweak.
+4. Every existing real-data element (coverage badges, the Finding hero,
+   ExposureTable, the maker book) keeps working exactly as before — this
+   phase is styling, not a rebuild of the data layer.
 
 ### Verification
 
 1. `npx tsc --noEmit` clean.
-2. A real POST to `/api/strategy` with `pricing: "oracle"`, a WETH/USDC
-   pair, on chain 84532 — paste the actual JSON response.
-3. Decode the returned `programHex` and show the raw bytes: confirm the
-   opcode byte is `0x20` (32 decimal) and the following 20 bytes equal
-   `0xAe91aEea982563F69ff6D8B97043A7a79c77340a`, case-insensitively. This is
-   the load-bearing check — a wrong program silently ships something that
-   isn't actually oracle-priced.
-4. A real POST with `pricing: "oracle"` but the wrong chain (e.g. 8453) —
-   paste the actual 400 response, confirm it's a clear `BadInput`, not a
-   500 or a silent XYC fallback.
-5. A real POST with `pricing: "oracle"` but a non-WETH/USDC pair — same,
-   paste the actual 400 response.
-6. Confirm a plain `pricing` omitted (or `"xyc"`) request still returns the
-   exact same shape it did before this change — paste it.
+2. Before/after screenshots of Swap, Provide, Portfolio, and Explore tabs.
+3. Confirm the landing page (`/`) is pixel-identical to before — screenshot it too, as proof nothing leaked.
 
 ### Commit
 
 ```
-git add web/app/api/strategy/route.ts
-git commit -m "Let /api/strategy build an Extruction-priced program for BeaconStrategy"
+git add web/app/globals.css web/app/ui/desk.module.css [other touched ui files]
+git commit -m "Give /app a real visual system instead of the flat card look"
 ```
 
 ---
 
-## Task 2 — surface it in the real "Ship a strategy" UI
+## 3. Phase B — Real price charts, both range shapes
 
-**Goal:** a maker looking at the existing Provide tab can actually choose
-this, honestly gated to when it's real.
+**Goal:** a maker configuring a Ship-a-strategy position sees a real price
+history chart, not just number inputs, and can pick a price range against
+it the way Aqua's own "Straight" and "Curved" position types do.
 
-### What to change
+### What to do
 
-`web/app/ui/Desk.tsx`'s `ShipStrategy` component:
-
-1. Add a pricing selector — two options, "Constant-product curve" (today's
-   default XYC behaviour, unchanged) and "Oracle (Chainlink, via Beacon)".
-2. The oracle option is only *selectable* when `net.id === 84532` AND the
-   current `tokenIn`/`tokenOut` pair is WETH/USDC in either direction.
-   Outside that, either hide the second option entirely or show it visibly
-   disabled with a one-line reason ("Only available for WETH/USDC on Base
-   Sepolia right now") — a maker should never be able to select it and then
-   get a confusing error back from the route.
-3. When oracle pricing is selected, hide the fee-bps input (or show it
-   disabled with a note: "BeaconStrategy charges a fixed 0.20% spread,
-   set at deploy — not configurable here") and send `pricing: "oracle"` in
-   the POST body instead of the current implicit XYC path.
-4. Everything else about the flow (claim amounts, wallet connect, signing,
-   the shipped-strategy-hash confirmation) stays exactly as it is today —
-   this is a pricing choice, not a new flow.
+1. Pick a charting library via the CDN-free path this repo already uses
+   (`npm install`, not a CDN script) — a lightweight one (`lightweight-charts`
+   or `recharts`) is enough; this doesn't need TradingView-grade
+   complexity. Confirm the choice with Dhruv before installing if unsure —
+   a new dependency is worth a quick check-in.
+2. Real price data: reuse what's already proven working this session —
+   the Chainlink feeds already wired for WETH/USDC (`web/lib/oracle.ts`,
+   `web/lib/networks.ts`'s `oracleFeeds`) give a live spot price; for
+   historical series, check whether Chainlink's `latestRoundData`/round
+   history is enough, or whether Token API/a public price-history
+   endpoint is needed. **Do not fabricate a plausible-looking historical
+   line** — if no real historical source is wired yet, show a live
+   spot-price point and an honest "historical view coming" state rather
+   than a fake curve.
+3. In `ShipStrategy` (`web/app/ui/Desk.tsx`), add the chart above the
+   existing claim inputs, with range-preset buttons (±10%, ±20%, full
+   range, custom) that visually mark the selected range on the chart —
+   this is presentation on top of the existing claim/pricing logic, not a
+   new pricing model. It does not need to functionally change what gets
+   shipped yet (that's a bigger follow-up); it needs to make the existing
+   flow feel like a real position-builder.
+4. Distinguish "Straight" vs "Curved" visually if/when both are
+   meaningfully different in this app (today: XYC is curve-shaped,
+   BeaconStrategy is a flat oracle line) — the chart treatment should
+   honestly reflect which pricing model is selected, not use one generic
+   chart for both.
 
 ### Verification
 
 1. `npx tsc --noEmit` clean.
-2. Screenshot the Provide tab on Base Sepolia with a WETH/USDC pair
-   selected, showing the pricing selector with oracle enabled.
-3. Screenshot it again on Base mainnet (or any non-WETH/USDC pair) showing
-   the oracle option correctly disabled/hidden.
-4. Do not actually click "Ship this strategy" for the oracle option — that
-   needs a funded wallet and is the part I'm doing myself next. Stop after
-   confirming the UI sends the right request body (check the network tab
-   or add a temporary console.log you remove before committing).
+2. Screenshot the chart rendering real Chainlink-sourced data, with the
+   actual current price marked.
+3. Screenshot the range-preset buttons changing the marked range.
+4. State plainly whether the chart is showing real historical data or an
+   honest "spot only" state — do not let this be ambiguous in the report.
 
 ### Commit
 
 ```
-git add web/app/ui/Desk.tsx web/app/ui/desk.module.css
-git commit -m "Add an oracle-priced (BeaconStrategy) option to Ship a strategy"
+git add web/app/ui/Desk.tsx web/app/ui/desk.module.css web/package.json web/package-lock.json [chart component files]
+git commit -m "Add a real price chart with range presets to Ship a strategy"
 ```
 
 ---
 
-## What "done" means
+## 4. Phase C — Open pair/token search, not a hardcoded list
 
-After Task 2, a real maker with a real wallet on Base Sepolia can choose
-"Oracle (Chainlink, via Beacon)" for a WETH/USDC strategy and get calldata
-that actually ships an Extruction-priced position — through the same UI
-every other maker on this app uses, not a side script. That closes the
-"nothing in the app knows this exists" gap on the product side.
+**Goal:** a user can search any real token (name, symbol, or pasted
+address) the way Aqua's own pair picker does, instead of being limited to
+the small hardcoded set this app ships with today.
 
-The remaining piece — one real maker actually shipping through this path
-and one real swap filling against it, with real transaction hashes — is
-mine. I'll do it right after Task 2 lands, and report back with the hashes.
+### What to do
+
+1. Find where the current pair/token list is hardcoded (`web/lib/
+   pairs.ts`, `web/lib/networks.ts`'s token tables, wherever `TOKENS` is
+   built) and understand its current shape before touching it.
+2. Build a search-driven token picker: an input searching by name/symbol/
+   address, backed by a real token-list/price source — the Token API
+   integration already live in this app (`web/lib/tokenApi.ts`) is the
+   natural first place to check for a token-search or metadata endpoint;
+   if it doesn't cover this, ask before reaching for a third data source.
+3. Categories (Top/Trending/Gainers/New) are a nice-to-have, not
+   required for this pass — a working real search across a real token
+   universe matters far more than matching every filter tab Aqua's UI has.
+4. **The trust boundary**: any token found via open search is, by
+   definition, one this app has never independently verified. Every
+   existing honesty pattern in this app (the TokenIcon fallback, the
+   "unrecognised token" treatment in ExposureTable, the Subgraph MCP
+   discovery panel) already assumes this — extend that pattern to the new
+   picker rather than inventing a new one. A found-via-search token
+   should look and behave exactly like an "unrecognised" token does
+   elsewhere in this app until proven otherwise.
+
+### Verification
+
+1. `npx tsc --noEmit` clean.
+2. Search for and select a real token this app has never had hardcoded
+   before (something outside WETH/USDC/MOCK) — screenshot it working.
+3. Confirm existing hardcoded pairs (WETH/USDC, WETH/MOCK) still work
+   unchanged.
+
+### Commit
+
+```
+git add web/lib/[touched files] web/app/ui/[touched files]
+git commit -m "Let a user search any real token instead of a hardcoded pair list"
+```
+
+---
+
+## 5. Phase D — Onboarding: land ready to act, on mainnet
+
+**Goal:** today `DEFAULT_NETWORK` is Base Sepolia (`web/lib/networks.ts`)
+— a new visitor lands on the free-tokens testnet, not on the "this is the
+evidence" mainnet. Aqua's own onboarding gets a user to a swap or a
+position in a few clicks; ours should too, and it should default to
+showing the real thing first.
+
+### What to do
+
+1. **This needs a product decision from Dhruv before touching code**:
+   should the default network flip to Base mainnet (8453)? The whole
+   landing page's pitch ("real maker positions, read-only, this is the
+   evidence") argues for it — but mainnet has real funds and the current
+   Sepolia default exists specifically so a first-time visitor can try
+   swapping/shipping with free tokens without any risk. Don't just flip
+   `DEFAULT_NETWORK` unilaterally; propose the change, lay out the
+   tradeoff exactly as stated here, and get an explicit yes first.
+2. Regardless of the network-default decision, tighten the first-open
+   experience: land directly on a populated Swap tab (a real pair, real
+   depth already loaded) rather than an empty form waiting for input —
+   check what `Desk.tsx`'s initial state does today and see how much of
+   this is already true vs. needs work.
+3. If mainnet becomes the default per the decision in step 1, the
+   Provide tab's oracle-priced (BeaconStrategy) option needs an honest
+   "not deployed on this network yet" state for mainnet, matching the
+   pattern already built for Sepolia-only in Phase 2 of the prior plan —
+   BeaconStrategy is Sepolia-only right now; don't let a mainnet default
+   silently break that gating.
+
+### Verification
+
+1. Explicit written confirmation from Dhruv on the network-default
+   decision, pasted into the report, before any default-network code
+   change ships.
+2. `npx tsc --noEmit` clean.
+3. Screenshot the actual first-open state after the change.
+
+### Commit
+
+```
+git add web/lib/networks.ts web/app/ui/Desk.tsx
+git commit -m "Tighten first-open onboarding [+ flip default network to Base mainnet, if approved]"
+```
+
+---
+
+## 6. Phase E — Leaderboard
+
+**Goal:** a real ranking of makers on this app's own router, by a real
+metric — not a copy of Aqua's cross-chain leaderboard (we don't have
+their volume), but an honest equivalent scoped to what this app actually
+indexes.
+
+### What to do
+
+1. The data already exists: `/api/apps`, `/api/coverage`, the `aquifer`
+   subgraph's Maker/Strategy entities. This is a new view over data this
+   app already has, not a new data source.
+2. Rank real makers on our router by a real, defensible metric — total
+   committed value, coverage ratio, active strategy count, whatever the
+   subgraph can actually answer cleanly. State the ranking metric plainly
+   in the UI (Aqua's own leaderboard is explicit about what it's sorting
+   by — "Volume, 1M" as a visible, changeable control).
+3. This is a genuinely good opportunity to make the solvency-checking
+   story *more* visible, not less: consider a coverage-ratio column or
+   sort option that plain volume-based leaderboards (including Aqua's
+   own) don't have. That's the actual differentiator this project has
+   over the platform it's building on top of — the leaderboard is a good
+   place to say so without being asked.
+4. Where does this live? A new tab, or a section on Explore — Dhruv's
+   call if genuinely ambiguous, otherwise use your own judgment and note
+   the reasoning in the report.
+
+### Verification
+
+1. `npx tsc --noEmit` clean.
+2. Screenshot the leaderboard with real maker data, sorted.
+3. Paste the actual API response(s) it's built from.
+
+### Commit
+
+```
+git add web/app/api/[new route] web/app/ui/[touched files]
+git commit -m "Add a real maker leaderboard scoped to this app's own router"
+```
+
+---
+
+## 7. Phase F — Learn section
+
+**Goal:** a short, honest explainer section — what Aqua is, what "shared
+liquidity" and "coverage" mean, and specifically what this app adds that
+Aqua's own app doesn't (the solvency check). This is a content task more
+than an engineering one.
+
+### What to do
+
+1. A new page or section (`web/app/app/learn/page.tsx` or similar) —
+   short, plain-language, matching this app's existing voice (see how
+   `README.md` and the landing page copy already talk: precise, a little
+   dry, no hype-speak).
+2. Cover, at minimum: what Aqua's shared-liquidity model is (one wallet
+   backs many positions — the reason claims can outrun reality), what
+   "coverage" means in Aqua's own vocabulary and in this app's, and why
+   Aqua's own balance mapping can't answer the solvency question on its
+   own (the `rawBalances` non-enumerability point this whole project is
+   built on — already written up clearly in `subgraph/STANDARD.md` and
+   the README, reuse that framing rather than rewriting it from scratch).
+3. Risk disclaimers, stated as plainly as Aqua's own ("smart-contract
+   risk, impermanent loss and market risk remain") — this app's Lens
+   reduces one specific risk (undisclosed insolvency), it does not
+   eliminate the others, and pretending otherwise would undercut the
+   project's own credibility.
+4. Do not write marketing copy dressed as education. If a sentence reads
+   like it's trying to sell rather than explain, cut it.
+
+### Verification
+
+1. `npx tsc --noEmit` clean.
+2. Screenshot the finished page.
+3. A quick self-check: would a judge reading only this page understand
+   both what Aqua is AND what Bone Dry specifically adds to it? If not,
+   it's not done.
+
+### Commit
+
+```
+git add web/app/app/learn/
+git commit -m "Add a Learn section explaining Aqua's shared-liquidity model and what Bone Dry adds"
+```
+
+---
+
+## 8. Order of operations, and what "done" means for this file
+
+Do the phases in order — A before B (chart styling depends on the visual
+system), C and D can run in parallel with each other once A is done, E
+and F are lowest-risk and can slot in whenever there's a natural pause.
+
+This file is a roadmap for 2-3 days without active session-by-session
+steering, not a rigid script — if a phase turns out to need a decision
+only Dhruv can make (Phase D explicitly does), stop and ask rather than
+guessing and shipping something that has to be unwound later. Every
+previous plan in this repo has held to "verify, don't assert, ask when
+unsure" as the actual standard this project is judged by internally, not
+just an instruction to a coding agent — that doesn't change because the
+session writing the plan changed.
+
+When a new Claude session picks this back up, it should be able to read
+this file plus the git log since `PLAN-ANTIGRAVITY.md` was last rewritten
+and understand exactly what happened and what's left — keep commit
+messages as detailed as every one before them in this repo's history, not
+shorter because there's no one actively reviewing each one in real time.
