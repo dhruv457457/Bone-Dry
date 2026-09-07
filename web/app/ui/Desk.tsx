@@ -68,6 +68,13 @@ export default function Desk() {
   const availablePairs = useMemo(() => pairsFor(chainId), [chainId]);
   const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
 
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("pair");
+    if (p && pairsFor(chainId).some((pair) => pair.id === p)) {
+      setPairId(p);
+    }
+  }, [chainId]);
+
   const currentPair = useMemo(() => {
     return availablePairs.find((p) => p.id === pairId) ?? availablePairs[0] ?? defaultPairFor(chainId);
   }, [availablePairs, pairId, chainId]);
@@ -450,7 +457,7 @@ export default function Desk() {
             {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : <span className={s.loadingDots}>reading…</span>}
           </span>
         </div>
-        <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} />
+        <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} slices={route?.slices} />
       </section>
 
       {/* Real, and not the first thing anyone should have to look at. Collapsed
@@ -914,10 +921,12 @@ function MakerBook({
   makers,
   used,
   decimals,
+  slices,
 }: {
   makers: MakersResponse | null;
   used: Set<string>;
   decimals: number;
+  slices?: RouteResponse["slices"];
 }) {
   if (!makers) return <p className={s.empty}>Indexing Aqua registry events...</p>;
   if (makers.makers.length === 0)
@@ -951,11 +960,21 @@ function MakerBook({
           <th>Allowance</th>
           <th>Deliverable</th>
           <th>Shortfall</th>
+          <th>vs Oracle</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((m) => {
           const isUsed = used.has(m.maker.toLowerCase());
+          const slice = isUsed
+            ? (slices?.find(
+                (s) => s.maker.toLowerCase() === m.maker.toLowerCase() && s.depth === m.depth
+              ) ??
+              slices?.find(
+                (s) => s.maker.toLowerCase() === m.maker.toLowerCase()
+              ))
+            : undefined;
+
           return (
             <tr key={`${m.maker}-${m.strategyHash}`} className={isUsed ? s.used : undefined}>
               <td>
@@ -977,6 +996,27 @@ function MakerBook({
               <td className={`num ${m.shortfall !== "0" ? s.loss : s.dim}`}>
                 {m.shortfall === "0" ? "--" : compact(m.shortfall, decimals)}
               </td>
+              <td>
+                {slice ? (
+                  slice.oracleDeviationBps === null ? (
+                    <span className={s.noOracle}>no oracle for this pair</span>
+                  ) : (
+                    (() => {
+                      const bps = BigInt(slice.oracleDeviationBps);
+                      // 25 bps threshold: Aqua constant-product curves within 25 bps of live oracle
+                      // track par closely; outside 25 bps indicates higher slippage or wider spread.
+                      const isOk = bps >= -25n && bps <= 25n;
+                      return (
+                        <span className={`${s.badge} ${isOk ? s.badgeOk : s.badgeLoss}`}>
+                          {bps > 0n ? `+${bps}` : `${bps}`} bps
+                        </span>
+                      );
+                    })()
+                  )
+                ) : (
+                  <span className={`num ${s.dim}`}>--</span>
+                )}
+              </td>
             </tr>
           );
         })}
@@ -984,7 +1024,7 @@ function MakerBook({
       {hidden > 0 && (
         <tfoot>
           <tr>
-            <td colSpan={6} className={`label ${s.dormant}`}>
+            <td colSpan={7} className={`label ${s.dormant}`}>
               + {hidden} more live {hidden === 1 ? "strategy" : "strategies"}, none with more{" "}
               {makers.token.symbol} to give than these
             </td>

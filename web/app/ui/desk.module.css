@@ -229,6 +229,7 @@
 .table td + td, .table th + th { padding-left: 16px; }
 .dim { color: var(--ink-faint); }
 .used { background: var(--paper-sunk); }
+.noOracle { font-size: 11px; color: var(--ink-faint); }
 
 /* Depth bar: slate = deliverable, red = promised-but-not = shortfall.
    No axis, no gridlines. The bar IS the number. */
