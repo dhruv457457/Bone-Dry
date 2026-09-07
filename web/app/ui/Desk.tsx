@@ -1288,17 +1288,30 @@ function ShipStrategy({
   const [claimIn, setClaimIn] = useState("");
   const [claimOut, setClaimOut] = useState("");
   const [feeBps, setFeeBps] = useState("0");
+  const [pricing, setPricing] = useState<"xyc" | "oracle">("xyc");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shippedHash, setShippedHash] = useState<Hex | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
 
+  const isBeaconEligible =
+    net.id === 84532 &&
+    ((tokenIn.address.toLowerCase() === net.weth.toLowerCase() && tokenOut.address.toLowerCase() === net.usdc.toLowerCase()) ||
+     (tokenIn.address.toLowerCase() === net.usdc.toLowerCase() && tokenOut.address.toLowerCase() === net.weth.toLowerCase()));
+
   useEffect(() => {
     setShippedHash(null);
     setError(null);
     setBusy(false);
+    setPricing("xyc");
   }, [net.id]);
+
+  useEffect(() => {
+    if (!isBeaconEligible && pricing === "oracle") {
+      setPricing("xyc");
+    }
+  }, [isBeaconEligible, pricing]);
 
   const parsedIn = toRaw(claimIn, tokenIn.decimals);
   const parsedOut = toRaw(claimOut, tokenOut.decimals);
@@ -1324,7 +1337,8 @@ function ShipStrategy({
           tokenOut: tokenOut.address,
           amountIn: parsedIn.toString(),
           amountOut: parsedOut.toString(),
-          feeBps: feeBps ? Number(feeBps) : 0,
+          feeBps: pricing === "oracle" ? 0 : (feeBps ? Number(feeBps) : 0),
+          pricing,
         }),
       });
 
@@ -1378,6 +1392,48 @@ function ShipStrategy({
       <div className={s.shipCard}>
         <div className={s.field}>
           <div className={s.fieldHead}>
+            <span className="label">Pricing model</span>
+          </div>
+          <div className={s.pricingRow}>
+            <div className={s.pricingTabs} role="radiogroup" aria-label="Pricing model">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={pricing === "xyc"}
+                className={`${s.pricingTab} ${pricing === "xyc" ? s.pricingTabOn : ""}`}
+                onClick={() => setPricing("xyc")}
+              >
+                Constant-product curve
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={pricing === "oracle"}
+                disabled={!isBeaconEligible}
+                className={`${s.pricingTab} ${pricing === "oracle" ? s.pricingTabOn : ""} ${!isBeaconEligible ? s.pricingTabDisabled : ""}`}
+                onClick={() => {
+                  if (isBeaconEligible) setPricing("oracle");
+                }}
+              >
+                Oracle (Chainlink, via Beacon)
+              </button>
+            </div>
+          </div>
+          {!isBeaconEligible ? (
+            <p className={s.shipCaption}>
+              Only available for WETH/USDC on Base Sepolia right now
+            </p>
+          ) : (
+            <p className={s.shipCaption}>
+              {pricing === "oracle"
+                ? "BeaconStrategy: prices off Chainlink oracle mid minus fixed spread via SwapVM opcode 0x20 (Extruction)."
+                : "Standard SwapVM XYC invariant curve."}
+            </p>
+          )}
+        </div>
+
+        <div className={s.field}>
+          <div className={s.fieldHead}>
             <span className="label">Claim {tokenIn.symbol}</span>
           </div>
           <div className={s.amountRow}>
@@ -1414,22 +1470,43 @@ function ShipStrategy({
           </div>
         </div>
 
-        <div className={s.field}>
-          <div className={s.fieldHead}>
-            <span className="label">Your fee (bps)</span>
+        {pricing === "oracle" ? (
+          <div className={s.field}>
+            <div className={s.fieldHead}>
+              <span className="label">Your fee (spread)</span>
+            </div>
+            <div className={s.amountRow}>
+              <input
+                value="20"
+                disabled
+                readOnly
+                aria-label="Fee in basis points"
+                className={s.inputDisabled}
+              />
+              <span className={s.ticker}>bps (fixed)</span>
+            </div>
+            <p className={s.shipCaption}>
+              BeaconStrategy charges a fixed 0.20% spread, set at deploy &mdash; not configurable here
+            </p>
           </div>
-          <div className={s.amountRow}>
-            <input
-              value={feeBps}
-              inputMode="numeric"
-              onChange={(e) => setFeeBps(e.target.value)}
-              aria-label="Fee in basis points"
-              placeholder="0"
-            />
-            <span className={s.ticker}>bps</span>
+        ) : (
+          <div className={s.field}>
+            <div className={s.fieldHead}>
+              <span className="label">Your fee (bps)</span>
+            </div>
+            <div className={s.amountRow}>
+              <input
+                value={feeBps}
+                inputMode="numeric"
+                onChange={(e) => setFeeBps(e.target.value)}
+                aria-label="Fee in basis points"
+                placeholder="0"
+              />
+              <span className={s.ticker}>bps</span>
+            </div>
+            <p className={s.shipCaption}>Spread you earn on every fill. 0 is fine to start.</p>
           </div>
-          <p className={s.shipCaption}>Spread you earn on every fill. 0 is fine to start.</p>
-        </div>
+        )}
 
         <div className={s.actions}>
           <button onClick={handleShip} disabled={disabled}>

@@ -544,6 +544,47 @@
   border: 1px solid var(--slate);
   background: var(--paper-sunk);
 }
+.pricingRow { display: flex; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.pricingTabs { display: flex; flex-wrap: wrap; border: 1px solid var(--ink); }
+.pricingTab {
+  border: 0;
+  border-right: 1px solid var(--rule);
+  padding: 6px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.pricingTabs .pricingTab:last-child { border-right: 0; }
+.pricingTab:hover:not(:disabled) { color: var(--ink); }
+.pricingTabOn { background: var(--ink); color: var(--paper); }
+.pricingTabOn:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.pricingTabDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--ink-faint);
+}
+.pricingTabDisabled:hover {
+  background: none;
+  color: var(--ink-faint);
+}
+.inputDisabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: var(--paper-sunk);
+}
+@media (max-width: 520px) {
+  .pricingTabs { flex-direction: column; }
+  .pricingTab { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .pricingTabs .pricingTab:last-child { border-bottom: 0; }
+}
 
 /* ── exposure ─────────────────────────────────────────────────────────── */
 .exposure { padding: 34px 0 0; border-top: 1px solid var(--ink); margin-top: 34px; }
