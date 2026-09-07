@@ -87,3 +87,18 @@ export type CoverageResponse = {
   rows: CoverageRow[];
   error?: string;
 };
+
+export type AppRow = {
+  app: string;
+  isOurs: boolean;
+  activeStrategies: number;
+  distinctMakers: number;
+};
+
+export type AppsResponse = {
+  available: boolean;
+  reason?: string;
+  apps: AppRow[];
+  error?: string;
+};
+

@@ -29,7 +29,7 @@ import {
   type PairConfig,
 } from "@/lib/pairs";
 import { keccak256, type Address, type Hex } from "viem";
-import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse } from "./types";
+import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse } from "./types";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -69,9 +69,18 @@ export default function Desk() {
   const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
 
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get("pair");
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("pair");
     if (p && pairsFor(chainId).some((pair) => pair.id === p)) {
       setPairId(p);
+    }
+    const t = params.get("tab");
+    if (t === "swap" || t === "provide" || t === "portfolio" || t === "explore") {
+      setTab(t);
+    }
+    const c = params.get("chain");
+    if (c === "8453" || c === "84532") {
+      setChainId(Number(c) as NetworkId);
     }
   }, [chainId]);
 
@@ -95,6 +104,8 @@ export default function Desk() {
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [appsData, setAppsData] = useState<AppsResponse | null>(null);
+  const [appsError, setAppsError] = useState<string | null>(null);
 
   // wagmi owns the connection; RainbowKit owns the picker. `wrongChain` is still
   // ours to decide, because "wrong" means "not the network this page is showing".
@@ -214,6 +225,23 @@ export default function Desk() {
         else setCoverage(c);
       })
       .catch((e) => live && setCoverageError((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, [chainId]);
+
+  useEffect(() => {
+    let live = true;
+    setAppsData(null);
+    setAppsError(null);
+    getJson<AppsResponse>(`/api/apps?chain=${chainId}`, 30_000)
+      .then((res) => {
+        if (!live) return;
+        if (res.error) setAppsError(res.error);
+        else if (res.available === false) setAppsError(res.reason ?? "no index for this network");
+        else setAppsData(res);
+      })
+      .catch((e) => live && setAppsError((e as Error).message));
     return () => {
       live = false;
     };
@@ -492,6 +520,11 @@ export default function Desk() {
             error={coverageError}
             onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
           />
+          <AcrossAqua
+            data={appsData}
+            error={appsError}
+            onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
+          />
           <section className={s.exploreLink}>
             <p>
               Checking a wallet that has never touched this dashboard? The lookup
@@ -656,6 +689,87 @@ function Coverage({
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function AcrossAqua({
+  data,
+  error,
+  onGoToBase,
+}: {
+  data: AppsResponse | null;
+  error: string | null;
+  onGoToBase?: () => void;
+}) {
+  if (error)
+    return (
+      <section className={s.acrossAqua}>
+        <div className={s.sectionHead}>
+          <h2 className={s.sectionTitle}>Across Aqua &mdash; every app this index sees, not just ours</h2>
+          <span className="label">{error}</span>
+        </div>
+        <div className={s.coverageEmpty}>
+          <p>
+            Aqua&apos;s registry is shared across any protocol that ships strategies to it.
+            Indexing across apps requires the subgraph on Base.
+          </p>
+          {onGoToBase && (
+            <button onClick={onGoToBase}>See it on Base</button>
+          )}
+        </div>
+      </section>
+    );
+
+  if (!data) return null;
+
+  const totalStrategies = data.apps.reduce((sum, a) => sum + a.activeStrategies, 0);
+
+  return (
+    <section className={s.acrossAqua}>
+      <div className={s.sectionHead}>
+        <h2 className={s.sectionTitle}>Across Aqua &mdash; every app this index sees, not just ours</h2>
+        <span className="label">
+          {data.apps.length} {data.apps.length === 1 ? "app" : "apps"}, {totalStrategies} live {totalStrategies === 1 ? "strategy" : "strategies"} total
+        </span>
+      </div>
+
+      <p className={s.coverageLede}>
+        Our subgraph listens to Aqua&apos;s contract events rather than filtering to Bone Dry&apos;s
+        router &mdash; so it indexes every consumer on the network. Here is every app currently
+        shipping live strategies under that same standardized schema.
+      </p>
+
+      <div className={s.tableWrap}>
+        <table className={s.table}>
+          <thead>
+            <tr>
+              <th>App</th>
+              <th>Status</th>
+              <th>Live strategies</th>
+              <th>Distinct makers</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.apps.map((a) => (
+              <tr key={a.app}>
+                <td>
+                  <span className="num" title={a.app}>{short(a.app)}</span>
+                </td>
+                <td>
+                  {a.isOurs ? (
+                    <span className={`${s.badge} ${s.badgeOk}`}>this app</span>
+                  ) : (
+                    <span className={s.dim}>--</span>
+                  )}
+                </td>
+                <td className="num">{a.activeStrategies}</td>
+                <td className="num">{a.distinctMakers}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
