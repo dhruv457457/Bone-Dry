@@ -1,25 +1,35 @@
-# Bone Dry — Subgraph MCP: the unambiguous second Graph product
+# Bone Dry — put BeaconStrategy in the actual product, not just the repo
 
-Context, so the "why" is clear: the Graph track requires composing two or
-more Graph products. Token API (Pinax-operated, Substreams-powered) is
-already built but sits in a gray area — it's officially linked from
-`thegraph.com`'s docs, but branded and run by a partner company, not The
-Graph Foundation directly. Defensible, but arguable.
+Context: `BeaconStrategy` (a maker strategy priced off Chainlink via SwapVM's
+Extruction opcode, `0x20`, instead of the built-in XYC curve) is written,
+tested, and **already deployed for real** on Base Sepolia:
 
-The **Subgraph MCP** (`subgraphs.mcp.thegraph.com`) is not arguable — it's
-on The Graph's own domain, and this project's existing Subgraph Studio API
-key already authenticates against it (verified: `HTTP 200` on `/sse` with
-that key, no second signup). This plan builds one real, honest use of it,
-to remove any doubt about the "two products" claim rather than resting it
-on Token API alone.
+```
+address:  0xAe91aEea982563F69ff6D8B97043A7a79c77340a
+deployTx: 0xdce896e38b6a3516b7f4316ef34539aac98762f8b6515cc936cf79561bbc450b
+pair:     WETH (0x4200000000000000000000000000000000000006)
+        / USDC (0x036CbD53842c5426634e7929541eC2318f3dCF7e)
+spread:   20 bps below oracle mid, fixed at deploy time
+```
 
-**This plan has a go/no-go gate as Task 1.** MCP's own docs say it covers
-subgraphs on The Graph's decentralized network. Our subgraph
-(`api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`) is on the **free
-Studio hosted service** — it is not confirmed that this is the same
-population MCP can see. Task 1 finds out. Task 2 is two different builds
-depending on the answer, written out below — do not guess which one applies
-before Task 1 reports back.
+Also recorded in `contracts/fixtures/beacon-strategy.84532.json`. I called
+`extruction()` on it live against the real on-chain Chainlink feed (not a
+mock) as part of verifying the deploy: 1 WETH exact-in returned 2,478.72
+USDC, real oracle mid minus the spread, computed for real on testnet.
+
+**What's still missing:** nothing in the app knows this contract exists. A
+maker can't choose it. This plan wires it into the real "Ship a strategy"
+flow that already exists (`ShipStrategy` in `Desk.tsx`, `/api/strategy`) —
+not a new page, not a script, the same flow every other maker on this app
+already uses.
+
+**What this plan does NOT include:** actually shipping a strategy through
+this new option and swapping against it for a real transaction hash. That
+needs a funded wallet signing real transactions, which is the same
+`contracts/` / broadcasting boundary every plan here has kept off your
+plate — I'll do that myself once your part is live, using the exact code
+path you build (proving the product code is real, not a separate demo
+script).
 
 ---
 
@@ -30,164 +40,165 @@ before Task 1 reports back.
    `Doodle.tsx`, `useIsomorphicLayoutEffect.ts`, `web/app/page.tsx`.
 3. **Ask before touching:** `web/app/layout.tsx`, `globals.css`,
    `Motion.tsx`, `Web3.tsx`.
-4. **Do not touch `contracts/` at all.** Nothing here needs a contract.
-5. **Do not fake agentic behaviour.** MCP tools exist for an AI client to
-   reason over — search, pick a result, decide what to query next. This
-   plan is explicit everywhere about what is a fixed, deterministic call
-   and what would require actual reasoning. If a step in your build starts
-   needing judgment calls about which subgraph is "relevant" or what a
-   result "means", stop — that is exactly the line between "we used the
-   tool" and "we're pretending to have an agent we don't have."
-6. **The MCP session key is already in this repo's `.env.local` as the
-   existing Studio key** (used for `GRAPH_URL` already) — do not request a
-   new key, do not hardcode it anywhere, read it the same way `GRAPH_URL`
-   is already read.
-7. **Every task ends with real verification.** Actual tool responses
-   pasted, not descriptions of what should happen.
-8. Commit per task, exact paths, trailer:
+4. **Do not touch `contracts/` at all**, and do not broadcast any
+   transaction from any script. `BeaconStrategy` is already deployed; you
+   are only teaching the web app about the address above.
+5. **This strategy only exists for one pair, on one chain.** WETH/USDC on
+   Base Sepolia (84532) only — there is no mainnet deployment yet, and no
+   other pair is supported. The UI must make this a hard constraint, not a
+   soft suggestion: hide or disable the option entirely when the connected
+   network or selected pair doesn't match, rather than letting a maker
+   select it and hit a confusing revert.
+6. **Every task ends with real verification.** Actual output pasted, not
+   descriptions of what should happen.
+7. Commit per task, exact paths, trailer:
    `Co-Authored-By: Antigravity <noreply@google.com>`
-9. **Unsure whether something is in scope? It is not.** Ask.
+8. **Unsure whether something is in scope? It is not.** Ask.
 
 ---
 
-## Task 1 — Prove the handshake, and find out which world we're in
+## Task 1 — teach `/api/strategy` to build an Extruction-priced program
 
-**Goal:** a real MCP tool call and response, end to end, from plain Node —
-not a raw SSE connect (already proven), a full JSON-RPC round trip:
-`initialize` → `tools/list` → call one real tool → get real data back.
+**The one non-obvious part, read this first:** the SDK's `AquaProgramBuilder`
+does NOT have a convenience method for Extruction — `.xycSwapXD()` exists,
+`.salt()` exists, `.extruction()` does not, even though opcode `0x20` is in
+the Aqua instruction set the deployed router actually dispatches (verified
+directly against `@1inch/swap-vm-sdk@0.4.1`'s compiled `aquaInstructions`
+array — it's real, just missing a wrapper method). Use the base class's
+generic escape hatch instead:
 
-MCP over SSE is a stateful protocol (session semantics, not a plain REST
-call) — this is the one place in this plan real protocol complexity lives.
-Read `https://thegraph.com/docs/en/subgraphs/subgraph-mcp/introduction/`
-and `https://github.com/graphops/subgraph-mcp` before writing a client by
-guesswork.
+```ts
+import { AquaProgramBuilder, Order, MakerTraits, instructions } from "@1inch/swap-vm-sdk";
+import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
 
-### What to do
+const { extruction } = instructions;
 
-1. Write a small standalone Node script (scratch file, not committed to
-   `web/`) that does the full handshake against
-   `https://subgraphs.mcp.thegraph.com/sse` (or `/mcp` if the docs say
-   that's now preferred — check, don't assume the URL from an earlier
-   probe is still current) using the existing Studio key.
-2. Call `tools/list`. Paste the **real, complete** list of tool names and
-   their input schemas in your report — this project needs to know exactly
-   what's callable, not a summary from search results.
-3. **The go/no-go check**: call whichever tool searches subgraphs by
-   keyword with the query `"aqua"` or `"aquifer"`. Does our own subgraph
-   (deployed at `api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`)
-   show up in the results, under any name?
-   - **If yes** — proceed to Task 2A.
-   - **If no** — our subgraph is Studio-hosted-only and outside what MCP
-     indexes. Proceed to Task 2B instead. Do not attempt to "publish" the
-     subgraph to the decentralized network to force a yes — that's a
-     billing/staking action on a live project this far into a deadline,
-     out of scope for you to decide, ask first if you think it's warranted.
-4. Separately, call the search tool with a keyword that should have many
-   real results regardless of our own subgraph's status (e.g. `"uniswap"`
-   or `"aave"`) — confirms the tool works at all, independent of question 3.
+const BEACON_STRATEGY_ADDRESS = "0xAe91aEea982563F69ff6D8B97043A7a79c77340a"; // Base Sepolia only
 
-### Verification
+const program = new AquaProgramBuilder()
+  .add(
+    extruction.extruction.createIx(
+      new extruction.ExtructionArgs(new SdkAddress(BEACON_STRATEGY_ADDRESS), HexString.EMPTY)
+    )
+  )
+  .build();
+```
 
-Paste, verbatim: the full `tools/list` response, the exact query you sent
-for the "aqua"/"aquifer" search and its full response, and the
-"uniswap"/"aave" search and its response. State plainly which of Task 2A /
-2B applies.
+`ExtructionArgs`' second argument (`extructionArgs`) is per-call data passed
+to the target contract — `BeaconStrategy` ignores it entirely (its spread is
+fixed at deploy time), so `HexString.EMPTY` is correct, not a placeholder to
+fill in later.
 
-### Commit
+### What to change
 
-Nothing to commit yet — Task 1 is investigation. Report and wait.
+`web/app/api/strategy/route.ts`:
 
----
-
-## Task 2A — if our subgraph IS visible to MCP
-
-**Goal:** an honest "indexed by The Graph" panel — MCP's own view of our
-subgraph, shown next to our own claims about it, so a visitor (or a judge)
-can see two independent sources agree. Same "verify, don't assert" instinct
-as everything else in this project.
-
-### What to build
-
-`web/lib/subgraphMcp.ts` — a minimal client wrapping the handshake proven
-in Task 1: one function, `mcpSubgraphInfo(): Promise<{schema: string; deploymentId: string; queryCount30d: number | null} | null>`.
-Null on any failure — this must never break the page it's used on.
-
-New route `web/app/api/mcp-check/route.ts` — calls it, returns the result,
-`available: false` shape on failure (same pattern as every other route in
-this codebase — check `coverage/route.ts` again if you need reminding of
-the shape).
-
-On the Explore tab, a small addition near the existing "Across Aqua"
-section: fetched schema entity names from MCP, compared against
-`subgraph/schema.graphql`'s own entity names (read at build time or hit the
-committed file — do not hardcode the list twice). Show agreement plainly:
-*"N of N entities match between our schema file and what The Graph's own
-MCP reports."* If they don't match, show that honestly too — a mismatch is
-a real finding, not a bug to hide.
+1. Accept a new optional body field: `pricing: "xyc" | "oracle"`, default
+   `"xyc"` — every existing call to this route must keep behaving exactly as
+   it does today.
+2. When `pricing === "oracle"`:
+   - Validate `n.id === 84532`. Anything else is a `BadInput` with a message
+     naming the reason (`"BeaconStrategy is only deployed on Base Sepolia"`),
+     not a silent fallback to XYC.
+   - Validate the pair is WETH/USDC in either direction (compare against
+     `n.weth` / `n.usdc`, already available on `Network` — check
+     `web/lib/networks.ts` for the exact field names, don't hardcode
+     addresses a second time in this file). Anything else is a `BadInput`
+     naming the reason.
+   - Build the program as shown above instead of calling `.xycSwapXD()`.
+     Do NOT also apply `flatFeeAmountInXD` on top even if `feeBps` was sent —
+     `BeaconStrategy`'s spread is the only fee this strategy has; layering a
+     second, independent fee on top muddies what the strategy is actually
+     demonstrating. Ignore `feeBps` when `pricing === "oracle"` (the UI in
+     Task 2 will stop sending it in this mode, but the route should not
+     trust that alone).
+   - `salt()` may still be applied if one was requested — it doesn't affect
+     price, only order-hash uniqueness, no reason to block it.
+3. The response already includes `programHex` — no change needed there,
+   but it's your primary verification tool: decode it and confirm the
+   Extruction opcode is really what got encoded (see Verification).
 
 ### Verification
 
 1. `npx tsc --noEmit` clean.
-2. Screenshot the panel.
-3. Paste the actual MCP response your comparison is built on.
+2. A real POST to `/api/strategy` with `pricing: "oracle"`, a WETH/USDC
+   pair, on chain 84532 — paste the actual JSON response.
+3. Decode the returned `programHex` and show the raw bytes: confirm the
+   opcode byte is `0x20` (32 decimal) and the following 20 bytes equal
+   `0xAe91aEea982563F69ff6D8B97043A7a79c77340a`, case-insensitively. This is
+   the load-bearing check — a wrong program silently ships something that
+   isn't actually oracle-priced.
+4. A real POST with `pricing: "oracle"` but the wrong chain (e.g. 8453) —
+   paste the actual 400 response, confirm it's a clear `BadInput`, not a
+   500 or a silent XYC fallback.
+5. A real POST with `pricing: "oracle"` but a non-WETH/USDC pair — same,
+   paste the actual 400 response.
+6. Confirm a plain `pricing` omitted (or `"xyc"`) request still returns the
+   exact same shape it did before this change — paste it.
 
 ### Commit
+
 ```
-git add web/lib/subgraphMcp.ts web/app/api/mcp-check/ web/app/ui/Desk.tsx web/app/ui/desk.module.css
-git commit -m "Cross-check our subgraph schema against The Graph's own Subgraph MCP"
+git add web/app/api/strategy/route.ts
+git commit -m "Let /api/strategy build an Extruction-priced program for BeaconStrategy"
 ```
 
 ---
 
-## Task 2B — if our subgraph is NOT visible to MCP
+## Task 2 — surface it in the real "Ship a strategy" UI
 
-**Goal:** don't force a self-referential feature that can't work. Use MCP
-for what it's actually good at instead — real cross-protocol discovery on
-the public lookup page, which is closer to the track's literal wording
-("cross-protocol analysis") anyway.
+**Goal:** a maker looking at the existing Provide tab can actually choose
+this, honestly gated to when it's real.
 
-### What to build
+### What to change
 
-On `/app/lookup`, after a maker's positions load, for each **unrecognised**
-token (the ones currently rendering as a truncated hex address with no
-symbol — check `ExposureTable` for how that's detected today), call MCP's
-subgraph-search tool with the token's address as the query. This is a fixed,
-deterministic call — one input, one search, no judgment calls about what
-the results mean.
+`web/app/ui/Desk.tsx`'s `ShipStrategy` component:
 
-Render whatever comes back as a plain list: subgraph name, and a link to
-query it in Graph Explorer if the response includes an ID that maps to one.
-**No synthesis.** Do not write copy that claims to explain what the token
-is or what those subgraphs say about it — that would require reasoning this
-feature does not have. The honest framing is: *"Other subgraphs mentioning
-this address:"* — a discovery aid, not an analysis.
-
-If a search returns nothing, say so plainly (`"No other subgraphs found for
-this address"`), don't hide the row.
+1. Add a pricing selector — two options, "Constant-product curve" (today's
+   default XYC behaviour, unchanged) and "Oracle (Chainlink, via Beacon)".
+2. The oracle option is only *selectable* when `net.id === 84532` AND the
+   current `tokenIn`/`tokenOut` pair is WETH/USDC in either direction.
+   Outside that, either hide the second option entirely or show it visibly
+   disabled with a one-line reason ("Only available for WETH/USDC on Base
+   Sepolia right now") — a maker should never be able to select it and then
+   get a confusing error back from the route.
+3. When oracle pricing is selected, hide the fee-bps input (or show it
+   disabled with a note: "BeaconStrategy charges a fixed 0.20% spread,
+   set at deploy — not configurable here") and send `pricing: "oracle"` in
+   the POST body instead of the current implicit XYC path.
+4. Everything else about the flow (claim amounts, wallet connect, signing,
+   the shipped-strategy-hash confirmation) stays exactly as it is today —
+   this is a pricing choice, not a new flow.
 
 ### Verification
 
 1. `npx tsc --noEmit` clean.
-2. Look up a real, well-known address (not a Bone Dry test wallet) that's
-   likely to appear elsewhere — paste what came back.
-3. Look up one of Bone Dry's own test maker addresses — likely near-empty,
-   confirm it renders the "no results" state cleanly rather than erroring.
+2. Screenshot the Provide tab on Base Sepolia with a WETH/USDC pair
+   selected, showing the pricing selector with oracle enabled.
+3. Screenshot it again on Base mainnet (or any non-WETH/USDC pair) showing
+   the oracle option correctly disabled/hidden.
+4. Do not actually click "Ship this strategy" for the oracle option — that
+   needs a funded wallet and is the part I'm doing myself next. Stop after
+   confirming the UI sends the right request body (check the network tab
+   or add a temporary console.log you remove before committing).
 
 ### Commit
+
 ```
-git add web/lib/subgraphMcp.ts web/app/app/lookup/page.tsx web/app/ui/desk.module.css
-git commit -m "Surface related subgraphs for unrecognised tokens via Subgraph MCP"
+git add web/app/ui/Desk.tsx web/app/ui/desk.module.css
+git commit -m "Add an oracle-priced (BeaconStrategy) option to Ship a strategy"
 ```
 
 ---
 
 ## What "done" means
 
-Task 1's report is the most important one in this file — everything after
-it depends on what it finds. Do not start Task 2A or 2B before Task 1 is
-reported and confirmed. If the MCP handshake itself turns out to be too
-unreliable to complete in reasonable time (session drops, undocumented
-behaviour), say so plainly and stop — a flaky integration demoed live is
-worse than no integration, and Token API alone (already built) plus the
-"authenticates against MCP" fact already established is still a real,
-honest position to submit from.
+After Task 2, a real maker with a real wallet on Base Sepolia can choose
+"Oracle (Chainlink, via Beacon)" for a WETH/USDC strategy and get calldata
+that actually ships an Extruction-priced position — through the same UI
+every other maker on this app uses, not a side script. That closes the
+"nothing in the app knows this exists" gap on the product side.
+
+The remaining piece — one real maker actually shipping through this path
+and one real swap filling against it, with real transaction hashes — is
+mine. I'll do it right after Task 2 lands, and report back with the hashes.
