@@ -56,7 +56,12 @@ export async function tokenBalances(
   if (!networkSlug) return null;
 
   try {
-    const url = `${PINAX_API_URL}?network=${networkSlug}&address=${holder}&limit=1000`;
+    // Pinax's free plan caps `limit` at 10 -- verified live: 1000 gets a
+    // 403 ("exceeds maximum of 10 items"), which was silently sending every
+    // call here to the RPC fallback. 10 is also not exhaustive for a wallet
+    // holding more distinct tokens than that, which is exactly what the
+    // per-token RPC fallback in the exposure route above this is for.
+    const url = `${PINAX_API_URL}?network=${networkSlug}&address=${holder}&limit=10`;
 
     const res = await fetch(url, {
       headers: {
