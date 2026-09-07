@@ -23,7 +23,12 @@ const AQUA_ABI = [
 ] as const;
 
 const { extruction } = instructions;
-const BEACON_STRATEGY_ADDRESS = "0xAe91aEea982563F69ff6D8B97043A7a79c77340a"; // Base Sepolia only
+// Redeployed once already: the first deployment (0xAe91aEea...) had a
+// SwapRegisters mismatch against the real router's ABI (an extra
+// amountNetPulled field the original interface copy was missing) and could
+// never actually be called by the router. See IExtruction.sol's comment for
+// the full story. This is the corrected, verified-reachable deployment.
+const BEACON_STRATEGY_ADDRESS = "0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7"; // Base Sepolia only
 
 
 /**

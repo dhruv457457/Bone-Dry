@@ -67,7 +67,7 @@ contract BeaconStrategyTest is Test {
 
     /// @notice 1 WETH in at $2,500 mid, 0.20% spread -> ~2,495 USDC out.
     function test_ExactIn_PricesAtOracleMidMinusSpread() public {
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0, amountNetPulled: 0 });
         (, , SwapRegisters memory out) = strategy.extruction(true, 0, _query(true), swap, "", "");
 
         // 1e18 * 2500e18 / 1e18 = 2500e18 USD; * 9980/10000 = 2495e18 USD;
@@ -81,7 +81,7 @@ contract BeaconStrategyTest is Test {
     /// round-trip to (about) the original input -- proves the two directions
     /// use the same underlying price, not two independently-tuned formulas.
     function test_ExactOut_RoundTripsWithExactIn() public {
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 0, amountOut: 2_495_000_000 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 0, amountOut: 2_495_000_000, amountNetPulled: 0 });
         (, , SwapRegisters memory out) = strategy.extruction(true, 0, _query(false), swap, "", "");
 
         // Integer division on the way in and back out can round by a few
@@ -97,7 +97,7 @@ contract BeaconStrategyTest is Test {
     /// real against the deployed contract and diffing the returned bytes --
     /// not inferred from the source being `view`.
     function test_StaticCallAndCallReturnIdenticalBytes() public {
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0, amountNetPulled: 0 });
         bytes memory calldata_ = abi.encodeCall(strategy.extruction, (true, 7, _query(true), swap, "", ""));
 
         (bool okStatic, bytes memory retStatic) = address(strategy).staticcall(calldata_);
@@ -115,7 +115,7 @@ contract BeaconStrategyTest is Test {
     /// before -- i.e. no SSTORE happened at all, not just that known slots
     /// didn't change.
     function test_NoStorageWritesDuringExecution() public {
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0, amountNetPulled: 0 });
 
         vm.record();
         strategy.extruction(true, 0, _query(true), swap, "", "");
@@ -128,7 +128,7 @@ contract BeaconStrategyTest is Test {
         wethFeed.set(2_500_00000000, block.timestamp);
         vm.warp(block.timestamp + 90_001);
 
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0, amountNetPulled: 0 });
         vm.expectRevert(abi.encodeWithSelector(BeaconStrategy.StalePrice.selector, address(wethFeed), block.timestamp - 90_001));
         strategy.extruction(true, 0, _query(true), swap, "", "");
     }
@@ -136,7 +136,7 @@ contract BeaconStrategyTest is Test {
     function test_RevertsOnUnsupportedToken() public {
         SwapQuery memory q = _query(true);
         q.tokenOut = address(0xDEAD);
-        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0 });
+        SwapRegisters memory swap = SwapRegisters({ balanceIn: 0, balanceOut: 0, amountIn: 1 ether, amountOut: 0, amountNetPulled: 0 });
 
         vm.expectRevert(abi.encodeWithSelector(BeaconStrategy.UnsupportedToken.selector, address(0xDEAD)));
         strategy.extruction(true, 0, q, swap, "", "");

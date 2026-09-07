@@ -1,12 +1,27 @@
 {
   "chainId": 84532,
-  "beaconStrategy": "0xAe91aEea982563F69ff6D8B97043A7a79c77340a",
-  "deployTx": "0xdce896e38b6a3516b7f4316ef34539aac98762f8b6515cc936cf79561bbc450b",
+  "beaconStrategy": "0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7",
+  "deployTx": "0xc179b7dba2047388ba07cef975ff2ef309cbabc1453d59d150adb0af6099ebe7",
   "tokenA": "0x4200000000000000000000000000000000000006",
   "feedA": "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1",
   "decimalsA": 18,
   "tokenB": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "feedB": "0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165",
   "decimalsB": 6,
-  "spreadBps": 20
+  "spreadBps": 20,
+  "superseded": {
+    "beaconStrategy": "0xAe91aEea982563F69ff6D8B97043A7a79c77340a",
+    "deployTx": "0xdce896e38b6a3516b7f4316ef34539aac98762f8b6515cc936cf79561bbc450b",
+    "reason": "IExtruction.sol's SwapRegisters was built from 1inch/swap-vm's `main` branch (4 fields) instead of what this router was actually compiled from (5 fields, extra amountNetPulled) -- confirmed via the router's verified Sourcify source. The router could never actually reach this address; every call hit the wrong function selector and reverted."
+  },
+  "liveProof": {
+    "shipTx": "0x70a3aef07a3b894c1e09fefec7861825e5acc4ab60fc3981a33a5391b2a257a3",
+    "strategyHash": "0xc9109f5148bea480a8ce8ab3240c5bf263cbab705d2f02bff27a2b4a327f13d4",
+    "swapTx": "0x8096393361f006fa3f1d054c7b2262295c3e6551fa11075787941064d3d2f252",
+    "maker": "0xe788c06F4f71EebE7F71b00661CA706Ed66fCABe",
+    "taker": "0xEeA25b4D709fF72E8443f27a2719b11B1342d28B",
+    "sold": "1000000 (1 USDC)",
+    "received": "403768485249334 (0.000403768485249334 WETH)",
+    "note": "One real maker shipped an Extruction-priced strategy through /api/strategy and one real taker filled it through the real deployed router -- amounts confirmed via on-chain balanceOf before/after, not just the swap's own return value."
+  }
 }
