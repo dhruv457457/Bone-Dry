@@ -350,11 +350,57 @@
 }
 .deployNote code { font-family: var(--mono); font-size: 11px; }
 
+/* ── the finding ──────────────────────────────────────────────────────────
+   The headline changed: it used to be the swap, with the coverage numbers a
+   tab away. It is now the fact that most of Aqua's promised liquidity is not
+   real, live, in the band a landing-page visitor already saw once -- the swap
+   below is the proof this dashboard routes around it, not the opening claim. */
+.finding {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 40px 32px 34px;
+  margin: 26px 0 0;
+  text-align: center;
+}
+.findingFig {
+  margin: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(48px, 8vw, 88px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+.findingBad { color: var(--red-bright); }
+.findingOf { color: rgba(251, 250, 246, 0.55); font-size: 0.42em; }
+.findingClaim {
+  margin: 10px 0 0;
+  font-family: var(--serif);
+  font-size: clamp(18px, 2.4vw, 26px);
+  letter-spacing: -0.01em;
+  max-width: 30ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+.findingSub {
+  margin: 16px auto 0;
+  max-width: 56ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(251, 250, 246, 0.62);
+}
+.findingLink {
+  border: 0;
+  padding: 0;
+  color: var(--paper);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font: inherit;
+}
+.findingLink:hover:not(:disabled) { background: none; color: var(--red-bright); }
+
 /* ── the trade row ────────────────────────────────────────────────────────
-   The old layout gave the swap, the maker table and the coverage list the same
-   visual weight, which is what "too texty" actually means: nothing tells the eye
-   where to start. The swap card is heavier than everything around it now, and
-   the proof supports it from the side instead of shouting from a band above. */
+   The swap is the proof the finding above is answerable -- evidence for the
+   claim made there, not a second, competing headline. */
 .trade {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -372,6 +418,9 @@
      runs out across the page, which reads as a stray border rather than a seam
      between the two amounts. */
   overflow: hidden;
+  /* Real elevation, not just a tint -- this is the one card on the page that
+     should read as sitting above the paper, not flush with it. */
+  box-shadow: 0 2px 0 var(--ink), 6px 10px 26px -14px rgba(27, 27, 26, 0.45);
 }
 
 .fieldHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -424,7 +473,11 @@
 .beat { margin: 12px 0 0; font-size: 13px; color: var(--ink-soft); }
 .beat b { font-weight: 400; color: var(--slate); font-family: var(--mono); }
 
-.proofCard { border: 1px solid var(--rule); padding: 22px 22px 14px; }
+.proofCard {
+  border: 1px solid var(--rule);
+  padding: 22px 22px 14px;
+  box-shadow: 4px 6px 18px -14px rgba(27, 27, 26, 0.35);
+}
 
 /* Definition list rather than a seven-row table of small type: the numbers a
    swapper acts on, and nothing else. The rest is in the maker book below. */

@@ -96,6 +96,11 @@ export default function Desk() {
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
+  // The finding, not the swap, is the headline -- so it is fetched once,
+  // always against Base mainnet, independent of whichever network the swap
+  // UI is currently pointed at. Testing on Sepolia should not hide the real
+  // number; the problem this project answers is a Base mainnet fact.
+  const [finding, setFinding] = useState<CoverageResponse | null>(null);
   const [appsData, setAppsData] = useState<AppsResponse | null>(null);
   const [appsError, setAppsError] = useState<string | null>(null);
 
@@ -221,6 +226,18 @@ export default function Desk() {
       live = false;
     };
   }, [chainId]);
+
+  useEffect(() => {
+    let live = true;
+    getJson<CoverageResponse>(`/api/coverage?chain=8453&first=200`, 60_000)
+      .then((c) => {
+        if (live && c.available !== false && !c.error) setFinding(c);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -374,8 +391,9 @@ export default function Desk() {
 
       {tab === "swap" && (
       <>
-      {/* Swap first. The proof sits beside it rather than as a full-width band
-          above: it is the reason to trust the number, not the headline. */}
+      <Finding coverage={finding} onSeeExplore={() => setTab("explore")} />
+      {/* The swap is the proof the finding above is answerable, not the
+          headline itself -- that reversal is the point of this page now. */}
       <div className={s.trade}>
         <section className={s.swapCard}>
           <div className={s.field}>
@@ -542,6 +560,70 @@ export default function Desk() {
         </>
       )}
     </div>
+  );
+}
+
+/* Counts up from 0 once, on mount or whenever the target changes -- not a
+   general-purpose spring, just enough motion to make a number that only
+   ever renders once feel like it was measured just now rather than typed
+   into the JSX. Skips straight to the target under reduced motion. */
+function useCountUp(target: number, ms = 900) {
+  const [value, setValue] = useState(0);
+  const reduced = useRef(
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+  useEffect(() => {
+    if (reduced.current) {
+      setValue(target);
+      return;
+    }
+    let raf: number;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / ms);
+      // easeOutCubic -- fast start, settles rather than snapping.
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(target * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return value;
+}
+
+/* The headline, not the swap card beside it. This is the whole pitch in one
+   sentence and one live number: most of what Aqua thinks it has is not
+   there. The swap below is the proof that this dashboard routes around it --
+   evidence for the claim made here, not the other way around. */
+function Finding({
+  coverage,
+  onSeeExplore,
+}: {
+  coverage: CoverageResponse | null;
+  onSeeExplore: () => void;
+}) {
+  const bad = useCountUp(coverage?.underCollateralised ?? 0);
+  if (!coverage) return null;
+  return (
+    <section className={s.finding}>
+      <p className={s.findingFig}>
+        <span className={s.findingBad}>{bad}</span>
+        <span className={s.findingOf}> of {coverage.positions}</span>
+      </p>
+      <p className={s.findingClaim}>
+        real maker positions on Base can&apos;t deliver what they promised, right
+        now.
+      </p>
+      <p className={s.findingSub}>
+        Aqua has no way to check this on-chain -- the balance mapping isn&apos;t
+        enumerable, 1inch say so themselves. This is the index that can, and
+        the swap below only fills from makers who actually pass it.{" "}
+        <button className={s.findingLink} onClick={onSeeExplore}>
+          See the full breakdown &rarr;
+        </button>
+      </p>
+    </section>
   );
 }
 
