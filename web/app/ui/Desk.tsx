@@ -69,18 +69,9 @@ export default function Desk() {
   const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const p = params.get("pair");
+    const p = new URLSearchParams(window.location.search).get("pair");
     if (p && pairsFor(chainId).some((pair) => pair.id === p)) {
       setPairId(p);
-    }
-    const t = params.get("tab");
-    if (t === "swap" || t === "provide" || t === "portfolio" || t === "explore") {
-      setTab(t);
-    }
-    const c = params.get("chain");
-    if (c === "8453" || c === "84532") {
-      setChainId(Number(c) as NetworkId);
     }
   }, [chainId]);
 
