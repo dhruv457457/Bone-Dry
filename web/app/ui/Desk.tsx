@@ -30,6 +30,7 @@ import {
 } from "@/lib/pairs";
 import { keccak256, type Address, type Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse } from "./types";
+import { TokenIcon } from "./TokenIcon";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -396,7 +397,10 @@ export default function Desk() {
                 onChange={(e) => setInput(e.target.value)}
                 aria-label={`Amount of ${tokenIn.symbol} to sell`}
               />
-              <span className={s.ticker}>{tokenIn.symbol}</span>
+              <span className={s.ticker}>
+                <TokenIcon chainId={chainId} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
+                {tokenIn.symbol}
+              </span>
             </div>
           </div>
 
@@ -414,7 +418,10 @@ export default function Desk() {
               className={`${s.readout} ${route && route.amountOut !== "0" ? "" : s.readoutMuted}`}
             >
               {route ? units(route.amountOut, tokenOut.decimals, 6) : "--"}{" "}
-              <span className={s.ticker}>{tokenOut.symbol}</span>
+              <span className={s.ticker}>
+                <TokenIcon chainId={chainId} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
+                {tokenOut.symbol}
+              </span>
             </div>
             {route && improvement > 0 && (
               <p className={s.beat}>
@@ -471,7 +478,13 @@ export default function Desk() {
 
       <section className={s.book}>
         <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Maker book &mdash; {tokenOut.symbol}</h2>
+          <h2 className={s.sectionTitle}>
+            Maker book &mdash;{" "}
+            <span className={s.tokenCell}>
+              <TokenIcon chainId={chainId} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
+              {tokenOut.symbol}
+            </span>
+          </h2>
           <span className="label">
             {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : <span className={s.loadingDots}>reading…</span>}
           </span>
@@ -1293,7 +1306,10 @@ function ShipStrategy({
               aria-label={`Claim amount for ${tokenIn.symbol}`}
               placeholder="0.0"
             />
-            <span className={s.ticker}>{tokenIn.symbol}</span>
+            <span className={s.ticker}>
+              <TokenIcon chainId={net.id} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
+              {tokenIn.symbol}
+            </span>
           </div>
         </div>
 
@@ -1309,7 +1325,10 @@ function ShipStrategy({
               aria-label={`Claim amount for ${tokenOut.symbol}`}
               placeholder="0.0"
             />
-            <span className={s.ticker}>{tokenOut.symbol}</span>
+            <span className={s.ticker}>
+              <TokenIcon chainId={net.id} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
+              {tokenOut.symbol}
+            </span>
           </div>
         </div>
 

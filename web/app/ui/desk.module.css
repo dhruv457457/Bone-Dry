@@ -150,7 +150,8 @@
 .field { display: grid; gap: 4px; margin-bottom: 20px; }
 .amountRow { display: flex; align-items: baseline; gap: 8px; }
 .amountRow input { flex: 1; min-width: 0; font-size: 26px; letter-spacing: -0.03em; }
-.ticker { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); }
+.ticker { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); display: inline-flex; align-items: center; gap: 6px; }
+.tokenCell { display: inline-flex; align-items: center; gap: 8px; }
 .balance { text-transform: none; letter-spacing: 0; color: var(--ink-faint); }
 
 .flip { display: flex; justify-content: flex-end; margin: -12px 0 12px; }

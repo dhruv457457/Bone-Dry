@@ -6,6 +6,7 @@ import { compact, short } from "@/lib/format";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import type { NetworkId } from "@/lib/networks";
+import { TokenIcon } from "./TokenIcon";
 
 export type ExposurePosition = {
   token: Address;
@@ -29,7 +30,13 @@ export type ExposureResponse = {
 
 /* The table of a single maker's Aqua commitments against their actual wallet balance.
    Shared between the connected-wallet exposure card and the public lookup page. */
-export function ExposureTable({ positions }: { positions: ExposurePosition[] }) {
+export function ExposureTable({
+  positions,
+  chainId = 8453,
+}: {
+  positions: ExposurePosition[];
+  chainId?: number;
+}) {
   return (
     <div className={s.tableWrap}>
       <table className={s.table}>
@@ -47,8 +54,11 @@ export function ExposureTable({ positions }: { positions: ExposurePosition[] }) 
             return (
               <tr key={p.token}>
                 <td>
-                  <span className="num">{p.symbol}</span>{" "}
-                  <span className={`num ${s.dim}`}>{short(p.token)}</span>
+                  <span className={s.tokenCell}>
+                    <TokenIcon chainId={chainId} address={p.token} symbol={p.symbol} size={20} />
+                    <span className="num">{p.symbol}</span>
+                    <span className={`num ${s.dim}`}>{short(p.token)}</span>
+                  </span>
                 </td>
                 <td className={`num ${s.dim}`}>{compact(p.claimed, dec)}</td>
                 <td className="num">{compact(p.held, dec)}</td>
@@ -199,7 +209,7 @@ export default function Exposure({
           {data.fullyCoveredCount} of {data.totalPositions} fully covered
         </span>
       </div>
-      <ExposureTable positions={data.positions} />
+      <ExposureTable positions={data.positions} chainId={chainId} />
     </section>
   );
 }
