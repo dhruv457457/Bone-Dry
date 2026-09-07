@@ -102,3 +102,30 @@ export type AppsResponse = {
   error?: string;
 };
 
+export type ExposureSources = {
+  commitments: string;
+  balances: "token-api" | "rpc" | "none";
+  allowances: string;
+};
+
+export type ExposurePosition = {
+  token: `0x${string}`;
+  symbol: string;
+  decimals: number;
+  claimed: string;
+  held: string;
+  backed?: string;
+  covered: boolean;
+};
+
+export type ExposureResponse = {
+  available: boolean;
+  reason?: string;
+  maker: `0x${string}`;
+  positions: ExposurePosition[];
+  fullyCoveredCount: number;
+  totalPositions: number;
+  sources?: ExposureSources;
+  error?: string;
+};
+

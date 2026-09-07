@@ -2,6 +2,7 @@ import { erc20Abi } from "@/lib/chain";
 import { networkFrom, clientFor, tokensOf } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { positionsForMaker } from "@/lib/graph";
+import { tokenBalances } from "@/lib/tokenApi";
 import { addressParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -51,46 +52,94 @@ export async function GET(req: Request) {
         positions: [],
         fullyCoveredCount: 0,
         totalPositions: 0,
+        sources: {
+          commitments: "subgraph",
+          balances: "rpc",
+          allowances: "rpc",
+        },
       });
     }
 
+    const tokenApiBalances = await tokenBalances(n, maker);
     const client = clientFor(n);
-    const calls = makerPositions.flatMap((p) => [
-      { address: p.token, abi: erc20Abi, functionName: "balanceOf", args: [maker] } as const,
-      { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] } as const,
-      { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] } as const,
-    ]);
-
-    const res = await client.multicall({ contracts: calls, allowFailure: true });
     const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
 
-    const positions = makerPositions.map((p, i) => {
-      const b = res[i * 3];
-      const a = res[i * 3 + 1];
-      const dec = res[i * 3 + 2];
+    let positions;
+    let balancesSource: "token-api" | "rpc";
 
-      const wallet = b.status === "success" ? (b.result as bigint) : 0n;
-      const allowance = a.status === "success" ? (a.result as bigint) : 0n;
-      const decimals =
-        dec.status === "success"
-          ? Number(dec.result)
-          : TOKENS[p.token.toLowerCase()]?.decimals ?? 18;
-      const symbol =
-        TOKENS[p.token.toLowerCase()]?.symbol ?? `${p.token.slice(0, 6)}…`;
+    if (tokenApiBalances !== null) {
+      balancesSource = "token-api";
+      // Token API answered: read allowance and decimals via RPC multicall (2 calls per token)
+      const calls = makerPositions.flatMap((p) => [
+        { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] } as const,
+        { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] } as const,
+      ]);
+      const res = await client.multicall({ contracts: calls, allowFailure: true });
 
-      const backed = wallet < allowance ? wallet : allowance;
-      const covered = backed >= p.totalCommitted;
+      positions = makerPositions.map((p, i) => {
+        const a = res[i * 2];
+        const dec = res[i * 2 + 1];
 
-      return {
-        token: p.token,
-        symbol,
-        decimals,
-        claimed: p.totalCommitted.toString(),
-        held: wallet.toString(),
-        backed: backed.toString(),
-        covered,
-      };
-    });
+        const wallet = tokenApiBalances.get(p.token.toLowerCase()) ?? 0n;
+        const allowance = a.status === "success" ? (a.result as bigint) : 0n;
+        const decimals =
+          dec.status === "success"
+            ? Number(dec.result)
+            : TOKENS[p.token.toLowerCase()]?.decimals ?? 18;
+        const symbol =
+          TOKENS[p.token.toLowerCase()]?.symbol ?? `${p.token.slice(0, 6)}…`;
+
+        const backed = wallet < allowance ? wallet : allowance;
+        const covered = backed >= p.totalCommitted;
+
+        return {
+          token: p.token,
+          symbol,
+          decimals,
+          claimed: p.totalCommitted.toString(),
+          held: wallet.toString(),
+          backed: backed.toString(),
+          covered,
+        };
+      });
+    } else {
+      balancesSource = "rpc";
+      // Fallback: read balanceOf, allowance, and decimals via RPC multicall (3 calls per token)
+      const calls = makerPositions.flatMap((p) => [
+        { address: p.token, abi: erc20Abi, functionName: "balanceOf", args: [maker] } as const,
+        { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] } as const,
+        { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] } as const,
+      ]);
+      const res = await client.multicall({ contracts: calls, allowFailure: true });
+
+      positions = makerPositions.map((p, i) => {
+        const b = res[i * 3];
+        const a = res[i * 3 + 1];
+        const dec = res[i * 3 + 2];
+
+        const wallet = b.status === "success" ? (b.result as bigint) : 0n;
+        const allowance = a.status === "success" ? (a.result as bigint) : 0n;
+        const decimals =
+          dec.status === "success"
+            ? Number(dec.result)
+            : TOKENS[p.token.toLowerCase()]?.decimals ?? 18;
+        const symbol =
+          TOKENS[p.token.toLowerCase()]?.symbol ?? `${p.token.slice(0, 6)}…`;
+
+        const backed = wallet < allowance ? wallet : allowance;
+        const covered = backed >= p.totalCommitted;
+
+        return {
+          token: p.token,
+          symbol,
+          decimals,
+          claimed: p.totalCommitted.toString(),
+          held: wallet.toString(),
+          backed: backed.toString(),
+          covered,
+        };
+      });
+    }
 
     const fullyCoveredCount = positions.filter((p) => p.covered).length;
 
@@ -100,6 +149,11 @@ export async function GET(req: Request) {
       positions,
       fullyCoveredCount,
       totalPositions: positions.length,
+      sources: {
+        commitments: "subgraph",
+        balances: balancesSource,
+        allowances: "rpc",
+      },
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
