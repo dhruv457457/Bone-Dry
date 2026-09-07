@@ -69,18 +69,41 @@ export async function GET(req: Request) {
 
     if (tokenApiBalances !== null) {
       balancesSource = "token-api";
-      // Token API answered: read allowance and decimals via RPC multicall (2 calls per token)
-      const calls = makerPositions.flatMap((p) => [
-        { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] } as const,
-        { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] } as const,
-      ]);
+      // Token API answered, but it can omit a token it doesn't track (e.g. no
+      // recent activity, or an unsupported token type) -- that's "unknown",
+      // not "zero". For any position missing from its map, fall back to a
+      // real balanceOf read for that token specifically, alongside the
+      // allowance + decimals reads every position needs.
+      let idx = 0;
+      const offsets: number[] = [];
+      const calls = makerPositions.flatMap((p) => {
+        offsets.push(idx);
+        const missing = !tokenApiBalances.has(p.token.toLowerCase());
+        idx += missing ? 3 : 2;
+        return missing
+          ? ([
+              { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] },
+              { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] },
+              { address: p.token, abi: erc20Abi, functionName: "balanceOf", args: [maker] },
+            ] as const)
+          : ([
+              { address: p.token, abi: erc20Abi, functionName: "allowance", args: [maker, n.aqua] },
+              { address: p.token, abi: erc20Abi, functionName: "decimals", args: [] },
+            ] as const);
+      });
       const res = await client.multicall({ contracts: calls, allowFailure: true });
 
       positions = makerPositions.map((p, i) => {
-        const a = res[i * 2];
-        const dec = res[i * 2 + 1];
+        const off = offsets[i];
+        const a = res[off];
+        const dec = res[off + 1];
+        const missing = !tokenApiBalances.has(p.token.toLowerCase());
 
-        const wallet = tokenApiBalances.get(p.token.toLowerCase()) ?? 0n;
+        const wallet = missing
+          ? res[off + 2]?.status === "success"
+            ? (res[off + 2].result as bigint)
+            : 0n
+          : tokenApiBalances.get(p.token.toLowerCase())!;
         const allowance = a.status === "success" ? (a.result as bigint) : 0n;
         const decimals =
           dec.status === "success"
