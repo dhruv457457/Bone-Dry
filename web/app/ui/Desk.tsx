@@ -26,12 +26,16 @@ import {
   defaultPairFor,
   poolKeyFor,
   isZeroForOne,
+  createPairConfig,
   type PairConfig,
+  type PairToken,
 } from "@/lib/pairs";
 import { keccak256, type Address, type Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse } from "./types";
 import { TokenIcon } from "./TokenIcon";
 import { PriceChart, type RangePreset } from "./PriceChart";
+import { TokenSearchModal } from "./TokenSearchModal";
+import type { SearchableToken } from "@/lib/tokenList";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -67,8 +71,27 @@ export default function Desk() {
   const net = NETWORKS[chainId];
   const hook = net.hook;
 
-  const availablePairs = useMemo(() => pairsFor(chainId), [chainId]);
+  const [customPairs, setCustomPairs] = useState<PairConfig[]>([]);
+  const basePairs = useMemo(() => pairsFor(chainId), [chainId]);
+  const availablePairs = useMemo(() => {
+    const list = [...basePairs];
+    for (const cp of customPairs) {
+      if (!list.some((p) => p.id === cp.id)) {
+        list.push(cp);
+      }
+    }
+    return list;
+  }, [basePairs, customPairs]);
+
   const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchTarget, setSearchTarget] = useState<"tokenIn" | "tokenOut" | "pair">("pair");
+
+  useEffect(() => {
+    setCustomPairs([]);
+    const defaultPair = defaultPairFor(chainId);
+    setPairId(defaultPair ? defaultPair.id : "usdc-weth");
+  }, [chainId]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -104,6 +127,62 @@ export default function Desk() {
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
   const tokenOut = flipped ? currentPair.token0 : currentPair.token1;
+
+  const handleSelectToken = useCallback(
+    (token: SearchableToken) => {
+      const selectedAsPairToken: PairToken = {
+        address: token.address as Address,
+        symbol: token.symbol,
+        decimals: token.decimals,
+      };
+
+      if (searchTarget === "tokenIn") {
+        if (selectedAsPairToken.address.toLowerCase() === tokenOut.address.toLowerCase()) {
+          setFlipped((f) => !f);
+          return;
+        }
+        const newPair = createPairConfig(selectedAsPairToken, tokenOut, net);
+        setCustomPairs((prev) => [newPair, ...prev]);
+        setPairId(newPair.id);
+        setFlipped(false);
+      } else if (searchTarget === "tokenOut") {
+        if (selectedAsPairToken.address.toLowerCase() === tokenIn.address.toLowerCase()) {
+          setFlipped((f) => !f);
+          return;
+        }
+        const newPair = createPairConfig(tokenIn, selectedAsPairToken, net);
+        setCustomPairs((prev) => [newPair, ...prev]);
+        setPairId(newPair.id);
+        setFlipped(false);
+      } else {
+        const isWeth = token.symbol.toUpperCase() === "WETH";
+        const counterpartAddress = isWeth ? net.usdc : net.weth;
+        const counterpartSymbol = isWeth ? "USDC" : "WETH";
+        const counterpartDecimals = isWeth ? 6 : 18;
+        const counterpartToken: PairToken = {
+          address: counterpartAddress,
+          symbol: counterpartSymbol,
+          decimals: counterpartDecimals,
+        };
+        const newPair = createPairConfig(selectedAsPairToken, counterpartToken, net);
+        setCustomPairs((prev) => [newPair, ...prev]);
+        setPairId(newPair.id);
+        setFlipped(false);
+      }
+    },
+    [searchTarget, tokenIn, tokenOut, net]
+  );
+
+  const handleSelectPair = useCallback(
+    (pair: PairConfig) => {
+      if (!availablePairs.some((p) => p.id === pair.id)) {
+        setCustomPairs((prev) => [pair, ...prev]);
+      }
+      setPairId(pair.id);
+      setFlipped(false);
+    },
+    [availablePairs]
+  );
   const pKey = useMemo(() => poolKeyFor(currentPair, net), [currentPair, net]);
 
   const [input, setInput] = useState("100");
@@ -390,7 +469,16 @@ export default function Desk() {
             BONE<em>&middot;</em>DRY
           </Link>
           <div className={s.navControls}>
-            <PairSwitch pairs={availablePairs} pairId={currentPair.id} onChange={setPairId} />
+            <PairSwitch
+              pairs={availablePairs}
+              pairId={currentPair.id}
+              currentPair={currentPair}
+              onChange={setPairId}
+              onOpenSearch={() => {
+                setSearchTarget("pair");
+                setSearchModalOpen(true);
+              }}
+            />
             <NetworkSwitch chainId={chainId} onChange={setChainId} />
           </div>
         </div>
@@ -431,10 +519,19 @@ export default function Desk() {
                 onChange={(e) => setInput(e.target.value)}
                 aria-label={`Amount of ${tokenIn.symbol} to sell`}
               />
-              <span className={s.ticker}>
+              <button
+                type="button"
+                className={s.tickerBtn}
+                onClick={() => {
+                  setSearchTarget("tokenIn");
+                  setSearchModalOpen(true);
+                }}
+                aria-label={`Select token to pay (currently ${tokenIn.symbol})`}
+              >
                 <TokenIcon chainId={chainId} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
-                {tokenIn.symbol}
-              </span>
+                <span className={s.tickerLabel}>{tokenIn.symbol}</span>
+                <span className={s.tickerChevron}>▾</span>
+              </button>
             </div>
           </div>
 
@@ -452,10 +549,19 @@ export default function Desk() {
               className={`${s.readout} ${route && route.amountOut !== "0" ? "" : s.readoutMuted}`}
             >
               {route ? units(route.amountOut, tokenOut.decimals, 6) : "--"}{" "}
-              <span className={s.ticker}>
+              <button
+                type="button"
+                className={s.tickerBtn}
+                onClick={() => {
+                  setSearchTarget("tokenOut");
+                  setSearchModalOpen(true);
+                }}
+                aria-label={`Select token to receive (currently ${tokenOut.symbol})`}
+              >
                 <TokenIcon chainId={chainId} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
-                {tokenOut.symbol}
-              </span>
+                <span className={s.tickerLabel}>{tokenOut.symbol}</span>
+                <span className={s.tickerChevron}>▾</span>
+              </button>
             </div>
             {route && improvement > 0 && (
               <p className={s.beat}>
@@ -575,6 +681,17 @@ export default function Desk() {
           <Deployed net={net} />
         </>
       )}
+
+      <TokenSearchModal
+        isOpen={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        chainId={chainId}
+        target={searchTarget}
+        availablePairs={availablePairs}
+        currentPairId={currentPair.id}
+        onSelectToken={handleSelectToken}
+        onSelectPair={handleSelectPair}
+      />
     </div>
   );
 }
@@ -983,17 +1100,25 @@ function NetworkSwitch({
 function PairSwitch({
   pairs,
   pairId,
+  currentPair,
   onChange,
+  onOpenSearch,
 }: {
   pairs: PairConfig[];
   pairId: string;
+  currentPair: PairConfig;
   onChange: (id: string) => void;
+  onOpenSearch: () => void;
 }) {
-  if (pairs.length <= 1) return null;
+  const displayedPairs = pairs.slice(0, 3);
+  if (!displayedPairs.some((p) => p.id === currentPair.id)) {
+    displayedPairs.push(currentPair);
+  }
+
   return (
     <div className={s.pairRow}>
       <div className={s.netTabs} role="tablist" aria-label="Trading pair">
-        {pairs.map((p) => (
+        {displayedPairs.map((p) => (
           <button
             key={p.id}
             role="tab"
@@ -1004,6 +1129,15 @@ function PairSwitch({
             {p.label}
           </button>
         ))}
+        <button
+          type="button"
+          className={s.searchPairBtn}
+          onClick={onOpenSearch}
+          title="Search all tokens or paste address"
+        >
+          <span>🔍</span>
+          <span>Find pair</span>
+        </button>
       </div>
     </div>
   );

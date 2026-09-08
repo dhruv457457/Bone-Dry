@@ -41,6 +41,91 @@ export const PAIRS: Record<NetworkId, PairConfig[]> = {
       tickSpacing: 60,
       hook: NETWORKS[8453].hook,
     },
+    {
+      id: "cbeth-weth",
+      label: "cbETH / WETH",
+      token0: {
+        address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        symbol: "cbETH",
+        decimals: 18,
+      },
+      token1: {
+        address: NETWORKS[8453].weth,
+        symbol: "WETH",
+        decimals: 18,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[8453].hook,
+    },
+    {
+      id: "aero-weth",
+      label: "AERO / WETH",
+      token0: {
+        address: "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+        symbol: "AERO",
+        decimals: 18,
+      },
+      token1: {
+        address: NETWORKS[8453].weth,
+        symbol: "WETH",
+        decimals: 18,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[8453].hook,
+    },
+    {
+      id: "degen-weth",
+      label: "DEGEN / WETH",
+      token0: {
+        address: "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed",
+        symbol: "DEGEN",
+        decimals: 18,
+      },
+      token1: {
+        address: NETWORKS[8453].weth,
+        symbol: "WETH",
+        decimals: 18,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[8453].hook,
+    },
+    {
+      id: "brett-weth",
+      label: "BRETT / WETH",
+      token0: {
+        address: "0x532f27101965dd16442E59d40670FaF5eBB142E4",
+        symbol: "BRETT",
+        decimals: 18,
+      },
+      token1: {
+        address: NETWORKS[8453].weth,
+        symbol: "WETH",
+        decimals: 18,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[8453].hook,
+    },
+    {
+      id: "virtual-weth",
+      label: "VIRTUAL / WETH",
+      token0: {
+        address: "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+        symbol: "VIRTUAL",
+        decimals: 18,
+      },
+      token1: {
+        address: NETWORKS[8453].weth,
+        symbol: "WETH",
+        decimals: 18,
+      },
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[8453].hook,
+    },
   ],
   84532: [
     {
@@ -128,4 +213,26 @@ export function allTokensFor(chainId: NetworkId): Record<string, PairToken> {
   }
   return map;
 }
+
+/**
+ * Dynamically construct a valid PairConfig for any arbitrary pair of tokens.
+ */
+export function createPairConfig(
+  token0: PairToken,
+  token1: PairToken,
+  net: Network
+): PairConfig {
+  const id = `${token0.symbol.toLowerCase()}-${token1.symbol.toLowerCase()}`;
+  const label = `${token0.symbol} / ${token1.symbol}`;
+  return {
+    id,
+    label,
+    token0,
+    token1,
+    fee: 0,
+    tickSpacing: 60,
+    hook: net.hook,
+  };
+}
+
 

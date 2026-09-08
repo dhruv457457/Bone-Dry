@@ -93,3 +93,72 @@ export async function tokenBalances(
     return null;
   }
 }
+
+const PINAX_TOKENS_URL = "https://api.pinax.network/v1/evm/tokens";
+
+type PinaxTokenItem = {
+  contract: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  circulating_supply?: number;
+  holders?: number;
+  total_transfers?: number;
+};
+
+type PinaxTokensResponse = {
+  data: PinaxTokenItem[];
+};
+
+export type TokenApiMetadata = {
+  contract: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  holders?: number;
+  circulatingSupply?: number;
+};
+
+/**
+ * Fetch token metadata from The Graph's Token API (hosted by Pinax).
+ * Returns null on unindexed network, missing creds, or query error.
+ */
+export async function tokenMetadata(
+  n: Network,
+  contract: Address
+): Promise<TokenApiMetadata | null> {
+  const apiKey = process.env.TOKEN_API_KEY?.trim();
+  const jwt = process.env.TOKEN_API_JWT?.trim();
+  if (!apiKey || !jwt) return null;
+
+  const networkSlug = PINAX_NETWORKS[n.id];
+  if (!networkSlug) return null;
+
+  try {
+    const url = `${PINAX_TOKENS_URL}?network=${networkSlug}&contract=${contract.toLowerCase()}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        "X-Api-Key": apiKey,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) return null;
+    const json = (await res.json()) as PinaxTokensResponse;
+    const item = json.data?.[0];
+    if (!item || !item.symbol) return null;
+
+    return {
+      contract: item.contract,
+      symbol: item.symbol,
+      name: item.name,
+      decimals: Number(item.decimals ?? 18),
+      holders: item.holders,
+      circulatingSupply: item.circulating_supply,
+    };
+  } catch {
+    return null;
+  }
+}
