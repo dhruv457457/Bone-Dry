@@ -1077,7 +1077,7 @@ function NetworkSwitch({
   return (
     <div className={s.netRow}>
       <div className={s.netTabs} role="tablist" aria-label="Network">
-        {([84532, 8453] as NetworkId[]).map((id) => (
+        {([8453, 84532] as NetworkId[]).map((id) => (
           <button
             key={id}
             role="tab"

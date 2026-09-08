@@ -114,7 +114,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
   },
 };
 
-export const DEFAULT_NETWORK: NetworkId = 84532;
+export const DEFAULT_NETWORK: NetworkId = 8453;
 
 export function isNetworkId(v: unknown): v is NetworkId {
   return v === 8453 || v === 84532;
