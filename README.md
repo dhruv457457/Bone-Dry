@@ -27,6 +27,8 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
 | Cross-app standardized schema proof (`/api/apps`) | live query across independent apps |
 | Token icons with generative fallback | live across dashboard |
 | Frontend trading desk (Swap, Provide, Portfolio, Explore) | live |
+| `BeaconStrategy` — Extruction-priced strategy (opcode `0x20`) | deployed on Base Sepolia, real ship + real fill on-chain |
+| Subgraph MCP — cross-protocol token discovery (`/app/lookup`) | live, second independent Graph product composed alongside Token API |
 
 Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
 
@@ -49,6 +51,11 @@ For judges verifying our code and contract integrations:
 | **Cross-App Subgraph Proof** | [`web/app/api/apps/route.ts:15`](web/app/api/apps/route.ts#L15) (`GET`) | Live endpoint querying [`web/lib/graph.ts:304`](web/lib/graph.ts#L304) (`appBreakdown`), proving the schema indexes multiple independent apps on Base mainnet. |
 | **Standards Leverage Spec** | [`subgraph/STANDARD.md:1`](subgraph/STANDARD.md#L1) | Specification of the Aquifer schema as a reusable standard, live cross-app proof, and composition with Token API. |
 | **Token API Balance Integration** | [`web/lib/tokenApi.ts:42`](web/lib/tokenApi.ts#L42) (`tokenBalances`) | Composes The Graph's Token API for live wallet balance lookups with automatic fallback to RPC multicall. |
+| **Subgraph MCP Integration** | [`web/lib/subgraphMcp.ts:53`](web/lib/subgraphMcp.ts#L53) (`searchSubgraphsForTokens`) | Calls The Graph's own Subgraph MCP (`get_top_subgraph_deployments`) to surface other subgraphs indexing an unrecognised token, on [`/app/lookup`](web/app/app/lookup/page.tsx#L9) — the second, unambiguously first-party Graph product this project composes alongside Token API. |
+| **Extruction-Priced Strategy** | [`contracts/src/BeaconStrategy.sol:1`](contracts/src/BeaconStrategy.sol#L1) (`extruction`) | A real Aqua strategy priced off Chainlink directly via SwapVM's Extruction opcode (`0x20`) instead of the built-in XYC curve — proves the router is extensible past its own built-ins. Deployed on Base Sepolia; a real maker shipped through it and a real taker filled it (tx hashes below). |
+| **Extruction Interface** | [`contracts/src/interfaces/IExtruction.sol:1`](contracts/src/interfaces/IExtruction.sol#L1) | Structural copy of the real `IExtruction`/`IStaticExtruction` ABI, pulled from the deployed router's own verified Sourcify source (not a guessed git tag — an earlier version built from `1inch/swap-vm`'s `main` branch had the wrong `SwapRegisters` field count and was silently unreachable). |
+| **Extruction Validator** | [`contracts/test/BeaconStrategy.t.sol:99`](contracts/test/BeaconStrategy.t.sol#L99) | Executes the two properties 1inch's own docs require of an Extruction target — STATICCALL and CALL return byte-identical results, and `vm.accesses()` confirms zero storage writes — rather than asserting them from reading the source. |
+| **Oracle-Priced Ship Flow** | [`web/app/api/strategy/route.ts:31`](web/app/api/strategy/route.ts#L31) (`BEACON_STRATEGY_ADDRESS`) | `/api/strategy` builds an Extruction-priced program via `AquaProgramBuilder`'s base `.add()` (it has no `.extruction()` convenience method), gated to WETH/USDC on Base Sepolia only. Surfaced as a real, honestly-gated option in the existing Ship-a-strategy UI. |
 
 
 ## Live on Base Sepolia
@@ -74,6 +81,35 @@ Five USDC split three-to-two across two makers, matching their 0.015 : 0.010
 deliverable depths. The WETH left their wallets and the USDC arrived in them. A
 third maker promised the same 0.015, holds none of it, and was skipped without
 costing the swapper anything.
+
+### An Extruction-priced strategy, filled for real
+
+`BeaconStrategy` ([`contracts/src/BeaconStrategy.sol`](contracts/src/BeaconStrategy.sol))
+is deployed at
+[`0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7`](https://sepolia.basescan.org/address/0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7)
+on Base Sepolia. It was redeployed once — the first attempt
+([`0xAe91aEea...`](contracts/fixtures/beacon-strategy.84532.json)) used a
+`SwapRegisters` struct copied from `1inch/swap-vm`'s `main` branch, which turned
+out to already be ahead of what the deployed router was actually compiled from
+(an extra `amountNetPulled` field). That mismatch changes the ABI selector, so
+the router could never actually reach it — every call hit the wrong function and
+reverted. The fix came from decoding the router's own verified Sourcify source
+directly rather than trusting a git branch; see
+[`IExtruction.sol`](contracts/src/interfaces/IExtruction.sol) for the full story.
+
+One real maker shipped an Extruction-priced strategy through `/api/strategy`,
+and one real taker filled it through the real deployed router:
+
+```
+ship tx : 0x70a3aef07a3b894c1e09fefec7861825e5acc4ab60fc3981a33a5391b2a257a3
+swap tx : 0x8096393361f006fa3f1d054c7b2262295c3e6551fa11075787941064d3d2f252
+sold    : 1,000,000 (1 USDC)
+received: 403,768,485,249,334 (0.000403768485249334 WETH)
+```
+
+Priced at Chainlink oracle mid minus a fixed 0.20% spread — not a bonding
+curve — confirmed via on-chain `balanceOf` before/after, not the swap's own
+return value.
 
 ## Run it
 
@@ -353,3 +389,5 @@ npm run deploy          # needs a Subgraph Studio deploy key
 ## Standards leverage
 
 One schema covers every Aqua app rather than requiring an app-specific indexer, because Aquifer indexes Aqua's protocol-level events (`Shipped`, `Docked`, `Pushed`, `Pulled`, `Swapped`) across all routers. On Base mainnet today, a single query against this schema surfaces 132 active strategies across two independent Aqua applications without modification (documented in [`subgraph/STANDARD.md`](subgraph/STANDARD.md)). Furthermore, composing The Graph's Token API for wallet balances required no change to position-tracking because commitments and balances are decoupled concerns in the schema: Token API efficiently serves holder balances with an RPC fallback, while Aquifer tracks contract commitments.
+
+A second, independent Graph product is composed alongside Token API: [`web/lib/subgraphMcp.ts`](web/lib/subgraphMcp.ts) calls The Graph's own Subgraph MCP (`subgraphs.mcp.thegraph.com`) — on the same domain as thegraph.com, authenticated with the same Subgraph Studio API key already used for `GRAPH_URL`, unambiguously first-party in a way Token API (Pinax-branded, though "Built with The Graph") is arguably but not definitively. `get_top_subgraph_deployments` is used deterministically — one contract address in, real deployments ranked by query fees out, no synthesized commentary — to surface other subgraphs indexing an unrecognised token on [`/app/lookup`](web/app/app/lookup/page.tsx). Its own `search_subgraphs_by_keyword` tool was tried first and found to match subgraph *display names*, not addresses — a raw address as the keyword returns zero results always, regardless of whether related subgraphs exist — which is why `get_top_subgraph_deployments` is the tool actually wired in.
