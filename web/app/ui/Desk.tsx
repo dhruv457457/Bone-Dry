@@ -31,6 +31,7 @@ import {
 import { keccak256, type Address, type Hex } from "viem";
 import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse } from "./types";
 import { TokenIcon } from "./TokenIcon";
+import { PriceChart, type RangePreset } from "./PriceChart";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -1304,6 +1305,8 @@ function ShipStrategy({
   const [claimOut, setClaimOut] = useState("");
   const [feeBps, setFeeBps] = useState("0");
   const [pricing, setPricing] = useState<"xyc" | "oracle">("xyc");
+  const [rangePreset, setRangePreset] = useState<RangePreset>("10");
+  const [spotPrice, setSpotPrice] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shippedHash, setShippedHash] = useState<Hex | null>(null);
@@ -1446,6 +1449,16 @@ function ShipStrategy({
             </p>
           )}
         </div>
+
+        <PriceChart
+          chainId={net.id}
+          tokenIn={tokenIn}
+          tokenOut={tokenOut}
+          pricing={pricing}
+          preset={rangePreset}
+          onSelectPreset={setRangePreset}
+          onSpotPrice={setSpotPrice}
+        />
 
         <div className={s.field}>
           <div className={s.fieldHead}>

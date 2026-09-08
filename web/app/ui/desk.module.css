@@ -1063,6 +1063,170 @@
   white-space: nowrap;
 }
 
+/* ── price chart & position range builder ─────────────────────────────── */
+.chartBox {
+  margin-top: 20px;
+  margin-bottom: 24px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--card-border-subtle);
+  border-radius: var(--radius-md);
+  padding: 18px 18px 14px;
+}
+.chartHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule-faint);
+}
+.chartSpotRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.spotFigureRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.spotNumber {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.livePip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--emerald);
+  box-shadow: 0 0 6px var(--emerald);
+  display: inline-block;
+  animation: livePulse 2s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.shapeBadgeWrap { display: flex; align-items: center; }
+.shapeBadge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+}
+.shapeStraight {
+  color: var(--accent-navy);
+  background: var(--accent-navy-subtle);
+  border-color: rgba(45, 59, 78, 0.25);
+}
+.shapeCurved {
+  color: var(--accent-purple);
+  background: var(--accent-purple-bg);
+  border-color: rgba(92, 53, 130, 0.25);
+}
+
+.presetBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.presetTabs {
+  display: flex;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+.presetTab {
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.presetTab:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.8);
+}
+.presetTabOn {
+  background: var(--card-bg) !important;
+  color: var(--ink) !important;
+  box-shadow: var(--shadow-xs);
+}
+
+.chartCanvasWrap {
+  width: 100%;
+  min-height: 180px;
+  position: relative;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.chartCanvas {
+  width: 100%;
+  height: 180px;
+}
+.chartEmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 180px;
+  padding: 20px;
+  text-align: center;
+}
+.chartEmptyNote {
+  margin: 6px 0 0;
+  max-width: 44ch;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.boundsRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-faint);
+}
+.boundItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.boundVal {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.boundValMid {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+
 
 
 
