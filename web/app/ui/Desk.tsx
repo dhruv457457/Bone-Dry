@@ -70,7 +70,12 @@ export default function Desk() {
   const [pairId, setPairId] = useState<string>(() => defaultPairFor(DEFAULT_NETWORK).id);
 
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get("pair");
+    const search = new URLSearchParams(window.location.search);
+    const c = search.get("chain");
+    if (c === "8453") setChainId(8453);
+    else if (c === "84532") setChainId(84532);
+
+    const p = search.get("pair");
     if (p && pairsFor(chainId).some((pair) => pair.id === p)) {
       setPairId(p);
     }
@@ -84,6 +89,16 @@ export default function Desk() {
   // swap, become a maker, check your own exposure, and browse anyone else's --
   // stacked on top of each other regardless of which one a visitor came for.
   const [tab, setTab] = useState<"swap" | "provide" | "portfolio" | "explore">("swap");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get("tab");
+      if (t === "provide" || t === "portfolio" || t === "explore" || t === "swap") {
+        setTab(t);
+      }
+    }
+  }, []);
 
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
