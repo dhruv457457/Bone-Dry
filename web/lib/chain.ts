@@ -147,3 +147,15 @@ export const poolManagerAbi = [
     outputs: [{ type: "bytes32" }],
   },
 ] as const;
+
+/** Just the one immutable getter the UI needs to display, rather than trust
+ *  a copy of it typed into a component. */
+export const beaconStrategyAbi = [
+  {
+    type: "function",
+    name: "spreadBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;

@@ -35,6 +35,7 @@ import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, App
 import { TokenIcon } from "./TokenIcon";
 import { PriceChart, type RangePreset } from "./PriceChart";
 import { TokenSearchModal } from "./TokenSearchModal";
+import { RouteInspector } from "./RouteInspector";
 import type { SearchableToken } from "@/lib/tokenList";
 
 type Token = { address: string; symbol: string; decimals: number };
@@ -615,6 +616,8 @@ export default function Desk() {
           </dl>
         </aside>
       </div>
+
+      <RouteInspector route={route} tokenIn={tokenIn} tokenOut={tokenOut} net={net} />
 
       <section className={s.book}>
         <div className={s.sectionHead}>
@@ -1444,6 +1447,7 @@ function ShipStrategy({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shippedHash, setShippedHash] = useState<Hex | null>(null);
+  const [beaconSpreadBps, setBeaconSpreadBps] = useState<number | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
 
@@ -1464,6 +1468,82 @@ function ShipStrategy({
       setPricing("xyc");
     }
   }, [isBeaconEligible, pricing]);
+
+  // BeaconStrategy's spread is immutable, set once at deploy -- so read it
+  // from the contract rather than keep a second copy of the number typed
+  // into this component, which a redeploy would silently make wrong.
+  useEffect(() => {
+    if (!isBeaconEligible) return;
+    let active = true;
+    fetch(`/api/beacon-spread?chain=${net.id}`)
+      .then((r) => r.json())
+      .then((json: { available: boolean; spreadBps?: number }) => {
+        if (active) setBeaconSpreadBps(json.available ? json.spreadBps ?? null : null);
+      })
+      .catch(() => {
+        if (active) setBeaconSpreadBps(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isBeaconEligible, net.id]);
+
+  const calcClaimOut = useCallback(
+    (inStr: string, _preset: RangePreset, spot: number | null) => {
+      if (!spot || spot <= 0) return;
+      const numIn = parseFloat(inStr);
+      if (isNaN(numIn) || numIn <= 0) return;
+
+      const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
+      const isWethOut = tokenOut.symbol.toUpperCase() === "WETH";
+
+      if (isWethIn) {
+        // Selling WETH for USD
+        const out = numIn * spot;
+        setClaimOut(out.toFixed(2));
+      } else if (isWethOut) {
+        // Selling USD for WETH
+        const out = numIn / spot;
+        setClaimOut(out.toFixed(4));
+      } else {
+        const out = numIn * spot;
+        setClaimOut(out.toFixed(tokenOut.decimals <= 6 ? 2 : 4));
+      }
+    },
+    [tokenIn.symbol, tokenOut.symbol, tokenOut.decimals]
+  );
+
+  const handleSelectPreset = useCallback(
+    (p: RangePreset) => {
+      setRangePreset(p);
+      if (!spotPrice || spotPrice <= 0) return;
+
+      let currentIn = claimIn;
+      if (!currentIn || parseFloat(currentIn) <= 0 || isNaN(parseFloat(currentIn))) {
+        const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
+        currentIn = isWethIn ? "0.5" : "1000";
+        setClaimIn(currentIn);
+      }
+      calcClaimOut(currentIn, p, spotPrice);
+    },
+    [claimIn, spotPrice, tokenIn.symbol, calcClaimOut]
+  );
+
+  // Auto-populate sensible defaults when live spot price resolves
+  useEffect(() => {
+    if (spotPrice && spotPrice > 0 && !claimIn && !claimOut) {
+      const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
+      const isWethOut = tokenOut.symbol.toUpperCase() === "WETH";
+      const initialIn = isWethIn ? "0.5" : "1000";
+      setClaimIn(initialIn);
+      const initialOut = isWethIn
+        ? (0.5 * spotPrice).toFixed(2)
+        : isWethOut
+        ? (1000 / spotPrice).toFixed(4)
+        : "1000";
+      setClaimOut(initialOut);
+    }
+  }, [spotPrice, tokenIn.symbol, tokenOut.symbol, claimIn, claimOut]);
 
   const parsedIn = toRaw(claimIn, tokenIn.decimals);
   const parsedOut = toRaw(claimOut, tokenOut.decimals);
@@ -1590,7 +1670,7 @@ function ShipStrategy({
           tokenOut={tokenOut}
           pricing={pricing}
           preset={rangePreset}
-          onSelectPreset={setRangePreset}
+          onSelectPreset={handleSelectPreset}
           onSpotPrice={setSpotPrice}
         />
 
@@ -1602,7 +1682,16 @@ function ShipStrategy({
             <input
               value={claimIn}
               inputMode="decimal"
-              onChange={(e) => setClaimIn(e.target.value)}
+              onChange={(e) => {
+                // Typing in either claim field is a deliberate override of
+                // whatever a preset last filled in -- so, symmetrically with
+                // "you receive" below, it drops to "custom" and only touches
+                // the field being edited. Auto-recalculating the other field
+                // here too would mean the two inputs behave differently
+                // depending on which one the user happens to type into first.
+                setClaimIn(e.target.value);
+                setRangePreset("custom");
+              }}
               aria-label={`Claim amount for ${tokenIn.symbol}`}
               placeholder="0.0"
             />
@@ -1621,7 +1710,10 @@ function ShipStrategy({
             <input
               value={claimOut}
               inputMode="decimal"
-              onChange={(e) => setClaimOut(e.target.value)}
+              onChange={(e) => {
+                setClaimOut(e.target.value);
+                setRangePreset("custom");
+              }}
               aria-label={`Claim amount for ${tokenOut.symbol}`}
               placeholder="0.0"
             />
@@ -1639,7 +1731,7 @@ function ShipStrategy({
             </div>
             <div className={s.amountRow}>
               <input
-                value="20"
+                value={beaconSpreadBps === null ? "…" : String(beaconSpreadBps)}
                 disabled
                 readOnly
                 aria-label="Fee in basis points"
@@ -1648,7 +1740,9 @@ function ShipStrategy({
               <span className={s.ticker}>bps (fixed)</span>
             </div>
             <p className={s.shipCaption}>
-              BeaconStrategy charges a fixed 0.20% spread, set at deploy &mdash; not configurable here
+              {beaconSpreadBps === null
+                ? "Reading the deployed contract's fixed spread…"
+                : `BeaconStrategy charges a fixed ${(beaconSpreadBps / 100).toFixed(2)}% spread, read live from the contract — not configurable here`}
             </p>
           </div>
         ) : (

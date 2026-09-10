@@ -106,7 +106,7 @@ export function PriceChart({
     return { lowerBound: spot * 0.85, upperBound: spot * 1.15 };
   }, [spot, preset]);
 
-  // Initialize and update Lightweight Charts
+  // Initialize and update Lightweight Charts container
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -173,18 +173,35 @@ export function PriceChart({
     }
   }, []);
 
-  // Update chart series data and bounds
+  // Real Chainlink rounds, always -- regardless of which pricing model is
+  // selected. There used to be a separate branch here for "xyc" that drew a
+  // synthetic ±20% line labelled as a bonding-curve visualization; it wasn't
+  // one (the math was linear, not y = k/x) and its timestamps were invented
+  // rather than real rounds walked from the feed. XYC's own price is whatever
+  // the pool's reserve ratio implies at fill time, which this app has no way
+  // to chart historically -- so instead of fabricating a curve for it, both
+  // pricing models get the one thing this app actually has: the real feed
+  // this maker's claim amounts are being sized against.
   useEffect(() => {
-    if (!seriesRef.current || !priceData?.history || priceData.history.length === 0) return;
+    if (!seriesRef.current || !spot) return;
 
-    const formatted = priceData.history.map((pt) => ({
-      time: pt.time as UTCTimestamp,
-      value: pt.value,
-    }));
-
-    seriesRef.current.setData(formatted);
-    chartRef.current?.timeScale().fitContent();
-  }, [priceData?.history]);
+    if (priceData?.history && priceData.history.length >= 2) {
+      const formatted = priceData.history.map((pt) => ({
+        time: pt.time as UTCTimestamp,
+        value: pt.value,
+      }));
+      seriesRef.current.setData(formatted);
+      chartRef.current?.timeScale().fitContent();
+    } else {
+      // Honest flat line over the last hour if the feed only returned one round.
+      const now = priceData?.updatedAt ?? Math.floor(Date.now() / 1000);
+      seriesRef.current.setData([
+        { time: (now - 3600) as UTCTimestamp, value: spot },
+        { time: now as UTCTimestamp, value: spot },
+      ]);
+      chartRef.current?.timeScale().fitContent();
+    }
+  }, [spot, priceData?.history, priceData?.updatedAt]);
 
   // Update price lines for lower/upper range bounds
   useEffect(() => {
@@ -227,7 +244,7 @@ export function PriceChart({
       <div className={s.chartHead}>
         <div className={s.chartSpotRow}>
           <span className="label">Live oracle spot</span>
-          {loading ? (
+          {loading && spot === null ? (
             <span className={`num ${s.dim}`}>reading Chainlink feed…</span>
           ) : spot !== null ? (
             <div className={s.spotFigureRow}>
@@ -245,19 +262,19 @@ export function PriceChart({
         <div className={s.shapeBadgeWrap}>
           {pricing === "oracle" ? (
             <span className={`${s.shapeBadge} ${s.shapeStraight}`}>
-              Straight Range &middot; Oracle Mid
+              Fixed price &middot; Oracle mid minus spread
             </span>
           ) : (
             <span className={`${s.shapeBadge} ${s.shapeCurved}`}>
-              Curved Range &middot; XYC Invariant
+              No price bound &middot; Constant-product
             </span>
           )}
         </div>
       </div>
 
       <div className={s.presetBar}>
-        <span className="label">Range preset:</span>
-        <div className={s.presetTabs} role="tablist" aria-label="Price range preset">
+        <span className="label">Size claim near:</span>
+        <div className={s.presetTabs} role="tablist" aria-label="Claim size reference">
           {(["10", "20", "full", "custom"] as RangePreset[]).map((p) => (
             <button
               key={p}
@@ -271,28 +288,35 @@ export function PriceChart({
             </button>
           ))}
         </div>
+        <p className={s.chartEmptyNote}>
+          A sizing reference only &mdash; neither pricing model below enforces a price
+          bound on chain. This strategy will quote at any price once shipped.
+        </p>
       </div>
 
-      {/* Chart Canvas Area */}
+      {/* Chart Canvas Area: Always mounted in DOM to ensure canvas initialization */}
       <div className={s.chartCanvasWrap}>
-        {priceData?.hasOracle ? (
-          <div ref={containerRef} className={s.chartCanvas} />
-        ) : (
+        <div
+          ref={containerRef}
+          className={s.chartCanvas}
+          style={{ display: spot !== null ? "block" : "none" }}
+        />
+        {!loading && spot === null && (
           <div className={s.chartEmptyState}>
             <p className="label">Historical oracle series unavailable for this token</p>
             <p className={s.chartEmptyNote}>
-              Chainlink feed is not configured on this network for {targetToken.symbol}. Claim amounts below
-              configure strategy bounds directly.
+              Chainlink feed is not configured on this network for {targetToken.symbol}. You can
+              still enter claim amounts below &mdash; there is nothing here to size them against.
             </p>
           </div>
         )}
       </div>
 
-      {/* Bounds Readout */}
+      {/* Reference readout for the sizing preset above -- not an on-chain bound. */}
       {spot !== null && preset !== "full" && lowerBound && upperBound && (
         <div className={s.boundsRow}>
           <div className={s.boundItem}>
-            <span className="label">Min price</span>
+            <span className="label">Reference low</span>
             <span className={`num ${s.boundVal}`}>
               ${lowerBound.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
@@ -304,7 +328,7 @@ export function PriceChart({
             </span>
           </div>
           <div className={s.boundItem}>
-            <span className="label">Max price</span>
+            <span className="label">Reference high</span>
             <span className={`num ${s.boundVal}`}>
               ${upperBound.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
