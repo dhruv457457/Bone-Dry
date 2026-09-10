@@ -29,9 +29,11 @@ export async function GET(req: Request) {
       : from !== undefined
         ? { strategies: await indexStrategies(n, { fromBlock: from }), window: null }
         : await cachedStrategies(n);
-    const strategies = fromGraph
-      ? mergeStrategies(fromGraph, (await cachedStrategies(n)).strategies)
-      : scan!.strategies;
+    const rawStrategies = fromGraph ?? scan!.strategies;
+    const strategies = rawStrategies.filter((s) => {
+      if (!s.tokens || s.tokens.length === 0) return true;
+      return s.tokens.map((t) => t.toLowerCase()).includes(token.toLowerCase());
+    });
 
     const depths = await measureDepth(n, strategies, token);
     const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };

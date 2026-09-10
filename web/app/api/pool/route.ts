@@ -22,7 +22,29 @@ export async function GET(req: Request) {
     const n = networkFrom(url.searchParams.get("chain"));
     const client = clientFor(n);
     const raw = url.searchParams.get("hook") ?? n.hook;
-    if (!raw) return fail("hook address required");
+    if (!raw) {
+      const defaultKey = poolKey(n);
+      return j({
+        poolManager: n.poolManager,
+        // A real pool ID is keccak256 of the pool key -- 32 bytes, 64 hex
+        // digits. Nothing computes one when there's no hook to key it off,
+        // so this is a zero placeholder, not a real ID -- but it still has
+        // to be the right *length* for anything that parses it as bytes32.
+        poolId: `0x${"0".repeat(64)}`,
+        key: {
+          currency0: defaultKey.currency0,
+          currency1: defaultKey.currency1,
+          fee: defaultKey.fee,
+          tickSpacing: defaultKey.tickSpacing,
+          hooks: "",
+        },
+        initialized: false,
+        liquidity: "0",
+        boneDry: false,
+        state: "uninitialized",
+        note: "No hook configured on this network (Base mainnet is read-only Aqua maker evidence)",
+      });
+    }
     const hook = addressParam(raw, raw as Address);
 
     const fee = uintParam(url.searchParams.get("fee"), 0, 24, "fee");

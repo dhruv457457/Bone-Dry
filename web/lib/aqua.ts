@@ -7,6 +7,7 @@ export type Strategy = {
   strategyHash: Hex;
   strategy: Hex;
   blockNumber: bigint;
+  tokens?: Address[];
 };
 
 export type MakerDepth = Strategy & {
@@ -39,7 +40,7 @@ export async function indexStrategies(
 ): Promise<Strategy[]> {
   const client = clientFor(n);
   const latest = opts?.toBlock ?? (await client.getBlockNumber());
-  const page = opts?.pageSize ?? 9_999n;
+  const page = opts?.pageSize ?? (n.id === 8453 ? 1_500n : 9_999n);
   const budget = opts?.maxPages ?? 12;
 
   // Walk backwards from the head. A forward scan from Aqua's genesis is ~200

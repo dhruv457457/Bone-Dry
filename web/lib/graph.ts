@@ -34,6 +34,7 @@ const STRATEGIES_QUERY = `
       strategyHash
       strategy
       shippedAt
+      tokens
       maker { id }
     }
   }
@@ -119,7 +120,13 @@ export async function strategiesFromGraph(n: Network, app: Address): Promise<Str
   if (!(await indexFresh(n))) return null;
 
   const data = await gql<{
-    strategies: { strategyHash: Hex; strategy: Hex; shippedAt: string; maker: { id: Address } }[];
+    strategies: {
+      strategyHash: Hex;
+      strategy: Hex;
+      shippedAt: string;
+      tokens?: Hex[];
+      maker: { id: Address };
+    }[];
   }>(n, STRATEGIES_QUERY, { app: app.toLowerCase(), first: 500 });
 
   if (!data) return null;
@@ -128,6 +135,7 @@ export async function strategiesFromGraph(n: Network, app: Address): Promise<Str
     strategyHash: s.strategyHash,
     strategy: s.strategy,
     blockNumber: 0n,
+    tokens: (s.tokens ?? []).map((t) => t.toLowerCase() as Address),
   }));
 }
 

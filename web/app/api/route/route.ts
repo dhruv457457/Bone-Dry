@@ -27,8 +27,12 @@ export async function GET(req: Request) {
 
     // The index for history, a short chain scan for the tail it has not reached.
     const fromGraph = await strategiesFromGraph(n, n.router);
-    const tail = (await cachedStrategies(n)).strategies;
-    const strategies = fromGraph ? mergeStrategies(fromGraph, tail) : tail;
+    const rawStrategies = fromGraph ?? (await cachedStrategies(n)).strategies;
+    const strategies = rawStrategies.filter((s) => {
+      if (!s.tokens || s.tokens.length === 0) return true;
+      const toks = s.tokens.map((t) => t.toLowerCase());
+      return toks.includes(tokenIn.toLowerCase()) && toks.includes(tokenOut.toLowerCase());
+    });
     const depths = await measureDepth(n, strategies, tokenOut);
 
     // Having the token is not the same as being willing to part with it. Probe
