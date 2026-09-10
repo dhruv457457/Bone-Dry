@@ -216,6 +216,9 @@ export default function Desk() {
     phase: "idle" | "approving" | "swapping" | "done";
     hash?: Hex;
     note?: string;
+    /** measured from the wallet's own balances either side of the fill --
+     *  what the swap paid out, as opposed to what the quote predicted */
+    received?: bigint;
   }>({ phase: "idle" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -430,6 +433,20 @@ export default function Desk() {
       const zeroForOne = isZeroForOne(tokenIn.address as Address, currentPair);
 
       setTxState({ phase: "swapping" });
+
+      // What the wallet held of the token being bought, immediately before the
+      // fill. The difference after settlement is what this swap ACTUALLY paid
+      // out, which is the only number worth showing once a trade is done -- the
+      // quote above it was a prediction, and a prediction is not a receipt.
+      const outBefore = (await rpc
+        .readContract({
+          address: tokenOut.address as Address,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [account],
+        })
+        .catch(() => null)) as bigint | null;
+
       const hash = await writeContractAsync({
         chainId,
         account,
@@ -446,10 +463,43 @@ export default function Desk() {
       });
       const receipt = await rpc.waitForTransactionReceipt({ hash });
       if (!stillHere()) return;
+
+      // Re-read both balances pinned to the block this landed in. Without the
+      // pin these go out over a fallback transport that can answer from a node
+      // a block behind the one that returned the receipt, and the panel sits
+      // there showing pre-trade numbers under a confirmed transaction.
+      const at = { blockNumber: receipt.blockNumber };
+      const [spentAfter, gainedAfter] = await Promise.all([
+        rpc
+          .readContract({
+            address: tokenIn.address as Address,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [account],
+            ...at,
+          })
+          .catch(() => null) as Promise<bigint | null>,
+        rpc
+          .readContract({
+            address: tokenOut.address as Address,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [account],
+            ...at,
+          })
+          .catch(() => null) as Promise<bigint | null>,
+      ]);
+
+      if (!stillHere()) return;
+      if (spentAfter !== null) setBalance(spentAfter);
       setTxState({
         phase: "done",
         hash,
         note: receipt.status === "success" ? undefined : "reverted on chain",
+        received:
+          receipt.status === "success" && outBefore !== null && gainedAfter !== null
+            ? gainedAfter - outBefore
+            : undefined,
       });
       void load();
     } catch (e) {
@@ -578,6 +628,9 @@ export default function Desk() {
             tx={txState}
             balance={balance}
             decimals={tokenIn.decimals}
+            outDecimals={tokenOut.decimals}
+            outSymbol={tokenOut.symbol}
+            explorer={net.explorer}
             wellhead={net.wellhead}
             chainLabel={net.label}
             address={address}
@@ -1157,6 +1210,9 @@ function SwapAction({
   tx,
   balance,
   decimals,
+  outDecimals,
+  outSymbol,
+  explorer,
   wellhead,
   chainLabel,
   address,
@@ -1167,9 +1223,12 @@ function SwapAction({
 }: {
   route: RouteResponse | null;
   busy: boolean;
-  tx: { phase: string; hash?: string; note?: string };
+  tx: { phase: string; hash?: string; note?: string; received?: bigint };
   balance: bigint | null;
   decimals: number;
+  outDecimals: number;
+  outSymbol: string;
+  explorer: string;
   wellhead: string;
   chainLabel: string;
   address?: string;
@@ -1223,8 +1282,18 @@ function SwapAction({
 
       {tx.phase === "done" && (
         <p className={s.note}>
-          {tx.note ? `Swap ${tx.note}.` : "Filled, and the pool still holds nothing. "}
-          <span className="hex num">{tx.hash ? short(tx.hash) : ""}</span>
+          {tx.note
+            ? `Swap ${tx.note}. `
+            : tx.received !== undefined
+              ? `Filled. ${units(tx.received, outDecimals, 6)} ${outSymbol} received, and the pool still holds nothing. `
+              : "Filled, and the pool still holds nothing. "}
+          {tx.hash && explorer ? (
+            <a href={`${explorer}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="hex num">
+              {short(tx.hash)}
+            </a>
+          ) : (
+            <span className="hex num">{tx.hash ? short(tx.hash) : ""}</span>
+          )}
         </p>
       )}
       {tx.note && tx.phase === "idle" && <p className={s.err}>{tx.note}</p>}
