@@ -19,6 +19,8 @@ type Protocol @entity(immutable: false) {
   fills: BigInt!
   "the subset joined to a strategy this index knows about; equal to `fills` on Base today"
   fillsAgainstAqua: BigInt!
+  "how many times a maker was skipped during fill execution"
+  skips: BigInt!
 }
 
 type Maker @entity(immutable: false) {
@@ -27,8 +29,11 @@ type Maker @entity(immutable: false) {
   activeStrategies: BigInt!
   totalStrategies: BigInt!
   fillsAsMaker: BigInt!
+  skipsAsMaker: BigInt!
+  totalVolumeSkipped: BigInt!
   strategies: [Strategy!]! @derivedFrom(field: "maker")
   positions: [MakerTokenPosition!]! @derivedFrom(field: "maker")
+  refusals: [MakerRefusal!]! @derivedFrom(field: "maker")
 }
 
 type Strategy @entity(immutable: false) {
@@ -87,6 +92,19 @@ type Fill @entity(immutable: true) {
   amountOut: BigInt!
   "false when no indexed strategy matches this orderHash"
   againstAqua: Boolean!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+"""
+An on-chain record of an insolvent, failed, or flaked maker skip during fill execution.
+Emitted by Tap.sol (MakerSkipped) whenever a maker cannot deliver their promised quote.
+"""
+type MakerRefusal @entity(immutable: true) {
+  id: ID!                      # txHash-logIndex
+  maker: Maker!
+  wanted: BigInt!
   blockNumber: BigInt!
   timestamp: BigInt!
   txHash: Bytes!

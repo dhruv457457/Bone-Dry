@@ -14,6 +14,7 @@ export function protocol(): Protocol {
     p.makers = ZERO;
     p.fills = ZERO;
     p.fillsAgainstAqua = ZERO;
+    p.skips = ZERO;
   }
   return p as Protocol;
 }
@@ -26,6 +27,8 @@ export function maker(addr: Address, ts: BigInt): Maker {
     m.activeStrategies = ZERO;
     m.totalStrategies = ZERO;
     m.fillsAsMaker = ZERO;
+    m.skipsAsMaker = ZERO;
+    m.totalVolumeSkipped = ZERO;
     let p = protocol();
     p.makers = p.makers.plus(ONE);
     p.save();

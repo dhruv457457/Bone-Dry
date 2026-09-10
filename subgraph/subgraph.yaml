@@ -48,3 +48,17 @@ dataSources:
       eventHandlers:
         - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
           handler: handleSwapped
+# A Tap data source belongs here once Bone Dry's hook is deployed to Base
+# mainnet -- every other data source above targets `network: base` because
+# that's what this manifest is. It does not exist there yet (see
+# HOOK_ADDRESS / NEXT_PUBLIC_HOOK_ADDRESS in web/lib/networks.ts: mainnet's
+# hook is unset). The mapping (src/tap.ts) and schema fields (MakerRefusal,
+# Maker.skipsAsMaker, Protocol.skips) are already written and ready --
+# what's missing is a manifest to attach them to. A datasource block was
+# committed here for a moment pointed at 0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088
+# under `network: base`, which is Base *Sepolia*'s Tap hook, not mainnet's --
+# so it would have indexed nothing, forever, with no error to say why.
+# Sepolia already has its own Aqua/router/hook trio deployed and its own
+# SEPOLIA_GRAPH_URL wired in networks.ts with nothing feeding it; the
+# Tap data source belongs in a second manifest targeting `base-sepolia`
+# with that trio's real addresses, not bolted onto this one.
