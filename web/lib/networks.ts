@@ -60,19 +60,26 @@ export const NETWORKS: Record<NetworkId, Network> = {
     explorer: "https://basescan.org",
     rpc: process.env.RPC_URL ?? "https://mainnet.base.org",
     rpcFallbacks: [
+      "https://developer-access-mainnet.base.org",
+      "https://base.gateway.tenderly.co",
       "https://base-rpc.publicnode.com",
       "https://base.llamarpc.com",
-      "https://1rpc.io/base",
     ],
     aqua: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
     router: "0x111111338c5091E8440b67B168bAe16a668AC0De",
     poolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     weth: WETH_PREDEPLOY,
-    hook: (process.env.HOOK_ADDRESS ?? "") as Address | "",
+    // NEXT_PUBLIC_, not HOOK_ADDRESS: a plain server-only var here read fine
+    // in the server-rendered HTML and as `undefined` in the client bundle
+    // Next.js ships to the browser, which is a hydration mismatch on every
+    // load, not an edge case -- the same reason wellhead below is public too.
+    hook: (process.env.NEXT_PUBLIC_HOOK_ADDRESS ?? "") as Address | "",
     lens: (process.env.LENS_ADDRESS ?? "") as Address | "",
     wellhead: (process.env.NEXT_PUBLIC_WELLHEAD_ADDRESS ?? "") as Address | "",
-    graphUrl: process.env.GRAPH_URL ?? "",
+    graphUrl:
+      process.env.GRAPH_URL ??
+      "https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3",
     aquaGenesis: 48_839_900n,
     aquaIsOurs: false,
     oracleFeeds: {
@@ -91,7 +98,6 @@ export const NETWORKS: Record<NetworkId, Network> = {
     rpcFallbacks: [
       "https://base-sepolia-rpc.publicnode.com",
       "https://base-sepolia.gateway.tenderly.co",
-      "https://1rpc.io/base-sepolia",
     ],
     // 1inch have never deployed Aqua to a testnet. These are ours, built
     // unmodified from their sources; the router is tag v1.0.2, because main
