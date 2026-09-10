@@ -77,6 +77,15 @@ export async function GET(req: Request) {
       quoteRoute(n, slices, tokenIn, tokenOut),
       // Same comparison the split has to beat: everything through the deepest
       // maker alone, clamped by the same rule so the baseline is honest too.
+      //
+      // Do not be tempted to skip clampToDepth's refinement pass here on the
+      // theory that this only feeds a displayed bps figure -- tried exactly
+      // that once. This maker's depth is often far below `filled` (that's
+      // the whole reason a split beats them), so a bracket-only clamp can
+      // land nowhere near their true ceiling, and improvementBps came back
+      // over 10,000 (a "+100%" figure) instead of the real few hundred bps.
+      // This is the one clamp call whose precision is a number shown to the
+      // user, not an internal safety ceiling.
       clampToDepth(n, [{ ...slices[0], amountIn: filled }], tokenIn, tokenOut).then((c) =>
         quoteRoute(n, c.slices, tokenIn, tokenOut)
       ),

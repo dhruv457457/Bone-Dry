@@ -219,9 +219,25 @@ export async function quoteRoute(
  * a geometric sweep to bracket the answer, then linear refinements inside the
  * bracket. Three round trips, and it always lands on a feasible amount.
  */
-const GEOMETRIC_STEPS = 96;
-const LINEAR_STEPS = 48;
-const REFINEMENTS = 2;
+// Tuned down from 96/48/2 after Base mainnet's real maker count (unlike
+// Sepolia's handful of seeded ones) made /api/route take 20-30s. Measured,
+// not guessed: a bare eth_blockNumber round trip to the same RPC returns in
+// well under a second, so the cost isn't network latency -- it's a public
+// node simulating every candidate in one multicall. WETH alone has 35
+// solvent makers on Base today, and most land in the "over depth" bucket
+// that gets swept, so the old 96+48+48 = 192 candidates *per maker* meant
+// a single request could ask a free RPC to simulate several thousand
+// quote() calls. Cutting resolution is a precision/speed trade, never a
+// safety one: the sweep only ever accepts a probe that stayed within real
+// depth, so a coarser sweep converges to a slightly smaller, still 100%
+// safe, feasible amount -- never an oversold one. 16 geometric halvings
+// still brackets any realistic shortfall ratio; one 12-step linear pass
+// lands within roughly single-digit percent of the true bracket edge,
+// comfortably inside the spread every strategy already prices in, and
+// costs a third of the round trips the original three-pass version did.
+const GEOMETRIC_STEPS = 16;
+const LINEAR_STEPS = 12;
+const REFINEMENTS = 1;
 
 export async function clampToDepth(
   n: Network,
