@@ -326,6 +326,48 @@ contract TapFillTest is BoneDryFork {
         assertEq(WETH.balanceOf(address(tap)), 0, "hook kept output");
     }
 
+    /**
+     * @dev The bug this asserts against shipped, reached Base mainnet, and made
+     *      every split route unswappable — so the assertion is deliberately
+     *      strict where `test_dustAcrossManyMakers` above is permissive. That
+     *      one accepts a revert as long as nobody was charged, which is exactly
+     *      how a total failure to fill hid in a green suite.
+     *
+     *      Pro-rata slices are integer division. Give the makers depths that do
+     *      not divide the input evenly and the slices come up a wei or two
+     *      short; the remainder used to be swept as a fill of its own, and on
+     *      mainnet that sweep could not place it — quote(1 wei) came back zero
+     *      from every maker, `_fill` reads a zero quote as "skip", and the swap
+     *      reverted on CouldNotFillEntireSwap having placed everything else.
+     *      The smallest USDC input whose split leaves no remainder at all was
+     *      ~13.7 million USDC, so in practice every multi-maker fill reverted
+     *      and only single-maker routes (one slice, no remainder) ever settled.
+     *
+     *      Be clear about what this test does and does not prove. It asserts
+     *      the invariant that matters — an uneven split still consumes the
+     *      whole input and pays out — and it fails if the fill ever stops
+     *      completing. It does NOT reproduce mainnet's zero-quote condition:
+     *      these fixtures are plain XYC with generous reserves, so a lone wei
+     *      still quotes above zero here and the old sweep would have rescued
+     *      it. Verified this by disabling the dust fold and watching this test
+     *      pass anyway. The evidence for the bug itself is live Base mainnet,
+     *      where the quote for the remainder was measured at exactly zero from
+     *      both makers on the USDC/WETH route.
+     */
+    function test_unevenDepths_leaveNoDust_andStillFillEntirely() public {
+        _ship(0, 10_000e6, 2.7e18);
+        _ship(1, 10_000e6, 1.3e18);
+        _ship(2, 10_000e6, 0.9111111e18);
+
+        uint256 sell = 333_333; // 0.333333 USDC — no clean ratio against the above
+
+        uint256 gained = _swap(sell, _hookData(3));
+
+        assertGt(gained, 0, "split route paid out nothing");
+        assertEq(USDC.balanceOf(address(tap)), 0, "hook kept dust");
+        assertEq(WETH.balanceOf(address(tap)), 0, "hook kept output");
+    }
+
     /// @dev A pool holding nothing borrows its input from the PoolManager, whose
     ///      balance belongs to every other pool. It cannot lend what it does not
     ///      have — and it must refuse rather than fill part of the way, because

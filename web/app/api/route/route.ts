@@ -1,5 +1,5 @@
 import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
-import { planRoute, quoteRoute, clampToDepth, filterFillable, encodeHookData, attachOracleDeviations } from "@/lib/router";
+import { dedupeByMaker, planLikeTap, filterFillable, encodeHookData, attachOracleDeviations } from "@/lib/router";
 import { networkFrom, tokensOf } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
@@ -39,12 +39,20 @@ export async function GET(req: Request) {
     // each solvent maker once and drop the ones whose quote reverts, so their
     // share of the input is not thrown away on a fill that can never land.
     const { fillable, unfillable } = await filterFillable(n, depths, tokenIn, tokenOut, amountIn);
-    const planned = planRoute(fillable, amountIn);
 
-    // A solvent maker is not the same as a deliverable quote: the curve is bounded
-    // by the VIRTUAL balance, so a big enough slice quotes out more than the wallet
-    // holds. Cut every slice back to what its maker can actually pay.
-    const { slices, clamped } = await clampToDepth(n, planned, tokenIn, tokenOut);
+    // One candidate per maker: `depths` is per-strategy, and sibling strategies
+    // of one maker all draw on the same wallet. This set is what ships in
+    // hookData, so it is also the exact set Tap.sol sums its own totalDepth
+    // over -- the two have to agree or every slice the hook computes is off.
+    const candidates = dedupeByMaker(fillable);
+
+    // Replay the hook rather than approximate it. Tap.sol re-derives every
+    // slice on-chain from freshly-read depths and either fills a maker whole
+    // or skips them; nothing it does resembles trimming a slice down. So the
+    // quote is produced by running that same algorithm here and only
+    // publishing a total the replay actually completed.
+    const plan = await planLikeTap(n, candidates, amountIn, tokenIn, tokenOut);
+    const { slices, binding: clamped } = plan;
 
     if (slices.length === 0) {
       return j({
@@ -72,27 +80,20 @@ export async function GET(req: Request) {
       });
     }
 
-    const filled = slices.reduce((a, s) => a + s.amountIn, 0n);
-    const [split, single] = await Promise.all([
-      quoteRoute(n, slices, tokenIn, tokenOut),
-      // Same comparison the split has to beat: everything through the deepest
-      // maker alone, clamped by the same rule so the baseline is honest too.
-      //
-      // Do not be tempted to skip clampToDepth's refinement pass here on the
-      // theory that this only feeds a displayed bps figure -- tried exactly
-      // that once. This maker's depth is often far below `filled` (that's
-      // the whole reason a split beats them), so a bracket-only clamp can
-      // land nowhere near their true ceiling, and improvementBps came back
-      // over 10,000 (a "+100%" figure) instead of the real few hundred bps.
-      // This is the one clamp call whose precision is a number shown to the
-      // user, not an internal safety ceiling.
-      clampToDepth(n, [{ ...slices[0], amountIn: filled }], tokenIn, tokenOut).then((c) =>
-        quoteRoute(n, c.slices, tokenIn, tokenOut)
-      ),
-    ]);
+    // `plan.takeIn` is the number the wallet must send, and the replay already
+    // proved the hook consumes all of it -- no re-derivation from the slices,
+    // which would only reintroduce the rounding the replay just accounted for.
+    const filled = plan.takeIn;
+
+    // The comparison the split has to beat: the same input through the single
+    // deepest maker alone. Run through the identical replay so the baseline is
+    // subject to exactly the rules the split was, rather than a looser
+    // approximation -- an earlier version cut corners here and reported
+    // improvements over 10,000 bps because the baseline came out near zero.
+    const single = await planLikeTap(n, candidates.slice(0, 1), filled, tokenIn, tokenOut);
 
     const improvementBps =
-      single.amountOut > 0n ? ((split.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
+      single.amountOut > 0n ? ((plan.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
       source: fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging",
@@ -108,7 +109,7 @@ export async function GET(req: Request) {
       makersSkipped: depths.filter((d) => !d.solvent).map((d) => d.maker),
       /** solvent makers whose quote reverts — gated, wrong pair, or a program we cannot drive */
       makersUnfillable: unfillable,
-      /** makers whose quote exceeded their real depth and had to be cut back */
+      /** makers whose own ceiling held the whole fill below what was asked for */
       clamped,
       slices: await attachOracleDeviations(
         n,
@@ -116,17 +117,22 @@ export async function GET(req: Request) {
           maker: s.maker,
           amountIn: s.amountIn,
           depth: s.depth,
-          amountOut: split.perMaker[i]?.amountOut ?? 0n,
+          amountOut: plan.perMaker[i]?.amountOut ?? 0n,
         })),
         tokenIn,
         tokenOut,
         TOKENS[tokenIn.toLowerCase()]?.decimals ?? 18,
         TOKENS[tokenOut.toLowerCase()]?.decimals ?? 18
       ),
-      amountOut: split.amountOut,
+      amountOut: plan.amountOut,
       singleMakerAmountOut: single.amountOut,
       improvementBps,
-      hookData: encodeHookData(slices),
+      // Every candidate, not just the ones that drew a slice. Tap.sol sums its
+      // own totalDepth across exactly what this blob carries, and that sum is
+      // the denominator of every slice it computes -- ship a shorter list than
+      // the plan was built on and the hook silently re-splits by different
+      // weights than the quote assumed.
+      hookData: encodeHookData(plan.candidates),
     });
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);

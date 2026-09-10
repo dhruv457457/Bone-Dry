@@ -131,16 +131,35 @@ contract Tap is IHooks {
 
         uint256 takeIn = c.remaining;
 
+        // Pro-rata slices are integer division, so they add up to a wei or two
+        // less than the input, and a Bone Dry fill has to consume every unit —
+        // whatever is left over falls through to the PoolManager and pins the
+        // price. That remainder used to be swept afterwards as a fill of its
+        // own, which does not work: a lone wei of a 6-decimal token prices to
+        // zero out on any curve, `_fill` reads a zero quote as "skip", and the
+        // swap reverts on CouldNotFillEntireSwap having placed everything else.
+        // Measured on Base mainnet, USDC/WETH: quote(1 wei) == 0 from every
+        // maker, and the smallest input whose split leaves no remainder at all
+        // is ~1.4e13 wei — 13.7 million USDC. So a two-maker route reverted
+        // essentially always, and only single-maker routes (whose one slice is
+        // the whole input, remainder-free) ever settled.
+        //
+        // The remainder is at most n-1 wei, so fold it into the first and
+        // deepest slice instead of trying to place it alone. It rides along
+        // with an amount large enough to quote, and the input is consumed
+        // exactly.
+        uint256 dust = takeIn;
+        for (uint256 i; i < n; ++i) dust -= (takeIn * depth[i]) / c.totalDepth;
+
         for (uint256 i; i < n && c.remaining > 0; ++i) {
             uint256 slice = (takeIn * depth[i]) / c.totalDepth;
+            if (i == 0) slice += dust;
             if (slice > c.remaining) slice = c.remaining;
             _fill(c, d, orders, depth, i, inC, slice);
         }
 
-        // Pro-rata slices are integer division, so they add up to a wei or two
-        // less than the input. A Bone Dry fill has to consume every unit of it —
-        // whatever is left over falls through to the PoolManager and pins the
-        // price — so sweep the remainder onto whoever will still take it.
+        // Still a sweep, but now only for a share a SKIPPED maker left behind —
+        // an amount of real size, not integer-division crumbs.
         for (uint256 i; i < n && c.remaining > 0; ++i) {
             _fill(c, d, orders, depth, i, inC, c.remaining);
         }
