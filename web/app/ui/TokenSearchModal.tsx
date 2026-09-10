@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import type { Address } from "viem";
-import type { NetworkId } from "@/lib/networks";
-import type { PairConfig, PairToken } from "@/lib/pairs";
+import type { Network, NetworkId } from "@/lib/networks";
+import { createPairConfig, type PairConfig, type PairToken } from "@/lib/pairs";
 import {
   tokensForChain,
   type SearchableToken,
@@ -16,6 +16,7 @@ type TokenSearchModalProps = {
   isOpen: boolean;
   onClose: () => void;
   chainId: NetworkId;
+  net: Network;
   onSelectToken: (token: SearchableToken) => void;
   onSelectPair?: (pair: PairConfig) => void;
   availablePairs?: PairConfig[];
@@ -25,10 +26,14 @@ type TokenSearchModalProps = {
 
 type Category = "all" | "curated" | "defi" | "meme";
 
+type LiquidPair = { tokenA: Address; tokenB: Address; distinctMakers: number; activeStrategies: number };
+type LiquidToken = { token: Address; distinctMakers: number; activeStrategies: number };
+
 export function TokenSearchModal({
   isOpen,
   onClose,
   chainId,
+  net,
   onSelectToken,
   onSelectPair,
   availablePairs = [],
@@ -40,6 +45,8 @@ export function TokenSearchModal({
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupToken, setLookupToken] = useState<SearchableToken | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [liquidPairs, setLiquidPairs] = useState<LiquidPair[] | null>(null);
+  const [liquidTokens, setLiquidTokens] = useState<LiquidToken[] | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Focus search input when modal opens
@@ -51,6 +58,37 @@ export function TokenSearchModal({
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isOpen]);
+
+  // Which pairs and tokens actually have a maker behind them, right now --
+  // not the static 3-pair list, which was hand-picked once and never
+  // checked against real depth. Fetched once per open; this data changes on
+  // the order of minutes, not keystrokes, so it isn't refetched per query.
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    fetch(`/api/liquid-pairs?chain=${chainId}`)
+      .then((r) => r.json())
+      .then((json: { available: boolean; pairs?: LiquidPair[]; tokens?: LiquidToken[] }) => {
+        if (!active) return;
+        setLiquidPairs(json.available ? json.pairs ?? [] : []);
+        setLiquidTokens(json.available ? json.tokens ?? [] : []);
+      })
+      .catch(() => {
+        if (active) {
+          setLiquidPairs([]);
+          setLiquidTokens([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, chainId]);
+
+  const liquidityByToken = useMemo(() => {
+    const m = new Map<string, LiquidToken>();
+    for (const t of liquidTokens ?? []) m.set(t.token.toLowerCase(), t);
+    return m;
+  }, [liquidTokens]);
 
   // Handle Escape key to close
   useEffect(() => {
@@ -110,20 +148,58 @@ export function TokenSearchModal({
   // Filter local known tokens
   const knownTokens = useMemo(() => tokensForChain(chainId), [chainId]);
 
+  const knownByAddress = useMemo(() => {
+    const m = new Map<string, SearchableToken>();
+    for (const t of knownTokens) m.set(t.address.toLowerCase(), t);
+    return m;
+  }, [knownTokens]);
+
+  // Real pairs, ranked by real depth -- replaces the old static "popular
+  // pairs" list, which was three hand-picked pairs never checked against
+  // actual maker coverage (one of them, cbETH/WETH, turned out to have just
+  // 2 makers). Only pairs where both sides resolve to a symbol this app
+  // recognises are shown here; an unresolved pair would need two more
+  // lookups just to render a label, and the search box already covers
+  // "find any token by address" for that case.
+  const realPairs = useMemo(() => {
+    if (!liquidPairs) return [];
+    const built: PairConfig[] = [];
+    for (const p of liquidPairs) {
+      const a = knownByAddress.get(p.tokenA.toLowerCase());
+      const b = knownByAddress.get(p.tokenB.toLowerCase());
+      if (!a || !b) continue;
+      built.push(createPairConfig(a, b, net));
+      if (built.length >= 6) break;
+    }
+    return built;
+  }, [liquidPairs, knownByAddress, net]);
+
   const filteredTokens = useMemo(() => {
     let list = knownTokens;
     if (category !== "all") {
       list = list.filter((t) => t.category === category);
     }
     const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (t) =>
-        t.symbol.toLowerCase().includes(q) ||
-        t.name.toLowerCase().includes(q) ||
-        t.address.toLowerCase() === q
-    );
-  }, [knownTokens, category, query]);
+    if (q) {
+      list = list.filter(
+        (t) =>
+          t.symbol.toLowerCase().includes(q) ||
+          t.name.toLowerCase().includes(q) ||
+          t.address.toLowerCase() === q
+      );
+    }
+    // Real makers behind a token, not just curation, decides ordering here --
+    // a "curated" token nobody backs is exactly the trap this list used to
+    // set (see cbETH: on the masthead's quick pairs, backed by 2 makers).
+    // Only reorders once liquidity data has actually loaded; before that,
+    // the list keeps its original order rather than flash-reordering.
+    if (!liquidityByToken.size) return list;
+    return [...list].sort((a, b) => {
+      const la = liquidityByToken.get(a.address.toLowerCase())?.distinctMakers ?? 0;
+      const lb = liquidityByToken.get(b.address.toLowerCase())?.distinctMakers ?? 0;
+      return lb - la;
+    });
+  }, [knownTokens, category, query, liquidityByToken]);
 
   if (!isOpen) return null;
 
@@ -178,13 +254,26 @@ export function TokenSearchModal({
           )}
         </div>
 
-        {/* Quick pair pills when viewing pair picker and query is empty */}
-        {target === "pair" && !query && availablePairs.length > 0 && (
+        {/* Quick pair pills when viewing pair picker and query is empty.
+            Prefer real, ranked pairs from liquid-pairs; fall back to the
+            static list only while that data is loading or unavailable
+            (e.g. a network with no subgraph configured), so this section
+            never goes blank. */}
+        {target === "pair" && !query && (realPairs.length > 0 || availablePairs.length > 0) && (
           <div className={s.quickPairsSec}>
-            <div className={`label ${s.secLabel}`}>Popular pairs</div>
+            <div className={`label ${s.secLabel}`}>
+              {realPairs.length > 0 ? "Backed by real makers, ranked" : "Popular pairs"}
+            </div>
             <div className={s.quickPairsGrid}>
-              {availablePairs.map((p) => {
+              {(realPairs.length > 0 ? realPairs : availablePairs).map((p) => {
                 const isActive = p.id === currentPairId;
+                const real = liquidPairs?.find(
+                  (lp) =>
+                    (lp.tokenA.toLowerCase() === p.token0.address.toLowerCase() &&
+                      lp.tokenB.toLowerCase() === p.token1.address.toLowerCase()) ||
+                    (lp.tokenA.toLowerCase() === p.token1.address.toLowerCase() &&
+                      lp.tokenB.toLowerCase() === p.token0.address.toLowerCase())
+                );
                 return (
                   <button
                     key={p.id}
@@ -210,6 +299,11 @@ export function TokenSearchModal({
                       />
                     </div>
                     <span>{p.label}</span>
+                    {real && (
+                      <span className={`label ${s.dim}`}>
+                        {real.distinctMakers} maker{real.distinctMakers === 1 ? "" : "s"}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -287,39 +381,56 @@ export function TokenSearchModal({
                   <p className="label">Paste a full contract address (0x…) to look up any token on-chain.</p>
                 </div>
               ) : (
-                filteredTokens.map((t) => (
-                  <div
-                    key={t.address}
-                    className={s.tokenRow}
-                    onClick={() => {
-                      onSelectToken(t);
-                      onClose();
-                    }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <TokenIcon
-                      chainId={chainId}
-                      address={t.address as Address}
-                      symbol={t.symbol}
-                      size={28}
-                    />
-                    <div className={s.tokenInfo}>
-                      <div className={s.tokenMainLine}>
-                        <span className={s.tokenSymbol}>{t.symbol}</span>
-                        <span className={s.tokenName}>{t.name}</span>
-                      </div>
-                      <div className={s.tokenSubLine}>
-                        <span className="hex">{short(t.address)}</span>
-                        {t.verified ? (
-                          <span className={`label ${s.trustBadgeVerified}`}>Curated</span>
-                        ) : (
-                          <span className={`label ${s.trustBadgeWarning}`}>Unverified</span>
-                        )}
+                filteredTokens.map((t) => {
+                  const liquidity = liquidityByToken.get(t.address.toLowerCase());
+                  return (
+                    <div
+                      key={t.address}
+                      className={s.tokenRow}
+                      onClick={() => {
+                        onSelectToken(t);
+                        onClose();
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <TokenIcon
+                        chainId={chainId}
+                        address={t.address as Address}
+                        symbol={t.symbol}
+                        size={28}
+                      />
+                      <div className={s.tokenInfo}>
+                        <div className={s.tokenMainLine}>
+                          <span className={s.tokenSymbol}>{t.symbol}</span>
+                          <span className={s.tokenName}>{t.name}</span>
+                        </div>
+                        <div className={s.tokenSubLine}>
+                          <span className="hex">{short(t.address)}</span>
+                          {t.verified ? (
+                            <span className={`label ${s.trustBadgeVerified}`}>Curated</span>
+                          ) : (
+                            <span className={`label ${s.trustBadgeWarning}`}>Unverified</span>
+                          )}
+                          {liquidTokens !== null && (
+                            <span
+                              className={`label ${liquidity ? s.trustBadgeVerified : s.dim}`}
+                              title={
+                                liquidity
+                                  ? `${liquidity.distinctMakers} maker${liquidity.distinctMakers === 1 ? "" : "s"} currently shipping a strategy for this token`
+                                  : "No maker currently has a live strategy for this token -- a swap will likely find nothing to fill from"
+                              }
+                            >
+                              {liquidity
+                                ? `${liquidity.distinctMakers} maker${liquidity.distinctMakers === 1 ? "" : "s"}`
+                                : "No live makers"}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

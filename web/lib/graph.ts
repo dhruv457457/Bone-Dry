@@ -335,3 +335,92 @@ export async function appBreakdown(n: Network, ourApp: Address, first = 1000): P
     .sort((a, b) => b.activeStrategies - a.activeStrategies);
 }
 
+const LIQUID_PAIRS_QUERY = `
+  query LiquidPairs($app: Bytes!, $first: Int!) {
+    strategies(where: { active: true, app: $app }, first: $first) {
+      tokens
+      maker { id }
+    }
+  }
+`;
+
+export type LiquidPair = {
+  tokenA: Address;
+  tokenB: Address;
+  distinctMakers: number;
+  activeStrategies: number;
+};
+
+export type LiquidToken = {
+  token: Address;
+  distinctMakers: number;
+  activeStrategies: number;
+};
+
+/**
+ * Which token pairs on this router's own app actually have a maker willing
+ * to fill them, right now -- not the hardcoded 3-pair list in lib/pairs.ts,
+ * which was hand-picked once and never checked against real depth. A
+ * strategy's `tokens` is the exact two-address list it was shipped with
+ * (ship()'s own `tokens` argument), so grouping active strategies by that
+ * pair gives the real answer instead of a guess. Every strategy currently
+ * indexed on Base fits in one page; this does not paginate.
+ */
+export async function liquidPairsFromGraph(
+  n: Network,
+  app: Address,
+  first = 1000
+): Promise<{ pairs: LiquidPair[]; tokens: LiquidToken[] } | null> {
+  if (!(await indexFresh(n))) return null;
+  const data = await gql<{ strategies: { tokens: Address[]; maker: { id: Address } }[] }>(
+    n,
+    LIQUID_PAIRS_QUERY,
+    { app: app.toLowerCase(), first }
+  );
+  if (!data) return null;
+
+  const byPair = new Map<string, { tokenA: string; tokenB: string; makers: Set<string>; count: number }>();
+  const byToken = new Map<string, { makers: Set<string>; count: number }>();
+
+  for (const s of data.strategies) {
+    // A strategy carries exactly the tokens it was shipped with, per Aqua's
+    // own ship() signature -- two addresses, not necessarily in a stable
+    // order, so the pair key is sorted to merge A/B and B/A into one entry.
+    if (s.tokens.length !== 2) continue;
+    const [a, b] = [s.tokens[0].toLowerCase(), s.tokens[1].toLowerCase()].sort();
+    const maker = s.maker.id.toLowerCase();
+
+    const pairKey = `${a}:${b}`;
+    const pairEntry = byPair.get(pairKey) ?? { tokenA: a, tokenB: b, makers: new Set<string>(), count: 0 };
+    pairEntry.count += 1;
+    pairEntry.makers.add(maker);
+    byPair.set(pairKey, pairEntry);
+
+    for (const tok of [a, b]) {
+      const tokEntry = byToken.get(tok) ?? { makers: new Set<string>(), count: 0 };
+      tokEntry.count += 1;
+      tokEntry.makers.add(maker);
+      byToken.set(tok, tokEntry);
+    }
+  }
+
+  const pairs = [...byPair.values()]
+    .map((v) => ({
+      tokenA: v.tokenA as Address,
+      tokenB: v.tokenB as Address,
+      distinctMakers: v.makers.size,
+      activeStrategies: v.count,
+    }))
+    .sort((a, b) => b.distinctMakers - a.distinctMakers || b.activeStrategies - a.activeStrategies);
+
+  const tokens = [...byToken.entries()]
+    .map(([token, v]) => ({
+      token: token as Address,
+      distinctMakers: v.makers.size,
+      activeStrategies: v.count,
+    }))
+    .sort((a, b) => b.distinctMakers - a.distinctMakers || b.activeStrategies - a.activeStrategies);
+
+  return { pairs, tokens };
+}
+

@@ -689,6 +689,7 @@ export default function Desk() {
         isOpen={searchModalOpen}
         onClose={() => setSearchModalOpen(false)}
         chainId={chainId}
+        net={net}
         target={searchTarget}
         availablePairs={availablePairs}
         currentPairId={currentPair.id}
