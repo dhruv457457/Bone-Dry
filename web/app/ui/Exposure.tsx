@@ -7,7 +7,12 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import type { NetworkId } from "@/lib/networks";
 import { TokenIcon } from "./TokenIcon";
-import type { ExposurePosition, ExposureResponse, ExposureSources } from "./types";
+import type {
+  ExposurePosition,
+  ExposureResponse,
+  ExposureSources,
+  HistoryResponse,
+} from "./types";
 
 export type { ExposurePosition, ExposureResponse, ExposureSources };
 
@@ -71,6 +76,121 @@ export function ExposureTable({
 /* A connected maker's own coverage ratio across every strategy they have shipped.
    Aqua cannot total this on-chain because the mapping is not enumerable; this view
    reads the index so a maker can verify whether their own book is solvent. */
+/* What a snapshot alone cannot show: how a wallet got to the position it is
+   currently in. Swaps made as a taker, strategies shipped or docked as a
+   maker -- the portfolio's own history, not just its current balance. */
+function PortfolioHistory({ chainId, address }: { chainId: NetworkId; address: Address }) {
+  const [data, setData] = useState<HistoryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    fetch(`/api/history?chain=${chainId}&address=${address}`)
+      .then((r) => r.json())
+      .then((json: HistoryResponse) => {
+        if (live) setData(json);
+      })
+      .catch(() => {
+        if (live) setData(null);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [chainId, address]);
+
+  const fmtTime = (ts: number | null) =>
+    ts === null ? "--" : new Date(ts * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  return (
+    <section className={s.exposure} style={{ marginTop: "32px" }}>
+      <div className={s.sectionHead}>
+        <h2 className={s.sectionTitle}>History &mdash; what got you here, not just where you are</h2>
+        {loading && <span className={`label ${s.spin}`}>reading chain…</span>}
+      </div>
+
+      <div className={s.sectionHead} style={{ marginTop: "16px" }}>
+        <h3 className="label" style={{ fontSize: "12px" }}>Swaps made as a taker</h3>
+        {data && (
+          <span className="label">
+            {data.swaps.available ? `${data.swaps.rows.length} in the last ~20,000 blocks` : data.swaps.reason}
+          </span>
+        )}
+      </div>
+      {data?.swaps.available && data.swaps.rows.length > 0 ? (
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Sold</th>
+                <th>Bought</th>
+                <th>Tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.swaps.rows.map((r) => (
+                <tr key={r.txHash}>
+                  <td className={`num ${s.dim}`}>{fmtTime(r.timestamp)}</td>
+                  <td className="num">
+                    {r.amountIn} <span className="hex">{short(r.tokenIn)}</span>
+                  </td>
+                  <td className="num">
+                    {r.amountOut} <span className="hex">{short(r.tokenOut)}</span>
+                  </td>
+                  <td>
+                    <span className="hex num">{short(r.txHash)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !loading && data?.swaps.available && (
+          <p className={s.empty}>No swaps through this network&apos;s Wellhead in the recent window.</p>
+        )
+      )}
+
+      <div className={s.sectionHead} style={{ marginTop: "24px" }}>
+        <h3 className="label" style={{ fontSize: "12px" }}>Strategies shipped as a maker</h3>
+        {data && <span className="label">{data.strategies.rows.length} &middot; source: {data.strategies.source}</span>}
+      </div>
+      {data && data.strategies.rows.length > 0 ? (
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Shipped</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.strategies.rows.map((r) => (
+                <tr key={r.strategyHash}>
+                  <td className="hex num">{short(r.strategyHash)}</td>
+                  <td className={`num ${s.dim}`}>{fmtTime(r.shippedAt)}</td>
+                  <td>
+                    <span className={`${s.badge} ${r.active ? s.badgeOk : s.badgeLoss}`}>
+                      {r.active ? "active" : "docked"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !loading && <p className={s.empty}>No strategies shipped by this wallet found in this window.</p>
+      )}
+    </section>
+  );
+}
+
 export default function Exposure({
   chainId,
   address,
@@ -140,60 +260,73 @@ export default function Exposure({
 
   if (error) {
     return (
-      <section className={s.exposure}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
-          <span className="label">{error}</span>
-        </div>
-        <p className={s.err}>{error}</p>
-      </section>
+      <>
+        <section className={s.exposure}>
+          <div className={s.sectionHead}>
+            <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
+            <span className="label">{error}</span>
+          </div>
+          <p className={s.err}>{error}</p>
+        </section>
+        <PortfolioHistory chainId={chainId} address={address} />
+      </>
     );
   }
 
   if (loading && !data) {
     return (
-      <section className={s.exposure}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
-          <span className="label">reading index...</span>
-        </div>
-      </section>
+      <>
+        <section className={s.exposure}>
+          <div className={s.sectionHead}>
+            <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
+            <span className="label">reading index...</span>
+          </div>
+        </section>
+        <PortfolioHistory chainId={chainId} address={address} />
+      </>
     );
   }
 
   if (data && !data.available) {
     return (
-      <section className={s.exposure}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
-          <span className="label">{data.reason ?? "no index for this network"}</span>
-        </div>
-        <div className={s.coverageEmpty}>
-          <p>
-            Totalling what one maker has promised across every strategy is the thing no
-            contract can do, so this view needs an index. There is one on Base.
-          </p>
-          {onGoToBase && <button onClick={onGoToBase}>See it on Base</button>}
-        </div>
-      </section>
+      <>
+        <section className={s.exposure}>
+          <div className={s.sectionHead}>
+            <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
+            <span className="label">{data.reason ?? "no index for this network"}</span>
+          </div>
+          <div className={s.coverageEmpty}>
+            <p>
+              Totalling what one maker has promised across every strategy is the thing no
+              contract can do, so this view needs an index. There is one on Base.
+            </p>
+            {onGoToBase && <button onClick={onGoToBase}>See it on Base</button>}
+          </div>
+        </section>
+        <PortfolioHistory chainId={chainId} address={address} />
+      </>
     );
   }
 
   if (data && data.positions.length === 0) {
     return (
-      <section className={s.exposure}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
-          <span className="label">0 active positions</span>
-        </div>
-        <p className={s.empty}>This wallet has no active Aqua positions on this network.</p>
-      </section>
+      <>
+        <section className={s.exposure}>
+          <div className={s.sectionHead}>
+            <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
+            <span className="label">0 active positions</span>
+          </div>
+          <p className={s.empty}>This wallet has no active Aqua positions on this network.</p>
+        </section>
+        <PortfolioHistory chainId={chainId} address={address} />
+      </>
     );
   }
 
   if (!data) return null;
 
   return (
+    <>
     <section className={s.exposure}>
       <div className={s.sectionHead}>
         <h2 className={s.sectionTitle}>Your exposure &mdash; claimed against held</h2>
@@ -203,5 +336,7 @@ export default function Exposure({
       </div>
       <ExposureTable positions={data.positions} chainId={chainId} sources={data.sources} />
     </section>
+    <PortfolioHistory chainId={chainId} address={address} />
+    </>
   );
 }

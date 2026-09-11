@@ -107,6 +107,17 @@ export const wellheadAbi = [
     ],
     outputs: [{ name: "amountOut", type: "uint256" }],
   },
+  {
+    type: "event",
+    name: "Swapped",
+    inputs: [
+      { name: "swapper", type: "address", indexed: true },
+      { name: "tokenIn", type: "address", indexed: true },
+      { name: "tokenOut", type: "address", indexed: true },
+      { name: "amountIn", type: "uint256", indexed: false },
+      { name: "amountOut", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
 export const erc20WriteAbi = [
   {

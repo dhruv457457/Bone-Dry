@@ -129,3 +129,28 @@ export type ExposureResponse = {
   error?: string;
 };
 
+export type SwapHistoryRow = {
+  txHash: `0x${string}`;
+  blockNumber: string;
+  timestamp: number | null;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountIn: string;
+  amountOut: string;
+};
+
+export type StrategyHistoryRow = {
+  strategyHash: `0x${string}`;
+  tokens: `0x${string}`[];
+  shippedAt: number | null;
+  dockedAt: number | null;
+  active: boolean;
+};
+
+export type HistoryResponse = {
+  chain: { id: number; label: string; testnet: boolean };
+  swaps: { source: string; available: boolean; reason?: string; rows: SwapHistoryRow[] };
+  strategies: { source: string; rows: StrategyHistoryRow[] };
+  error?: string;
+};
+
