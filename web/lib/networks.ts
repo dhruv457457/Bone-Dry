@@ -65,8 +65,14 @@ export const NETWORKS: Record<NetworkId, Network> = {
     purpose: "Real Aqua makers. Read-only — this is the evidence, not a sandbox.",
     testnet: false,
     explorer: "https://basescan.org",
-    rpc: process.env.RPC_URL ?? "https://mainnet.base.org",
+    // QuikNode's paid Build plan first -- verified live: correct chainId,
+    // and (on Ethereum below) a 9000-block eth_getLogs that Alchemy's free
+    // tier and the public drpc.org fallback were both failing on. Alchemy
+    // kept as a fallback tier rather than removed: still a real, paid-enough
+    // endpoint, and free redundancy costs nothing.
+    rpc: process.env.QUICKNODE_BASE_RPC_URL ?? process.env.RPC_URL ?? "https://mainnet.base.org",
     rpcFallbacks: [
+      ...(process.env.RPC_URL ? [process.env.RPC_URL] : []),
       "https://developer-access-mainnet.base.org",
       "https://base.gateway.tenderly.co",
       "https://base-rpc.publicnode.com",
@@ -101,8 +107,9 @@ export const NETWORKS: Record<NetworkId, Network> = {
     purpose: "Our own Aqua and pool. Free tokens — swap and make markets for nothing.",
     testnet: true,
     explorer: "https://sepolia.basescan.org",
-    rpc: process.env.SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
+    rpc: process.env.QUICKNODE_BASE_SEPOLIA_RPC_URL ?? process.env.SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
     rpcFallbacks: [
+      ...(process.env.SEPOLIA_RPC_URL ? [process.env.SEPOLIA_RPC_URL] : []),
       "https://base-sepolia-rpc.publicnode.com",
       "https://base-sepolia.gateway.tenderly.co",
     ],
@@ -132,36 +139,37 @@ export const NETWORKS: Record<NetworkId, Network> = {
     purpose: "Real Aqua makers, at real scale. Read-only — no Bone Dry hook here.",
     testnet: false,
     explorer: "https://etherscan.io",
-    // Alchemy first, on the same key already used for Base -- verified it is
-    // valid on Ethereum too (a plain eth_blockNumber succeeds). It does NOT
-    // fix eth_getLogs: the free tier caps that at 10 blocks on every network,
-    // same as Base, confirmed by asking it the exact query that used to fail
-    // and getting that message back. But nearly every call this network makes
-    // is eth_call/multicall -- measureDepth, positionsFromRpc, every quote --
-    // which carries no block range and which Alchemy answers reliably where
-    // the free public endpoints below were measured flaking under this
-    // session's own load. For the handful of getLogs calls (discovery scans),
-    // Alchemy rejects instantly and cleanly rather than timing out, so
-    // fallback reaches drpc faster than it did before, not slower.
-    rpc: process.env.MAINNET_RPC_URL ?? "https://eth.drpc.org",
-    // drpc.org: the getLogs workhorse, unaffected by Alchemy's tier cap, free
-    // tier caps a single request at 10k blocks which aqua.ts's Ethereum page
-    // size stays under.
+    // QuikNode's paid Build plan first -- this is the fix for the actual
+    // bottleneck that was here: verified live that a plain 9000-block
+    // eth_getLogs against this exact contract, the exact range Alchemy's
+    // free tier and drpc.org were both failing/timing out on, answers
+    // cleanly (and a 50k-block request comes back with an honest "limited
+    // to a 10,000 range" JSON-RPC error rather than a timeout -- a real,
+    // documented ceiling instead of a shared free node's mood).
     //
-    // Nothing after it, deliberately -- found live that viem's fallback does
-    // not distinguish "this transport is down" from "this transport answered
-    // with an error": a transport that responds at all, even with a JSON-RPC
-    // error, is treated as the final answer, not a reason to try the next
-    // one. publicnode was here as a third fallback and needs an archive token
-    // for anything beyond a recent window; whenever the scan's own backward
-    // walk reached an older page, publicnode would answer with that error and
-    // fallback stopped there instead of continuing to a transport that could
-    // actually serve the range -- a fallback list is only as good as its
-    // worst member's ability to look like a real failure. eth.llamarpc.com
-    // (Cloudflare 525, SSL handshake failed on a live request) and
-    // rpc.ankr.com/eth (needs a key for eth_getLogs) were already excluded
-    // for the same reason.
-    rpcFallbacks: ["https://eth.drpc.org"],
+    // Alchemy demoted to first fallback rather than removed -- still a real
+    // paid-enough endpoint for eth_call/multicall (no block-range cap
+    // applies there), just never the right tool for the getLogs calls this
+    // network's discovery scan is built on. drpc.org kept last: free, but a
+    // real 10k-block getLogs ceiling and it did serve correctly most of the
+    // time before QuikNode was available.
+    //
+    // publicnode and llamarpc are still deliberately absent -- found live
+    // that viem's fallback does not distinguish "this transport is down"
+    // from "this transport answered with an error": a transport that
+    // responds at all, even with a JSON-RPC error, is treated as the final
+    // answer, not a reason to try the next one. publicnode needs an archive
+    // token for anything beyond a recent window and would swallow the
+    // scan's own backward walk into older pages; eth.llamarpc.com failed
+    // its TLS handshake outright on a live request. Both stay excluded.
+    rpc:
+      process.env.QUICKNODE_MAINNET_RPC_URL ??
+      process.env.MAINNET_RPC_URL ??
+      "https://eth.drpc.org",
+    rpcFallbacks: [
+      ...(process.env.MAINNET_RPC_URL ? [process.env.MAINNET_RPC_URL] : []),
+      "https://eth.drpc.org",
+    ],
     // Same address, same bytecode, on both chains -- confirmed by comparing
     // deployed code directly rather than assumed from the shared vanity
     // prefix. This is not a coincidence: 1inch deploy Aqua deterministically.
