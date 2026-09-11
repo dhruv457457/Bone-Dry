@@ -144,21 +144,22 @@ const REFINEMENTS = 1;
 /**
  * Whether the deployed Tap folds its pro-rata remainder into the first slice.
  *
- * `src/Tap.sol` does. The bytecode currently live on Base mainnet does not --
- * it still sweeps the remainder as a fill of its own, and a lone wei of a
- * 6-decimal token quotes to zero on every maker, so that sweep never places
- * anything and the swap reverts on CouldNotFillEntireSwap. Measured, not
+ * True as of the redeploy at 0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088
+ * (Base mainnet, block 51140916) -- built from the current src/Tap.sol, which
+ * carries the fold. Before that redeploy this was false: the live bytecode
+ * swept the remainder as a fill of its own, a lone wei of a 6-decimal token
+ * quotes to zero on every maker, that sweep never placed anything, and every
+ * multi-maker route reverted on CouldNotFillEntireSwap. Measured, not
  * assumed: quote(1 wei) came back 0 from both makers on the live USDC/WETH
- * route, and the smallest input that splits without a remainder at all is
- * ~1.4e13 wei (13.7M USDC), so no reachable total avoids it.
+ * route, and the smallest input that split without a remainder at all was
+ * ~1.4e13 wei (13.7M USDC) -- unreachable in practice, so it was not a rare
+ * edge case, it was every split, always.
  *
- * While this is false the planner models the sweep, finds multi-maker splits
- * unfillable, and falls back to a single maker -- which has no remainder to
- * place and settles. Flip it to true in the same commit that points
- * NEXT_PUBLIC_HOOK_ADDRESS at a deployment built from the current source, and
- * multi-maker routing comes back.
+ * If this ever needs to go back to false -- a rollback, a second network
+ * whose Tap predates the fold -- the planner falls back to a single maker on
+ * its own; no other code path needs to change.
  */
-const DUST_IS_FOLDED_ON_CHAIN = false;
+const DUST_IS_FOLDED_ON_CHAIN = true;
 
 /** What Tap.sol will actually do, replayed off-chain. */
 export type TapPlan = {
