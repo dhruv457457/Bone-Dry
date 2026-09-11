@@ -1,5 +1,6 @@
-import { cachedStrategies, indexStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
+import { cachedStrategies, indexStrategies, measureDepth, mergeStrategies, type MakerDepth } from "@/lib/aqua";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
+import { depthFromIndex } from "@/lib/indexedDepth";
 import { networkFrom, tokensOf } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { byDepthDesc } from "@/lib/router";
@@ -22,38 +23,56 @@ export async function GET(req: Request) {
     const fromBlock = url.searchParams.get("fromBlock");
     const from = fromBlock ? amountParam(fromBlock, 0n) : undefined;
 
-    // The index for history, a short chain scan for the tail it has not reached.
-    const fromGraph = await strategiesFromGraph(n, n.router);
-    const scan = fromGraph
-      ? null
-      : from !== undefined
-        ? { strategies: await indexStrategies(n, { fromBlock: from }), window: null }
-        : await cachedStrategies(n);
-    const rawStrategies = fromGraph ?? scan!.strategies;
-    const strategies = rawStrategies.filter((s) => {
-      if (!s.tokens || s.tokens.length === 0) return true;
-      return s.tokens.map((t) => t.toLowerCase()).includes(token.toLowerCase());
-    });
+    // The background index (lib/indexer.ts) answers this exact question --
+    // every live strategy's depth for one token -- precomputed on a
+    // schedule. Skipped when the caller asked for a specific historical
+    // fromBlock: the index only ever reflects current state, not a window
+    // into the past, so that request has to go live regardless.
+    const indexed = from === undefined ? await depthFromIndex(n, token) : null;
 
-    const depths = await measureDepth(n, strategies, token);
+    let depths: MakerDepth[];
+    let source: string;
+    let indexState: { state: string; head: bigint; behind: bigint; ready: boolean } | null = null;
+    let window: { fromBlock: bigint; toBlock: bigint } | null = null;
+    let indexedCount: number;
+
+    if (indexed !== null) {
+      depths = indexed;
+      source = "indexed-db";
+      indexedCount = indexed.length;
+    } else {
+      // The index for history, a short chain scan for the tail it has not reached.
+      const fromGraph = await strategiesFromGraph(n, n.router);
+      const scan = fromGraph
+        ? null
+        : from !== undefined
+          ? { strategies: await indexStrategies(n, { fromBlock: from }), window: null }
+          : await cachedStrategies(n);
+      const rawStrategies = fromGraph ?? scan!.strategies;
+      const strategies = rawStrategies.filter((s) => {
+        if (!s.tokens || s.tokens.length === 0) return true;
+        return s.tokens.map((t) => t.toLowerCase()).includes(token.toLowerCase());
+      });
+
+      depths = await measureDepth(n, strategies, token);
+      const idx = indexStateOf(n);
+      source = fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${idx.status})` : "rpc-log-paging";
+      indexState = n.graphUrl ? { state: idx.status, head: idx.head, behind: idx.behind, ready: !!fromGraph } : null;
+      window = scan?.window ?? null;
+      indexedCount = strategies.length;
+    }
+
     const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
     const meta = TOKENS[token.toLowerCase()];
-    const index = indexStateOf(n);
 
     return j({
       // Say which index actually answered, not which one is configured.
-      source: fromGraph
-        ? "aquifer-subgraph"
-        : n.graphUrl
-          ? `rpc-log-paging (index ${index.status})`
-          : "rpc-log-paging",
+      source,
       chain: { id: n.id, label: n.label, testnet: n.testnet, aquaIsOurs: n.aquaIsOurs },
-      index: n.graphUrl
-        ? { state: index.status, head: index.head, behind: index.behind, ready: !!fromGraph }
-        : null,
-      window: scan?.window ?? null,
+      index: indexState,
+      window,
       token: { address: token, symbol: meta?.symbol ?? "?", decimals: meta?.decimals ?? 18 },
-      indexed: strategies.length,
+      indexed: indexedCount,
       solvent: depths.filter((d) => d.solvent).length,
       totalDepth: depths.reduce((a, d) => a + d.depth, 0n),
       makers: depths

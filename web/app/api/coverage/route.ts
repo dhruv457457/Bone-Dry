@@ -2,6 +2,7 @@ import { erc20Abi, lensAbi } from "@/lib/chain";
 import { networkFrom, clientFor } from "@/lib/networks";
 import { positionsFromGraph, indexStateOf } from "@/lib/graph";
 import { cachedStrategies, positionsFromRpc } from "@/lib/aqua";
+import { positionsFromIndex } from "@/lib/indexedDepth";
 import { tokensForChain } from "@/lib/tokenList";
 import { uintParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
@@ -36,29 +37,36 @@ export async function GET(req: Request) {
     // No subgraph in our own schema indexes this network -- not "unavailable,"
     // genuinely never configured (n.graphUrl is empty by design; see
     // networks.ts). Ethereum's real activity is too large to enumerate the
-    // honest way this app otherwise would, so positionsFromRpc answers a
-    // narrower question instead: coverage for a known, curated set of tokens
-    // among the most recent strategies, rather than every position that
-    // exists. A subgraph-configured network that is merely unreachable or
-    // still syncing does NOT fall into this branch -- that stays a reported
+    // honest way this app otherwise would, so the background index (or, if
+    // it has never run, a live RPC scan) answers a narrower question
+    // instead: coverage for a known, curated set of tokens among the most
+    // recent strategies, rather than every position that exists. A
+    // subgraph-configured network that is merely unreachable or still
+    // syncing does NOT fall into this branch -- that stays a reported
     // unavailability, not a silent swap to a different, partial answer.
     let rpcFallbackFailed = false;
     if (positions === null && !n.graphUrl) {
-      // Free RPCs on a fresh scan occasionally answer with an error a
-      // reader has no use for -- an archive-token upsell, a rate limit, raw
-      // JSON-RPC internals with the endpoint URL in it. That belongs in a
-      // server log, not in a label a user reads as this network's
-      // permanent status. Caught here so it degrades to the same honest
-      // "unavailable, here's why" shape every other index gap in this app
-      // already uses, instead of leaking whichever RPC happened to answer.
-      try {
-        const { strategies } = await cachedStrategies(n);
-        const knownTokens = tokensForChain(n.id).map((t) => t.address);
-        positions = await positionsFromRpc(n, strategies, knownTokens);
-        source = "rpc-log-paging";
-      } catch (e) {
-        console.warn(`[coverage] rpc fallback failed for ${n.label}:`, (e as Error).message?.slice(0, 300));
-        rpcFallbackFailed = true;
+      const knownTokens = tokensForChain(n.id).map((t) => t.address);
+      const indexed = await positionsFromIndex(n, knownTokens);
+      if (indexed !== null) {
+        positions = indexed;
+        source = "indexed-db";
+      } else {
+        // Free RPCs on a fresh scan occasionally answer with an error a
+        // reader has no use for -- an archive-token upsell, a rate limit, raw
+        // JSON-RPC internals with the endpoint URL in it. That belongs in a
+        // server log, not in a label a user reads as this network's
+        // permanent status. Caught here so it degrades to the same honest
+        // "unavailable, here's why" shape every other index gap in this app
+        // already uses, instead of leaking whichever RPC happened to answer.
+        try {
+          const { strategies } = await cachedStrategies(n);
+          positions = await positionsFromRpc(n, strategies, knownTokens);
+          source = "rpc-log-paging";
+        } catch (e) {
+          console.warn(`[coverage] rpc fallback failed for ${n.label}:`, (e as Error).message?.slice(0, 300));
+          rpcFallbackFailed = true;
+        }
       }
     }
 
