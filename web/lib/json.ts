@@ -36,5 +36,14 @@ export function chainFailure(e: unknown): Response | null {
     console.error("[chain] rpc refused the request", m.slice(0, 300));
     return fail("that RPC couldn't answer this request — retrying against a different one usually works", 503);
   }
+  // A shared free RPC that can't reach one of ITS OWN backends for this
+  // request (drpc.org's own gateway wording) or that answers after its
+  // deadline (408) -- confirmed live, same endpoint served a clean 200 on
+  // retry moments later. This is exactly the transient-infra shape the two
+  // patterns above exist for, just a message they don't happen to match.
+  if (/can'?t route your request to suitable provider|request timed?-?out|408/i.test(m)) {
+    console.error("[chain] rpc gateway could not route this request", m.slice(0, 300));
+    return fail("that RPC couldn't route this request right now — retrying usually works", 503);
+  }
   return null;
 }

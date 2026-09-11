@@ -235,11 +235,18 @@ export function clientFor(n: Network): PublicClient {
    * configured RPC still goes first, because a fork is not optional when that is
    * what the app is pointed at.
    */
+  // Ethereum's getLogs workhorse (drpc.org) is a shared free endpoint and the
+  // only member of its fallback list per the comment above -- verified live
+  // it can 408 on a single attempt under load and then answer fine on retry
+  // moments later. There is no further transport to fall through to for this
+  // chain, so the retry budget itself has to absorb that flakiness instead.
+  const retryCount = n.id === 1 ? 4 : 2;
+  const retryDelay = n.id === 1 ? 350 : 220;
   const made = createPublicClient({
     chain: n.id === 8453 ? base : n.id === 1 ? mainnet : baseSepolia,
     transport: fallback(
       [n.rpc, ...n.rpcFallbacks].map((url) =>
-        http(url, { retryCount: 2, retryDelay: 220, timeout: 12_000 })
+        http(url, { retryCount, retryDelay, timeout: 12_000 })
       ),
       { rank: false }
     ),
