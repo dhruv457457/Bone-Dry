@@ -23,6 +23,21 @@ export type PairConfig = {
  * Each pool is uniquely identified by (currency0, currency1, fee, tickSpacing, hooks).
  */
 export const PAIRS: Record<NetworkId, PairConfig[]> = {
+  1: [
+    {
+      id: "usdc-weth",
+      label: "USDC / WETH",
+      token0: { address: NETWORKS[1].usdc, symbol: "USDC", decimals: 6 },
+      token1: { address: NETWORKS[1].weth, symbol: "WETH", decimals: 18 },
+      // No hook here (see networks.ts) -- kept so the pool-key math that
+      // every pair already runs through does not need an Ethereum special
+      // case. A pool key with an empty hooks address is exactly what Base
+      // showed before its own hook was deployed, handled the same way.
+      fee: 0,
+      tickSpacing: 60,
+      hook: NETWORKS[1].hook,
+    },
+  ],
   8453: [
     {
       id: "usdc-weth",

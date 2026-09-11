@@ -40,8 +40,14 @@ export async function indexStrategies(
 ): Promise<Strategy[]> {
   const client = clientFor(n);
   const latest = opts?.toBlock ?? (await client.getBlockNumber());
-  const page = opts?.pageSize ?? (n.id === 8453 ? 1_500n : 9_999n);
-  const budget = opts?.maxPages ?? 12;
+  const page = opts?.pageSize ?? (n.id === 8453 ? 1_500n : n.id === 1 ? 9_000n : 9_999n);
+  // Ethereum ships roughly 2,000 events per 9,000-block page -- measured, not
+  // estimated -- against real Aqua data. That is already past the 250-strategy
+  // cap in one page, so scanning the usual 12 only pays for eleven more round
+  // trips (each a rate-limit chance on a free RPC) to discard everything they
+  // would have found. One page is enough to fill the cap with the most recent
+  // activity, which is what gets kept anyway.
+  const budget = opts?.maxPages ?? (n.id === 1 ? 2 : 12);
 
   // Walk backwards from the head. A forward scan from Aqua's genesis is ~200
   // sequential round trips on Base and would make the fallback unusable; a
@@ -85,7 +91,22 @@ export async function indexStrategies(
   }
 
   lastWindow = { fromBlock: end, toBlock: latest };
-  return shipped.filter((s) => !docked.has(`${s.maker.toLowerCase()}:${s.strategyHash}`));
+  const live = shipped.filter((s) => !docked.has(`${s.maker.toLowerCase()}:${s.strategyHash}`));
+
+  // Bounded, not filtered by relevance -- this app cannot tell which
+  // strategies matter before measuring their depth, and measuring depth is
+  // the expensive part. Ethereum ships roughly 2,000 events per 9,000
+  // blocks (measured directly against the same window this scan just ran),
+  // and measureDepth spends one multicall of 3 calls per strategy: unbounded,
+  // a single request here asks a free RPC to simulate tens of thousands of
+  // calls, the same failure mode fixed for /api/route's clamp sweep earlier.
+  // Base and Sepolia never produce enough strategies in one scan to reach
+  // this cap, so it costs them nothing; Ethereum gets the most recent slice
+  // of its own real activity rather than a request that times out reaching
+  // for all of it.
+  const CANDIDATE_CAP = 250;
+  if (live.length <= CANDIDATE_CAP) return live;
+  return live.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1)).slice(0, CANDIDATE_CAP);
 }
 
 /** The window the last RPC scan covered. Meaningless once a subgraph is
@@ -166,6 +187,85 @@ export async function measureDepth(
     const depth = [virtual, wallet, allowance].reduce((a, b) => (b < a ? b : a));
     return { ...s, virtual, wallet, allowance, depth, solvent: depth > 0n };
   });
+}
+
+export type Position = {
+  maker: Address;
+  token: Address;
+  totalCommitted: bigint;
+  activeStrategies: number;
+  strategyHashes: Hex[];
+  app: Address | null;
+};
+
+/**
+ * Coverage without a subgraph, for a network whose real activity is too
+ * large to enumerate the honest way.
+ *
+ * `/api/coverage` normally asks the subgraph "what has this maker committed,
+ * across every strategy, for this token" -- a question the raw event log
+ * cannot answer directly, because a Shipped event does not say which tokens
+ * a strategy prices. The subgraph knows because it indexes the decoded
+ * SwapVM program; a plain RPC scan does not decode it.
+ *
+ * So this asks a narrower, answerable question instead: for a short list of
+ * tokens this app already knows about, which of the (already capped, most
+ * recent) candidate strategies have committed to one of them. It reads
+ * `rawBalances` per strategy per token -- the same call `measureDepth` makes
+ * one token at a time, batched here across several at once -- and keeps
+ * anything with a non-zero virtual balance. Strategies pricing a token
+ * outside this list are invisible to it, same honest limitation the
+ * candidate cap already has: real, recent, partial, not lifetime-complete.
+ */
+export async function positionsFromRpc(
+  n: Network,
+  strategies: Strategy[],
+  tokens: Address[]
+): Promise<Position[]> {
+  if (strategies.length === 0 || tokens.length === 0) return [];
+  const client = clientFor(n);
+
+  const calls = strategies.flatMap((s) =>
+    tokens.map(
+      (token) =>
+        ({
+          address: n.aqua,
+          abi: aquaAbi,
+          functionName: "rawBalances",
+          args: [s.maker, n.router, s.strategyHash, token],
+        }) as const
+    )
+  );
+  const res = await client.multicall({ contracts: calls, allowFailure: true });
+
+  const byMakerToken = new Map<string, Position>();
+  strategies.forEach((s, si) => {
+    tokens.forEach((token, ti) => {
+      const r = res[si * tokens.length + ti];
+      if (r.status !== "success") return;
+      const [amount, tokensCount] = r.result as unknown as [bigint, number];
+      if (tokensCount === 0 || tokensCount === 0xff || amount === 0n) return;
+
+      const key = `${s.maker.toLowerCase()}:${token.toLowerCase()}`;
+      const existing = byMakerToken.get(key);
+      if (existing) {
+        existing.totalCommitted += amount;
+        existing.activeStrategies += 1;
+        existing.strategyHashes.push(s.strategyHash);
+      } else {
+        byMakerToken.set(key, {
+          maker: s.maker,
+          token,
+          totalCommitted: amount,
+          activeStrategies: 1,
+          strategyHashes: [s.strategyHash],
+          app: n.router,
+        });
+      }
+    });
+  });
+
+  return [...byMakerToken.values()];
 }
 
 /** The maker address is baked into the Order, so we can verify what we indexed. */

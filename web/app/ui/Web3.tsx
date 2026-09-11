@@ -3,7 +3,7 @@
 import "@rainbow-me/rainbowkit/styles.css";
 import { useState } from "react";
 import { WagmiProvider, createConfig, http, fallback } from "wagmi";
-import { base, baseSepolia } from "wagmi/chains";
+import { base, baseSepolia, mainnet } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, lightTheme, connectorsForWallets } from "@rainbow-me/rainbowkit";
 import {
@@ -34,7 +34,7 @@ import { NETWORKS } from "@/lib/networks";
  */
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_ID ?? "";
 
-const transportFor = (id: 8453 | 84532) => {
+const transportFor = (id: 8453 | 84532 | 1) => {
   const n = NETWORKS[id];
   return fallback(
     [n.rpc, ...n.rpcFallbacks].map((url) => http(url, { retryCount: 2, retryDelay: 220 }))
@@ -69,11 +69,17 @@ const connectors = connectorsForWallets(
 );
 
 const config = createConfig({
-  chains: [baseSepolia, base],
+  // mainnet is read-only in this app -- no wellhead deployed, so nothing ever
+  // calls writeContract against it -- but it is still a chain a connected
+  // wallet can genuinely be on, and wagmi's own chain-status hooks need to
+  // recognise it rather than treat it as "wrong network" against a network
+  // this app itself put in front of the user.
+  chains: [baseSepolia, base, mainnet],
   connectors,
   transports: {
     [baseSepolia.id]: transportFor(84532),
     [base.id]: transportFor(8453),
+    [mainnet.id]: transportFor(1),
   },
   ssr: true,
 });

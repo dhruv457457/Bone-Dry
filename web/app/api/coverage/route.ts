@@ -1,6 +1,8 @@
 import { erc20Abi, lensAbi } from "@/lib/chain";
 import { networkFrom, clientFor } from "@/lib/networks";
 import { positionsFromGraph, indexStateOf } from "@/lib/graph";
+import { cachedStrategies, positionsFromRpc } from "@/lib/aqua";
+import { tokensForChain } from "@/lib/tokenList";
 import { uintParam, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -28,7 +30,24 @@ export async function GET(req: Request) {
     const LENS = n.lens;
     const first = uintParam(url.searchParams.get("first"), 25, 10, "first");
 
-    const positions = await positionsFromGraph(n, first);
+    let positions = await positionsFromGraph(n, first);
+    let source = "aquifer-subgraph";
+
+    // No subgraph in our own schema indexes this network -- not "unavailable,"
+    // genuinely never configured (n.graphUrl is empty by design; see
+    // networks.ts). Ethereum's real activity is too large to enumerate the
+    // honest way this app otherwise would, so positionsFromRpc answers a
+    // narrower question instead: coverage for a known, curated set of tokens
+    // among the most recent strategies, rather than every position that
+    // exists. A subgraph-configured network that is merely unreachable or
+    // still syncing does NOT fall into this branch -- that stays a reported
+    // unavailability, not a silent swap to a different, partial answer.
+    if (positions === null && !n.graphUrl) {
+      const { strategies } = await cachedStrategies(n);
+      const knownTokens = tokensForChain(n.id).map((t) => t.address);
+      positions = await positionsFromRpc(n, strategies, knownTokens);
+      source = "rpc-log-paging";
+    }
 
     // Not an error: this network simply has no index, or its index is not caught
     // up. A 503 here put a red line in the console on every load and told the
@@ -39,9 +58,7 @@ export async function GET(req: Request) {
         source: "none",
         available: false,
         chain: { id: n.id, label: n.label, testnet: n.testnet },
-        reason: !n.graphUrl
-          ? `no subgraph is indexing ${n.label} yet`
-          : `the ${n.label} index is unavailable or still catching up`,
+        reason: `the ${n.label} index is unavailable or still catching up`,
         positions: 0,
         underCollateralised: 0,
         unknown: 0,
@@ -50,7 +67,7 @@ export async function GET(req: Request) {
       });
     }
     if (positions.length === 0)
-      return j({ source: "aquifer-subgraph", available: true, positions: 0, rows: [] });
+      return j({ source, available: true, positions: 0, rows: [] });
 
     // Decimals come from the token, not from an assumption. Committing 12,694 of
     // an 18-decimal token and 12,694 of a 6-decimal one are the same integer and
@@ -141,7 +158,7 @@ export async function GET(req: Request) {
 
     const uncovered = rows.filter((r) => r.known && r.coverageBps < 10_000n);
     return j({
-      source: "aquifer-subgraph",
+      source,
       available: true,
       chain: { id: n.id, label: n.label, testnet: n.testnet },
       note:

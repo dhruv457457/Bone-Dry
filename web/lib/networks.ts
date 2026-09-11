@@ -1,24 +1,31 @@
 import { createPublicClient, fallback, http, type Address, type PublicClient } from "viem";
-import { base, baseSepolia } from "viem/chains";
+import { base, baseSepolia, mainnet } from "viem/chains";
 
 /**
- * Bone Dry runs on two networks that do different jobs, and the app should not
- * pretend they are the same thing.
+ * Bone Dry runs on three networks that do different jobs, and the app should
+ * not pretend they are the same thing.
  *
- * **Base mainnet** is the evidence. 1inch's real Aqua, real makers, and the gap
- * between what they have promised and what they hold. Read-only — nobody spends
- * anything to look at it — and impossible to reproduce on a testnet, because it
- * is other people's behaviour.
+ * **Base mainnet** is the evidence with execution. 1inch's real Aqua, real
+ * makers, the gap between what they have promised and what they hold -- and,
+ * since the redeploy, a real router that actually fills from it.
  *
- * **Base Sepolia** is the playground. Aqua has never been deployed to a testnet,
- * so this is our own deployment of it, and our own pool. Free tokens, free gas,
- * and anyone can actually swap.
+ * **Ethereum mainnet** is evidence only, at a different scale entirely: Aqua
+ * is the exact same bytecode there (verified by comparing deployed code, not
+ * assumed) as on Base, and real usage dwarfs it -- 113,000+ strategies shipped
+ * against the same router address, next to Base's low hundreds. No Bone Dry
+ * hook is deployed here and none is planned for this submission; this network
+ * exists to answer "is the insolvency problem specific to Base, or general to
+ * Aqua," which turns out to be the second one.
+ *
+ * **Base Sepolia** is the playground. Aqua has never been deployed to a
+ * testnet, so this is our own deployment of it, and our own pool. Free
+ * tokens, free gas, and anyone can actually swap.
  */
-export type NetworkId = 8453 | 84532;
+export type NetworkId = 8453 | 84532 | 1;
 
 export type Network = {
   id: NetworkId;
-  key: "base" | "base-sepolia";
+  key: "base" | "base-sepolia" | "ethereum";
   label: string;
   /** One line explaining what this network is for, shown in the switcher. */
   purpose: string;
@@ -118,12 +125,76 @@ export const NETWORKS: Record<NetworkId, Network> = {
       "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165", // USDC, feed says "USDC / USD"
     },
   },
+  1: {
+    id: 1,
+    key: "ethereum",
+    label: "Ethereum",
+    purpose: "Real Aqua makers, at real scale. Read-only — no Bone Dry hook here.",
+    testnet: false,
+    explorer: "https://etherscan.io",
+    // drpc.org first, deliberately: publicnode refuses eth_getLogs beyond a
+    // very recent window without a paid archive token (measured -- it
+    // rejected a request only 100k blocks back), and a 150k-block scan is
+    // exactly what this network's coverage panel does on every load. drpc's
+    // free tier caps a single request at 10k blocks, which aqua.ts's
+    // Ethereum-specific page size below stays under.
+    rpc: process.env.MAINNET_RPC_URL ?? "https://eth.drpc.org",
+    // rpc.ankr.com/eth requires an API key for eth_getLogs, and
+    // eth.llamarpc.com returned a Cloudflare 525 (SSL handshake failed) on a
+    // live request during testing -- both dropped, since a fallback that
+    // reliably errors is worse than none: it is the message viem surfaces
+    // when every transport failed, burying the one that actually mattered.
+    // publicnode needs an archive token for anything beyond a recent window,
+    // but the scan floor here (aquaGenesis) never asks for more than ~18,000
+    // blocks back, which is recent enough for it to answer as a backup.
+    rpcFallbacks: ["https://ethereum-rpc.publicnode.com"],
+    // Same address, same bytecode, on both chains -- confirmed by comparing
+    // deployed code directly rather than assumed from the shared vanity
+    // prefix. This is not a coincidence: 1inch deploy Aqua deterministically.
+    aqua: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
+    router: "0x111111338c5091E8440b67B168bAe16a668AC0De",
+    // The canonical Uniswap v4 PoolManager, meaningless here since no hook of
+    // ours reads it -- kept only so code that expects every Network to carry
+    // one does not have to special-case this entry.
+    poolManager: "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    weth: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    // No hook, no lens, no wellhead: this submission does not deploy Bone Dry
+    // to Ethereum. Every route that already handles Base's pre-deploy state
+    // (empty hook, "not initialized" pool, read-only banner) handles this the
+    // same way, for the same reason -- it is not a special case, it is the
+    // same case twice.
+    hook: "",
+    lens: "",
+    wellhead: "",
+    // No subgraph in our own schema indexes Ethereum. A third-party one
+    // exists and is real (verified: 113,162 strategies against this exact
+    // router, live-queried), but its entities do not match ours
+    // (App/Maker/Strategy/Fill, not Position/MakerTokenPosition), so plugging
+    // its URL in here would silently return nothing from queries built for a
+    // different schema rather than fail loudly. Left unset; this network
+    // runs on rpc-log-paging, same fallback path Base used before it had an
+    // index -- honestly labelled as such in the UI, same as Base's used to be.
+    graphUrl: "",
+    // A real floor, not the true one. Aqua's actual first strategy on
+    // Ethereum predates this by a wide margin -- 113,162 shipped in total,
+    // and a full RPC scan back to genesis is neither fast nor the point of a
+    // read-only evidence panel. This is chosen to fit the default scan
+    // budget (12 pages, see aqua.ts) without changing it: recent, real,
+    // partial, and said so in the UI rather than presented as complete.
+    aquaGenesis: 25_845_000n,
+    aquaIsOurs: false,
+    oracleFeeds: {
+      "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", // WETH, "ETH / USD"
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6", // USDC, "USDC / USD"
+    },
+  },
 };
 
 export const DEFAULT_NETWORK: NetworkId = 8453;
 
 export function isNetworkId(v: unknown): v is NetworkId {
-  return v === 8453 || v === 84532;
+  return v === 8453 || v === 84532 || v === 1;
 }
 
 /** Parse a `?chain=` parameter. Unknown values are a 400, not a silent default:
@@ -151,7 +222,7 @@ export function clientFor(n: Network): PublicClient {
    * what the app is pointed at.
    */
   const made = createPublicClient({
-    chain: n.id === 8453 ? base : baseSepolia,
+    chain: n.id === 8453 ? base : n.id === 1 ? mainnet : baseSepolia,
     transport: fallback(
       [n.rpc, ...n.rpcFallbacks].map((url) =>
         http(url, { retryCount: 2, retryDelay: 220, timeout: 12_000 })
