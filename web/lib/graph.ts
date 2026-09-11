@@ -424,3 +424,64 @@ export async function liquidPairsFromGraph(
   return { pairs, tokens };
 }
 
+const MAKER_HISTORY_QUERY = `
+  query MakerHistory($maker: String!, $app: Bytes!, $first: Int!) {
+    strategies(
+      where: { maker: $maker, app: $app }
+      first: $first
+      orderBy: shippedAt
+      orderDirection: desc
+    ) {
+      strategyHash
+      tokens
+      shippedAt
+      dockedAt
+      active
+    }
+  }
+`;
+
+export type StrategyHistoryEntry = {
+  strategyHash: Hex;
+  tokens: Address[];
+  shippedAt: number;
+  dockedAt: number | null;
+  active: boolean;
+};
+
+/**
+ * Every strategy a maker has ever shipped on this app, active or docked, real
+ * timestamps and real decoded tokens -- the subgraph already indexed both at
+ * ship time, which a plain RPC scan cannot do without re-decoding SwapVM's
+ * own opcode-specific program bytes. Prefer this over history.ts's RPC
+ * fallback whenever a network has an index; it is strictly more complete
+ * (full history, not a bounded recent window) and does not cost the
+ * per-maker RPC scan history.ts otherwise needs.
+ */
+export async function strategyHistoryFromGraph(
+  n: Network,
+  maker: Address,
+  app: Address,
+  first = 100
+): Promise<StrategyHistoryEntry[] | null> {
+  if (!(await indexFresh(n))) return null;
+  const data = await gql<{
+    strategies: {
+      strategyHash: Hex;
+      tokens: Hex[];
+      shippedAt: string;
+      dockedAt: string | null;
+      active: boolean;
+    }[];
+  }>(n, MAKER_HISTORY_QUERY, { maker: maker.toLowerCase(), app: app.toLowerCase(), first });
+  if (!data) return null;
+
+  return data.strategies.map((s) => ({
+    strategyHash: s.strategyHash,
+    tokens: (s.tokens ?? []).map((t) => t as Address),
+    shippedAt: Number(s.shippedAt),
+    dockedAt: s.dockedAt !== null ? Number(s.dockedAt) : null,
+    active: s.active,
+  }));
+}
+

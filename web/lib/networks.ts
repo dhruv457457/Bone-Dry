@@ -132,22 +132,36 @@ export const NETWORKS: Record<NetworkId, Network> = {
     purpose: "Real Aqua makers, at real scale. Read-only — no Bone Dry hook here.",
     testnet: false,
     explorer: "https://etherscan.io",
-    // drpc.org first, deliberately: publicnode refuses eth_getLogs beyond a
-    // very recent window without a paid archive token (measured -- it
-    // rejected a request only 100k blocks back), and a 150k-block scan is
-    // exactly what this network's coverage panel does on every load. drpc's
-    // free tier caps a single request at 10k blocks, which aqua.ts's
-    // Ethereum-specific page size below stays under.
+    // Alchemy first, on the same key already used for Base -- verified it is
+    // valid on Ethereum too (a plain eth_blockNumber succeeds). It does NOT
+    // fix eth_getLogs: the free tier caps that at 10 blocks on every network,
+    // same as Base, confirmed by asking it the exact query that used to fail
+    // and getting that message back. But nearly every call this network makes
+    // is eth_call/multicall -- measureDepth, positionsFromRpc, every quote --
+    // which carries no block range and which Alchemy answers reliably where
+    // the free public endpoints below were measured flaking under this
+    // session's own load. For the handful of getLogs calls (discovery scans),
+    // Alchemy rejects instantly and cleanly rather than timing out, so
+    // fallback reaches drpc faster than it did before, not slower.
     rpc: process.env.MAINNET_RPC_URL ?? "https://eth.drpc.org",
-    // rpc.ankr.com/eth requires an API key for eth_getLogs, and
-    // eth.llamarpc.com returned a Cloudflare 525 (SSL handshake failed) on a
-    // live request during testing -- both dropped, since a fallback that
-    // reliably errors is worse than none: it is the message viem surfaces
-    // when every transport failed, burying the one that actually mattered.
-    // publicnode needs an archive token for anything beyond a recent window,
-    // but the scan floor here (aquaGenesis) never asks for more than ~18,000
-    // blocks back, which is recent enough for it to answer as a backup.
-    rpcFallbacks: ["https://ethereum-rpc.publicnode.com"],
+    // drpc.org: the getLogs workhorse, unaffected by Alchemy's tier cap, free
+    // tier caps a single request at 10k blocks which aqua.ts's Ethereum page
+    // size stays under.
+    //
+    // Nothing after it, deliberately -- found live that viem's fallback does
+    // not distinguish "this transport is down" from "this transport answered
+    // with an error": a transport that responds at all, even with a JSON-RPC
+    // error, is treated as the final answer, not a reason to try the next
+    // one. publicnode was here as a third fallback and needs an archive token
+    // for anything beyond a recent window; whenever the scan's own backward
+    // walk reached an older page, publicnode would answer with that error and
+    // fallback stopped there instead of continuing to a transport that could
+    // actually serve the range -- a fallback list is only as good as its
+    // worst member's ability to look like a real failure. eth.llamarpc.com
+    // (Cloudflare 525, SSL handshake failed on a live request) and
+    // rpc.ankr.com/eth (needs a key for eth_getLogs) were already excluded
+    // for the same reason.
+    rpcFallbacks: ["https://eth.drpc.org"],
     // Same address, same bytecode, on both chains -- confirmed by comparing
     // deployed code directly rather than assumed from the shared vanity
     // prefix. This is not a coincidence: 1inch deploy Aqua deterministically.
