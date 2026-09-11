@@ -1,9 +1,12 @@
 name: Refresh Aqua index
 
 # Runs the background depth-refresh job that /api/cron/refresh performs,
-# instead of doing this work on a live request. Ethereum's full solvency
-# check (~7,000 live strategies x curated tokens) takes 30-45s in RPC calls
-# -- fine on a schedule, unusable inline in a swap quote. See lib/indexer.ts.
+# instead of doing this work on a live request. It pages through 1inch's
+# own Aqua API (GET /v1.0/strategies/opened) -- Ethereum alone is ~3,275
+# open strategies across 7 pages, ~30s including the batched Postgres
+# writes -- fine on a schedule, not something a live swap quote should
+# wait on. See lib/indexer.ts for why this replaced an earlier version
+# that scanned Shipped/Docked events and multicalled balances itself.
 #
 # Vercel Cron is not used here: the Hobby (free) plan caps cron jobs at once
 # per day, which doesn't meet the 15-30 minute cadence this job needs.
