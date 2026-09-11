@@ -192,10 +192,15 @@ export default function Desk() {
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
-  // The finding, not the swap, is the headline -- so it is fetched once,
-  // always against Base mainnet, independent of whichever network the swap
-  // UI is currently pointed at. Testing on Sepolia should not hide the real
-  // number; the problem this project answers is a Base mainnet fact.
+  // The finding, not the swap, is the headline. Used to be pinned to Base
+  // mainnet unconditionally -- true once, when Base was the only network with
+  // real (not our own seeded) Aqua data, so testing on Sepolia should not
+  // silently swap the headline for a claim about our own test makers. Now
+  // that Ethereum is a second real network, pinning stayed wrong the other
+  // direction: a viewer on Ethereum saw a label that said "Ethereum" next to
+  // a number that was quietly still Base's. Follows the selected network
+  // whenever it carries real data (aquaIsOurs === false); still falls back
+  // to Base specifically for Sepolia, whose makers are ours.
   const [finding, setFinding] = useState<CoverageResponse | null>(null);
   const [appsData, setAppsData] = useState<AppsResponse | null>(null);
   const [appsError, setAppsError] = useState<string | null>(null);
@@ -328,7 +333,8 @@ export default function Desk() {
 
   useEffect(() => {
     let live = true;
-    getJson<CoverageResponse>(`/api/coverage?chain=8453&first=200`, 60_000)
+    const findingChain = net.aquaIsOurs ? 8453 : net.id;
+    getJson<CoverageResponse>(`/api/coverage?chain=${findingChain}&first=200`, 60_000)
       .then((c) => {
         if (live && c.available !== false && !c.error) setFinding(c);
       })
@@ -336,7 +342,7 @@ export default function Desk() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [net.id, net.aquaIsOurs]);
 
   useEffect(() => {
     let live = true;
@@ -546,7 +552,11 @@ export default function Desk() {
 
       {tab === "swap" && (
       <>
-      <Finding coverage={finding} onSeeExplore={() => setTab("explore")} />
+      <Finding
+        coverage={finding}
+        chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
+        onSeeExplore={() => setTab("explore")}
+      />
       {/* The swap is the proof the finding above is answerable, not the
           headline itself -- that reversal is the point of this page now. */}
       <div className={s.trade}>
@@ -789,9 +799,11 @@ function useCountUp(target: number, ms = 900) {
    evidence for the claim made here, not the other way around. */
 function Finding({
   coverage,
+  chainLabel,
   onSeeExplore,
 }: {
   coverage: CoverageResponse | null;
+  chainLabel: string;
   onSeeExplore: () => void;
 }) {
   const bad = useCountUp(coverage?.underCollateralised ?? 0);
@@ -803,8 +815,8 @@ function Finding({
         <span className={s.findingOf}> of {coverage.positions}</span>
       </p>
       <p className={s.findingClaim}>
-        real maker positions on Base can&apos;t deliver what they promised, right
-        now.
+        real maker positions on {chainLabel} can&apos;t deliver what they promised,
+        right now.
       </p>
       <p className={s.findingSub}>
         Aqua has no way to check this on-chain -- the balance mapping isn&apos;t
