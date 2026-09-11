@@ -1,0 +1,31 @@
+name: Refresh Aqua index
+
+# Runs the background depth-refresh job that /api/cron/refresh performs,
+# instead of doing this work on a live request. Ethereum's full solvency
+# check (~7,000 live strategies x curated tokens) takes 30-45s in RPC calls
+# -- fine on a schedule, unusable inline in a swap quote. See lib/indexer.ts.
+#
+# Vercel Cron is not used here: the Hobby (free) plan caps cron jobs at once
+# per day, which doesn't meet the 15-30 minute cadence this job needs.
+# GitHub Actions has no such limit and costs nothing for a job this short.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {} # manual trigger from the Actions tab, for testing
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the refresh endpoint
+        run: |
+          status=$(curl -s -o response.json -w "%{http_code}" -X POST \
+            "${{ secrets.APP_URL }}/api/cron/refresh?chain=1" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "HTTP $status"
+          cat response.json
+          if [ "$status" != "200" ]; then
+            echo "::error::refresh endpoint returned $status"
+            exit 1
+          fi

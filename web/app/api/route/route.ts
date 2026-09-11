@@ -1,8 +1,9 @@
-import { cachedStrategies, measureDepth, mergeStrategies } from "@/lib/aqua";
+import { cachedStrategies, measureDepth, mergeStrategies, type MakerDepth } from "@/lib/aqua";
 import { dedupeByMaker, planLikeTap, filterFillable, encodeHookData, attachOracleDeviations } from "@/lib/router";
 import { networkFrom, tokensOf } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
+import { depthFromIndex } from "@/lib/indexedDepth";
 import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
 
@@ -25,15 +26,29 @@ export async function GET(req: Request) {
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
 
-    // The index for history, a short chain scan for the tail it has not reached.
-    const fromGraph = await strategiesFromGraph(n, n.router);
-    const rawStrategies = fromGraph ?? (await cachedStrategies(n)).strategies;
-    const strategies = rawStrategies.filter((s) => {
-      if (!s.tokens || s.tokens.length === 0) return true;
-      const toks = s.tokens.map((t) => t.toLowerCase());
-      return toks.includes(tokenIn.toLowerCase()) && toks.includes(tokenOut.toLowerCase());
-    });
-    const depths = await measureDepth(n, strategies, tokenOut);
+    // The background index (lib/indexer.ts) precomputes this exact depth
+    // check on a schedule so a live request never pays for it -- see the
+    // module comment there for why the live path below still exists and is
+    // not just slower: it is what runs until the index has been populated,
+    // and what runs for every chain this job has not been pointed at.
+    const indexed = await depthFromIndex(n, tokenOut);
+    let depths: MakerDepth[];
+    let source: string;
+    if (indexed !== null) {
+      depths = indexed;
+      source = "indexed-db";
+    } else {
+      // The index for history, a short chain scan for the tail it has not reached.
+      const fromGraph = await strategiesFromGraph(n, n.router);
+      const rawStrategies = fromGraph ?? (await cachedStrategies(n)).strategies;
+      const strategies = rawStrategies.filter((s) => {
+        if (!s.tokens || s.tokens.length === 0) return true;
+        const toks = s.tokens.map((t) => t.toLowerCase());
+        return toks.includes(tokenIn.toLowerCase()) && toks.includes(tokenOut.toLowerCase());
+      });
+      depths = await measureDepth(n, strategies, tokenOut);
+      source = fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging";
+    }
 
     // Having the token is not the same as being willing to part with it. Probe
     // each solvent maker once and drop the ones whose quote reverts, so their
@@ -56,7 +71,7 @@ export async function GET(req: Request) {
 
     if (slices.length === 0) {
       return j({
-        source: fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging",
+        source,
         tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
         tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
         amountIn,
@@ -96,7 +111,7 @@ export async function GET(req: Request) {
       single.amountOut > 0n ? ((plan.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
-      source: fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging",
+      source,
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       chain: { id: n.id, label: n.label, testnet: n.testnet },
