@@ -15,6 +15,13 @@ import { sql, ensureSchema } from "./db";
  *   app watches, so every live strategy is re-checked every run. That is
  *   the 30-45s part; it belongs in a job on a schedule, not in a request.
  *
+ * All writes are batched (chunks of BATCH rows per query) rather than one
+ * round trip per row -- found live that a naive per-row version of this,
+ * against ~7,000 strategies x several tokens, took long enough that a first
+ * backfill did not finish inside a 5-minute request. A network round trip
+ * to Postgres costs tens of milliseconds; a few thousand of them serialized
+ * is minutes, no matter how cheap each one looks alone.
+ *
  * Both write into Postgres. Every live-request code path treats an empty or
  * missing table as "not indexed yet," and falls back to the direct-RPC path
  * that already exists (aqua.ts's indexStrategies/measureDepth) -- this job
@@ -32,6 +39,14 @@ export type RefreshStats = {
   solventRows: number;
   tookMs: number;
 };
+
+const BATCH = 500;
+
+async function chunks<T>(items: T[], size: number): Promise<T[][]> {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
 
 export async function refreshIndex(n: Network): Promise<RefreshStats> {
   const t0 = Date.now();
@@ -58,6 +73,14 @@ export async function refreshIndex(n: Network): Promise<RefreshStats> {
     // eth_getLogs call under any provider's range cap.
     const PAGE = n.id === 8453 ? 1_500n : 9_000n;
     let start = fromBlock;
+
+    // Accumulate across every page, write once at the end -- dock events in
+    // particular are rare enough (Ethereum's Aqua registry has had zero,
+    // ever, as of writing) that batching them is about correctness of the
+    // pattern, not about a real cost today.
+    const shipRows: { maker: string; strategy_hash: string; strategy_bytes: string; block_number: string }[] = [];
+    const dockRows: { maker: string; strategy_hash: string }[] = [];
+
     while (start <= latest) {
       const end = start + PAGE - 1n > latest ? latest : start + PAGE - 1n;
 
@@ -66,37 +89,60 @@ export async function refreshIndex(n: Network): Promise<RefreshStats> {
         client.getLogs({ address: n.aqua, event: aquaAbi[1], fromBlock: start, toBlock: end }),
       ]);
 
-      const rows = ship
-        .map((l) => l.args as { maker: Address; app: Address; strategyHash: Hex; strategy: Hex })
-        .filter((a) => a.app.toLowerCase() === n.router.toLowerCase())
-        .map((a, i) => ({
-          maker: a.maker,
-          strategyHash: a.strategyHash,
-          strategyBytes: a.strategy,
-          blockNumber: ship[i].blockNumber!.toString(),
-        }));
-
-      if (rows.length > 0) {
-        for (const r of rows) {
-          await db`
-            INSERT INTO aqua_strategies (chain_id, maker, strategy_hash, strategy_bytes, block_number, docked)
-            VALUES (${n.id}, ${r.maker.toLowerCase()}, ${r.strategyHash}, ${r.strategyBytes}, ${r.blockNumber}, FALSE)
-            ON CONFLICT (chain_id, maker, strategy_hash) DO NOTHING
-          `;
-        }
-        newStrategies += rows.length;
+      for (const l of ship) {
+        const a = l.args as { maker: Address; app: Address; strategyHash: Hex; strategy: Hex };
+        if (a.app.toLowerCase() !== n.router.toLowerCase()) continue;
+        shipRows.push({
+          maker: a.maker.toLowerCase(),
+          strategy_hash: a.strategyHash,
+          strategy_bytes: a.strategy,
+          block_number: l.blockNumber!.toString(),
+        });
       }
-
       for (const l of dock) {
         const a = l.args as { maker: Address; strategyHash: Hex };
-        const res = await db`
-          UPDATE aqua_strategies SET docked = TRUE
-          WHERE chain_id = ${n.id} AND maker = ${a.maker.toLowerCase()} AND strategy_hash = ${a.strategyHash} AND NOT docked
-        `;
-        newlyDocked += res.count;
+        dockRows.push({ maker: a.maker.toLowerCase(), strategy_hash: a.strategyHash });
       }
 
       start = end + 1n;
+    }
+
+    // A strategy shipped and docked inside the SAME window this run just
+    // scanned (routine on a first backfill spanning real history) would
+    // otherwise cost two writes: an insert as live, then an update to
+    // docked. Know the answer before the insert instead.
+    const dockedInThisWindow = new Set(dockRows.map((d) => `${d.maker}:${d.strategy_hash}`));
+
+    for (const chunk of await chunks(shipRows, BATCH)) {
+      const rows = chunk.map((r) => ({
+        chain_id: n.id,
+        docked: dockedInThisWindow.has(`${r.maker}:${r.strategy_hash}`),
+        ...r,
+      }));
+      await db`
+        INSERT INTO aqua_strategies ${db(rows, "chain_id", "maker", "strategy_hash", "strategy_bytes", "block_number", "docked")}
+        ON CONFLICT (chain_id, maker, strategy_hash) DO NOTHING
+      `;
+    }
+    newStrategies = shipRows.length;
+
+    // Found live: assuming dock events would be rare and writing this as a
+    // per-row loop cost a first backfill ~27 extra minutes (6,534 individual
+    // round trips to Neon). A batched set-based update instead -- one query
+    // per chunk regardless of how many rows it touches. This still runs for
+    // every dock this scan saw, including ones already caught by the
+    // same-window optimization above; those are simply no-ops (`NOT docked`
+    // already false), which is cheaper than tracking which dock events still
+    // need it.
+    for (const chunk of await chunks(dockRows, BATCH)) {
+      const makers = chunk.map((d) => d.maker);
+      const hashes = chunk.map((d) => d.strategy_hash);
+      const res = await db`
+        UPDATE aqua_strategies AS s SET docked = TRUE
+        FROM (SELECT unnest(${db.array(makers)}::text[]) AS maker, unnest(${db.array(hashes)}::text[]) AS strategy_hash) AS v
+        WHERE s.chain_id = ${n.id} AND s.maker = v.maker AND s.strategy_hash = v.strategy_hash AND NOT s.docked
+      `;
+      newlyDocked += res.count;
     }
 
     await db`
@@ -128,6 +174,18 @@ export async function refreshIndex(n: Network): Promise<RefreshStats> {
       ]);
       const res = await client.multicall({ contracts: calls, allowFailure: true });
 
+      const rows: {
+        chain_id: number;
+        maker: string;
+        strategy_hash: string;
+        token: string;
+        virtual_amount: string;
+        wallet_balance: string;
+        allowance: string;
+        depth: string;
+        solvent: boolean;
+      }[] = [];
+
       for (let i = 0; i < live.length; i++) {
         const raw = res[i * 3];
         const bal = res[i * 3 + 1];
@@ -140,17 +198,31 @@ export async function refreshIndex(n: Network): Promise<RefreshStats> {
         }
         const wallet = bal.status === "success" ? (bal.result as bigint) : 0n;
         const allowance = allw.status === "success" ? (allw.result as bigint) : 0n;
-        const depth = [virtual, wallet, allowance].reduce((a, b) => (b < a ? b : a));
-        const solvent = depth > 0n;
 
-        // Skip writing rows that have never touched this token at all --
-        // otherwise this table grows by (live strategies x every curated
-        // token) even for tokens a strategy will never hold, forever.
+        // Skip rows that have never touched this token at all -- otherwise
+        // this table grows by (live strategies x every curated token) even
+        // for tokens a strategy will never hold, forever.
         if (virtual === 0n && wallet === 0n && allowance === 0n) continue;
 
+        const depth = [virtual, wallet, allowance].reduce((a, b) => (b < a ? b : a));
+        const solvent = depth > 0n;
+        rows.push({
+          chain_id: n.id,
+          maker: live[i].maker,
+          strategy_hash: live[i].strategy_hash,
+          token: token.toLowerCase(),
+          virtual_amount: virtual.toString(),
+          wallet_balance: wallet.toString(),
+          allowance: allowance.toString(),
+          depth: depth.toString(),
+          solvent,
+        });
+        if (solvent) solventRows++;
+      }
+
+      for (const chunk of await chunks(rows, BATCH)) {
         await db`
-          INSERT INTO aqua_depth (chain_id, maker, strategy_hash, token, virtual_amount, wallet_balance, allowance, depth, solvent, updated_at)
-          VALUES (${n.id}, ${live[i].maker}, ${live[i].strategy_hash}, ${token.toLowerCase()}, ${virtual.toString()}, ${wallet.toString()}, ${allowance.toString()}, ${depth.toString()}, ${solvent}, now())
+          INSERT INTO aqua_depth ${db(chunk, "chain_id", "maker", "strategy_hash", "token", "virtual_amount", "wallet_balance", "allowance", "depth", "solvent")}
           ON CONFLICT (chain_id, maker, strategy_hash, token) DO UPDATE SET
             virtual_amount = EXCLUDED.virtual_amount,
             wallet_balance = EXCLUDED.wallet_balance,
@@ -159,9 +231,8 @@ export async function refreshIndex(n: Network): Promise<RefreshStats> {
             solvent = EXCLUDED.solvent,
             updated_at = now()
         `;
-        depthRowsWritten++;
-        if (solvent) solventRows++;
       }
+      depthRowsWritten += rows.length;
     }
   }
 

@@ -43,14 +43,23 @@ export async function indexStrategies(
   const page = opts?.pageSize ?? (n.id === 8453 ? 1_500n : n.id === 1 ? 9_000n : 9_999n);
   // This used to stop at 2 pages on Ethereum, on the theory that Ethereum's
   // higher event density fills the CANDIDATE_CAP from recent activity alone.
-  // Measured directly and found wrong: Aqua's Ethereum registry has never had
-  // a single Docked event since genesis -- everything ever shipped is still
-  // live -- and genesis to head is currently only ~13 pages of real history,
-  // not an unbounded backlog. A 2-page scan was seeing ~4% of it and missing
-  // the densest pages entirely (900-1,300 ships each, vs ~150-250 in the most
-  // recent ones). budget is set generously above the current span so the
-  // `start === floor` break below does the real work of stopping the scan,
-  // not an arbitrary page count guessing at how far back "recent" should mean.
+  // Measured directly and found wrong: genesis to head is currently only
+  // ~13 pages of real history, not an unbounded backlog, and a 2-page scan
+  // was seeing under 4% of it -- missing the densest pages entirely
+  // (900-1,300 ships each, vs ~150-250 in the most recent ones).
+  //
+  // (A first version of this comment also claimed Ethereum's registry had
+  // never had a single Docked event. That was wrong -- an artifact of a
+  // verification script using an incorrect 2-field Docked ABI that silently
+  // matched zero real events, not a real property of the chain. The
+  // background indexer's first full backfill, using the correct 3-field ABI
+  // below, found 6,534 of 7,006 ever-shipped strategies already docked. The
+  // page-budget fix above is unaffected by the correction: it was justified
+  // by the page-density measurement, not the docked-event claim.)
+  //
+  // budget is set generously above the current span so the `start === floor`
+  // break below does the real work of stopping the scan, not an arbitrary
+  // page count guessing at how far back "recent" should mean.
   const budget = opts?.maxPages ?? (n.id === 1 ? 20 : 12);
 
   // Walk backwards from the head. A forward scan from Aqua's genesis is ~200
@@ -102,17 +111,22 @@ export async function indexStrategies(
   // token and not enumerable), and measuring depth is the expensive part:
   // one multicall of 3 calls per candidate.
   //
-  // 250 was too tight, found live: Ethereum's real population (full genesis-
-  // to-head history, now actually scanned above instead of a 2-page slice)
-  // is ~7,000 live strategies across ~240 makers, and a direct probe against
-  // a real pair found 29 solvent candidates for one token scattered across
-  // that whole span -- only 5 of them within the first 250 by recency, 19
-  // within 2,500. A full 7,000-candidate multicall (21k calls) is real and
-  // succeeds on a paid RPC, but takes 30-45s -- too slow for a live quote.
-  // 2,500 is the evidence-based middle: ~3x the previous cap's recall in
-  // that same test, at a multicall cost (~7,500 calls) that stays in the
-  // several-second range. Base and Sepolia still never reach even the old
-  // cap in one scan, so this costs them nothing.
+  // 250 was too tight, found live: a direct probe against a real pair found
+  // 29 solvent candidates for one token scattered across the full
+  // genesis-to-head span -- only 5 of them within the first 250 by recency,
+  // 19 within 2,500. (That probe's candidate set was built from raw Shipped
+  // events without cross-checking Docked ones -- it did not know the true
+  // live population was ~472, not ~7,000. That did not make the solvent
+  // count wrong: `virtual` above already reads 0 for anything Aqua's own
+  // contract state marks docked, via the 0xff sentinel, independent of this
+  // app's own event bookkeeping. It only means the 7,000-candidate multicall
+  // that probe ran, and the "30-45s" cost that motivated capping at 2,500
+  // instead of going uncapped, was checking ~15x more candidates than
+  // actually existed.) 2,500 stays as the cap regardless -- comfortably
+  // above the real ~472 live strategies, so nothing is actually being
+  // truncated today, and it is headroom for the population to grow. Base
+  // and Sepolia still never reach even the old 250 cap in one scan, so this
+  // costs them nothing.
   const CANDIDATE_CAP = n.id === 1 ? 2_500 : 250;
   if (live.length <= CANDIDATE_CAP) return live;
   return live.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1)).slice(0, CANDIDATE_CAP);
