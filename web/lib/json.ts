@@ -26,5 +26,15 @@ export function chainFailure(e: unknown): Response | null {
     console.error("[chain]", m);
     return fail("cannot reach the chain right now", 503);
   }
+  // A free-tier RPC that answered but refused the specific request -- an
+  // archive-token upsell on an old block range, "invalid parameters" on a
+  // range it does not like. Still an infrastructure limit, not a code bug,
+  // and the raw message carries the endpoint URL and full request body the
+  // same way the two patterns above do. Caught this leaking straight into a
+  // UI label on Ethereum's coverage panel before this pattern existed.
+  if (/archive|invalid parameters were provided/i.test(m)) {
+    console.error("[chain] rpc refused the request", m.slice(0, 300));
+    return fail("that RPC couldn't answer this request — retrying against a different one usually works", 503);
+  }
   return null;
 }

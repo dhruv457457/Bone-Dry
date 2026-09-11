@@ -42,11 +42,24 @@ export async function GET(req: Request) {
     // exists. A subgraph-configured network that is merely unreachable or
     // still syncing does NOT fall into this branch -- that stays a reported
     // unavailability, not a silent swap to a different, partial answer.
+    let rpcFallbackFailed = false;
     if (positions === null && !n.graphUrl) {
-      const { strategies } = await cachedStrategies(n);
-      const knownTokens = tokensForChain(n.id).map((t) => t.address);
-      positions = await positionsFromRpc(n, strategies, knownTokens);
-      source = "rpc-log-paging";
+      // Free RPCs on a fresh scan occasionally answer with an error a
+      // reader has no use for -- an archive-token upsell, a rate limit, raw
+      // JSON-RPC internals with the endpoint URL in it. That belongs in a
+      // server log, not in a label a user reads as this network's
+      // permanent status. Caught here so it degrades to the same honest
+      // "unavailable, here's why" shape every other index gap in this app
+      // already uses, instead of leaking whichever RPC happened to answer.
+      try {
+        const { strategies } = await cachedStrategies(n);
+        const knownTokens = tokensForChain(n.id).map((t) => t.address);
+        positions = await positionsFromRpc(n, strategies, knownTokens);
+        source = "rpc-log-paging";
+      } catch (e) {
+        console.warn(`[coverage] rpc fallback failed for ${n.label}:`, (e as Error).message?.slice(0, 300));
+        rpcFallbackFailed = true;
+      }
     }
 
     // Not an error: this network simply has no index, or its index is not caught
@@ -58,7 +71,9 @@ export async function GET(req: Request) {
         source: "none",
         available: false,
         chain: { id: n.id, label: n.label, testnet: n.testnet },
-        reason: `the ${n.label} index is unavailable or still catching up`,
+        reason: rpcFallbackFailed
+          ? `the RPC scan for ${n.label} hit a transient error -- try again`
+          : `the ${n.label} index is unavailable or still catching up`,
         positions: 0,
         underCollateralised: 0,
         unknown: 0,
