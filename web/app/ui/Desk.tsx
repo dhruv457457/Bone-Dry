@@ -725,6 +725,7 @@ export default function Desk() {
             error={appsError}
             onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
           />
+          <MakerReliability chainId={chainId} />
           <section className={s.exploreLink}>
             <p>
               Checking a wallet that has never touched this dashboard? The lookup
@@ -1049,6 +1050,101 @@ function AcrossAqua({
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+type ReliabilityRow = {
+  maker: Address;
+  fillsCount: number;
+  skipsCount: number;
+  totalVolumeSkipped: string;
+  flakeRate: number;
+  status: "RELIABLE" | "DEGRADED" | "UNRELIABLE";
+};
+
+/**
+ * A maker's own track record: how often Tap has actually caught them unable
+ * to deliver, not just whether they can right now. MakerSkipped fires every
+ * time this happens (see Tap.sol) and had nothing reading it until this.
+ *
+ * Self-fetching rather than threaded through Desk's own load() -- this is
+ * Explore-only, does not affect the swap quote, and a hook redeployed within
+ * this same session means the honest answer today is "no history yet" on
+ * every network, which is worth showing plainly rather than routing through
+ * more state than a self-contained empty state needs.
+ */
+function MakerReliability({ chainId }: { chainId: NetworkId }) {
+  const [data, setData] = useState<{ available: boolean; reason?: string; makers: ReliabilityRow[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    fetch(`/api/reliability?chain=${chainId}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (live) setData(json);
+      })
+      .catch(() => {
+        if (live) setData(null);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [chainId]);
+
+  return (
+    <section className={s.acrossAqua}>
+      <div className={s.sectionHead}>
+        <h2 className={s.sectionTitle}>Maker reliability &mdash; caught unable to deliver, not just able to right now</h2>
+        <span className="label">
+          {loading ? "reading chain…" : data?.available === false ? data.reason : `${data?.makers.length ?? 0} makers with a fill or skip on record`}
+        </span>
+      </div>
+      {data?.available && data.makers.length > 0 ? (
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>Maker</th>
+                <th>Filled</th>
+                <th>Skipped</th>
+                <th>Flake rate</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.makers.map((m) => (
+                <tr key={m.maker}>
+                  <td className="num">{short(m.maker)}</td>
+                  <td className="num">{m.fillsCount}</td>
+                  <td className="num">{m.skipsCount}</td>
+                  <td className="num">{(m.flakeRate * 100).toFixed(1)}%</td>
+                  <td>
+                    <span
+                      className={`${s.badge} ${m.status === "RELIABLE" ? s.badgeOk : s.badgeLoss}`}
+                    >
+                      {m.status.toLowerCase()}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !loading &&
+        data?.available && (
+          <p className={s.empty}>
+            No maker has been caught unable to deliver, or filled, against this network&apos;s
+            Tap hook in the recent window yet &mdash; the hook is new, not the finding empty.
+          </p>
+        )
+      )}
     </section>
   );
 }
