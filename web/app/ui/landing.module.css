@@ -4,6 +4,33 @@
 .wrap { overflow-x: clip; }
 
 /* ── hero ─────────────────────────────────────────────────────────────── */
+
+/* The hero is one screen of content; the stage around it is longer, and the
+   difference is empty paper. That emptiness is not spacing — it is the distance
+   the figure falls through once the rope takes his arms off, and it is the
+   length of scroll the whole sequence is scrubbed against. */
+.stage {
+  position: relative;
+  --band: clamp(210px, 38vh, 340px);
+}
+
+/* Runway plus holder come to 130svh between them, so the stage is always 230svh
+   however tall the drawing is. */
+.runway { height: calc(130svh - var(--band)); }
+
+/* An ordinary in-flow box of the drawing's own height, sticky against the foot
+   of the screen. It has to be genuinely inside the stage: pulling it back out
+   with a negative margin also drags its release point past the stage's end, and
+   the drawing stays pinned over the section below while that section scrolls up
+   underneath it. In flow, it releases exactly as the stage ends — after the
+   timeline has finished, which is the order that matters. */
+.doodleHold {
+  position: sticky;
+  bottom: 80px; /* the drawing sits above the hero's footer row, not on it */
+  height: var(--band);
+  z-index: 0;
+}
+
 .hero {
   position: relative;
   min-height: 100svh;
@@ -49,7 +76,7 @@
   position: relative;
   z-index: 2;
   /* The words sit high so the bottom band of the hero belongs to the drawing. */
-  padding: 10px 0 clamp(40px, 24vh, 240px);
+  padding: 8px 0 clamp(60px, 38vh, 380px);
 }
 
 .claim {
@@ -64,9 +91,9 @@
 .claimLine > span { display: block; will-change: transform; }
 
 .deck {
-  margin: 30px 0 0;
-  max-width: 46ch;
-  font-size: clamp(16px, 1.5vw, 19px);
+  margin: 26px 0 0;
+  max-width: 52ch;
+  font-size: clamp(15px, 1.3vw, 18px);
   color: var(--ink-soft);
 }
 
@@ -139,7 +166,6 @@
   position: relative;
   background: var(--ink);
   color: var(--paper);
-  margin-top: 8vh;
   padding: clamp(80px, 14vh, 170px) 24px;
   /* the notched corner, same trick as the reference */
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 34px), calc(100% - 34px) 100%, 0 100%);
@@ -233,6 +259,10 @@
 @media (max-width: 900px) {
   /* The cards are decoration; on a narrow screen they would sit on the words. */
   .field, .darkField { display: none; }
+  /* Below this width the drawing is sized by the width it has, not by the height
+     it is given — so reserving clearance as a share of a tall screen just opens
+     a hole between the copy and a drawing that did not grow to fill it. */
+  .heroBody { padding-bottom: clamp(50px, 22vh, 240px); }
 }
 
 /* ── the hero doodle ──────────────────────────────────────────────────── */
@@ -242,10 +272,14 @@
    same band of the screen and the text was losing. */
 .doodle {
   position: absolute;
+  /* A band along the foot of the hero, not the whole hero. Tying it to the
+     section's height meant a taller hero pushed the figure through the floor. */
   inset: 0;
-  z-index: 0;
+  /* An svg is a replaced element: left+right alone leave width auto, and its
+     intrinsic ratio then wins and pins the drawing to the left. */
   width: 100%;
   height: 100%;
+  z-index: 0;
   overflow: visible; /* the plateau lines run past the viewBox to the screen edges */
   pointer-events: none;
 }
@@ -257,14 +291,126 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.terra { stroke: #98a3af; stroke-width: 3.2; }
-.terra .hatch { stroke-width: 2.2; opacity: 0.62; }
-.rope { stroke: #9c6b4d; stroke-width: 7; }
-.fig { stroke: var(--ink); stroke-width: 3.6; }
-.fig .face { stroke-width: 4.4; }
-.fig .bulge { stroke-width: 3; }
+.terra { stroke: #8f9aa7; stroke-width: 3.6; }
+/* The land itself. Barely a tone against the paper, but enough to be a mass
+   rather than an outline — and it is what the rope ends disappear into. */
+.terra .land { fill: rgba(143, 154, 167, 0.19); stroke: none; }
+/* Rock layers across the face, and the short strokes that read as broken stone.
+   Both lighter than the edge itself — the silhouette is the land, these are the
+   texture on it. */
+.terra .strata { stroke-width: 2.4; opacity: 0.7; }
+/* Naming the two sides is what turns a drawing into a diagram: the gap that
+   opens between them is the shortfall this whole project measures. */
+/* Each label sits on its own land, reading outward away from the gap. On a
+   phone the gap is most of the screen and that land is off it, so they flip to
+   read inward instead — see the narrow breakpoint. */
+.plateauL { text-anchor: end; }
+.plateauR { text-anchor: start; }
+
+.plateau {
+  font-family: var(--mono);
+  font-size: 17px;
+  letter-spacing: 0.16em;
+  fill: var(--ink-faint);
+  stroke: none;
+}
+.terra .hatch { stroke-width: 2; opacity: 0.5; }
+.rope { stroke: #9c6b4d; stroke-width: 8; }
+.fig { stroke: var(--ink); stroke-width: 4.2; }
+.fig .face { stroke-width: 5.2; }
+
+/* The tube trick: an ink stroke, then a paper stroke ~7 narrower laid back over
+   it. What survives is a limb outlined at 3.5 a side — the same weight as every
+   other line here — with its thickness set by a number rather than by two
+   freehand curves that have to stay parallel. */
+.ink { stroke: var(--ink); }
+.paper { stroke: var(--paper); }
+/* Filled, so a limb socketing into the torso or the neck into the head stops at
+   the edge of the mass instead of drawing straight through it. */
+.solid { fill: var(--paper); stroke: var(--ink); stroke-width: 4.2; }
+
+/* The one place on the page that breaks the two-colour rule, on purpose: he is
+   putting everything he has into holding it, and it still is not enough. Behind
+   the figure, never over it. */
+.aura { stroke: none; }
+/* Outward-in: the body of the flame and its side licks, the hotter middle, and
+   the core. Three layers is the minimum that reads as fire rather than as an
+   orange shape — a flame is legible because it is brightest where it is thinnest. */
+.aura .f1 { fill: #e2673f; opacity: 0.5; }
+.aura .f2 { fill: #ef9a34; opacity: 0.78; }
+.aura .f3 { fill: #f7d24a; opacity: 0.95; }
+
+/* The torn shoulder ends. Hidden until the rope takes the arms off — and left
+   hidden for anyone on reduced motion, for whom the tear never happens. */
+.tear { stroke: var(--ink); stroke-width: 4.2; opacity: 0; }
+
+/* Interior muscle lines, lighter than the silhouette — at the same weight the
+   figure reads as a scribble rather than as a body. */
+.fig .detail { stroke-width: 2.8; opacity: 0.5; }
+
+/* The two faces he is not wearing yet. The timeline fades them in over the one
+   he is; without a start value here they would all be stacked on top of each
+   other before a single frame is scrubbed. */
+.hidden { opacity: 0; }
 
 @media (max-width: 700px) {
-  /* At this width the drawing is wider than it is legible. */
-  .doodle { display: none; }
+  /* The drawing is the hero's whole argument, so a phone gets it too — it just
+     gets less of it. `meet` fits all 1440 units of width into 375px, which
+     leaves the figure about 87px tall; scaling the scene back up about the
+     point he stands on crops the view to roughly cliff-lip to cliff-lip, which
+     is exactly the part that carries the idea. Everything outside that was
+     going to walk off screen anyway. */
+  .scene {
+    transform: scale(1.55);
+    transform-origin: 720px 758px;
+  }
+  .stage { --band: clamp(170px, 24vh, 250px); }
+  .runway { height: calc(112svh - var(--band)); }
+  /* far enough up that his feet clear the footer row */
+  .doodleHold { bottom: 94px; }
+  /* The labels are the one thing that does not survive being scaled with
+     everything else — they are type, not drawing. They also turn to face the
+     gap, because the land they would otherwise sit on is off the screen. */
+  .plateau { font-size: 26px; letter-spacing: 0.1em; }
+  .plateauL { text-anchor: start; transform: translateX(26px); }
+  .plateauR { text-anchor: end; transform: translateX(-26px); }
+  /* Less clearance to reserve, and a taller block of deck copy above it. */
+  .heroBody { padding-bottom: clamp(30px, 13vh, 130px); }
+}
+
+/* ── short screens ────────────────────────────────────────────────────── */
+/* A laptop is wide but not tall, and every part of this hero is sized off the
+   width: the headline is 10.5vw, and the clearance and the drawing's band are
+   shares of a viewport height that is no longer there. Added up they come to
+   more than a 700px-tall screen has, so the grid pushes the deck copy down into
+   the flame. Nothing here is a different design — it is the same one told to
+   stop pricing itself in width alone.
+
+   Keyed above 700px so phones keep their own rules: a phone is short too, and
+   these numbers are wrong for it. */
+/* Three tiers rather than one, because the squeeze comes on gradually: at 900
+   the headline only needs trimming, by 680 everything does. Later blocks win
+   where a screen matches more than one. */
+@media (min-width: 701px) and (max-height: 900px) {
+  .claim { font-size: clamp(44px, 9.5vw, 132px); }
+  /* The paragraph gives up the height, not the drawing. Shrinking the band was
+     the wrong trade — it is the one thing on the page that has to be looked at. */
+  .deck { font-size: 16px; max-width: 56ch; margin-top: 22px; }
+  .heroBody { padding-bottom: clamp(50px, 34vh, 320px); }
+}
+
+@media (min-width: 701px) and (max-height: 820px) {
+  .claim { font-size: clamp(40px, 9vw, 112px); }
+  .deck { font-size: 15px; max-width: 58ch; margin-top: 20px; }
+  .heroBody { padding-bottom: clamp(40px, 28vh, 240px); }
+  .stage { --band: clamp(190px, 32vh, 270px); }
+  .doodleHold { bottom: 64px; }
+}
+
+@media (min-width: 701px) and (max-height: 680px) {
+  .claim { font-size: clamp(36px, 8vw, 92px); }
+  .deck { font-size: 14px; max-width: 62ch; margin-top: 14px; }
+  .heroBody { padding-bottom: clamp(30px, 22vh, 170px); }
+  .stage { --band: clamp(170px, 30vh, 230px); }
+  .doodleHold { bottom: 52px; }
 }
