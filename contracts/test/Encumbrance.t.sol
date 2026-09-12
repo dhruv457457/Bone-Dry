@@ -3,20 +3,525 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BoneDryRouter} from "../src/vm/BoneDryRouter.sol";
+import {Encumbrance, EncumbranceArgsBuilder} from "../src/vm/Encumbrance.sol";
+import {MakerTraitsLib, MakerTraits} from "@1inch/swap-vm/libs/MakerTraits.sol";
+import {ISwapVM} from "@1inch/swap-vm/interfaces/ISwapVM.sol";
+import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Chains} from "../script/Chains.sol";
 
 contract EncumbranceTest is Test {
     BoneDryRouter router;
+    IAqua aqua;
+    IERC20 USDC;
+    IERC20 WETH;
+
+    bytes takerTraitsAndData = hex"00000000000000000000000000000000000000000041";
 
     function setUp() public {
-        address aqua = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
-        address weth = Chains.weth();
-        router = new BoneDryRouter(aqua, weth, address(this), "BoneDryRouter", "1");
+        vm.createSelectFork(vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org")));
+        aqua = IAqua(0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a);
+        USDC = IERC20(Chains.usdc());
+        WETH = IERC20(Chains.weth());
+
+        router = new BoneDryRouter(address(aqua), address(WETH), address(this), "BoneDryRouter", "1");
+        vm.label(address(aqua), "Aqua");
+        vm.label(address(router), "BoneDryRouter");
+        vm.label(address(USDC), "USDC");
+        vm.label(address(WETH), "WETH");
     }
 
+    /// @notice Case 8: Router bytecode size is under the EIP-170 limit (24,576 bytes)
     function testBytecodeSize() public {
         uint256 size = address(router).code.length;
         emit log_named_uint("BoneDryRouter bytecode size (bytes)", size);
         assertLt(size, 24576, "Router exceeds EIP-170 limit");
     }
+
+    /// @dev Helper to construct and ship an encumbrance-aware XYCSwap strategy
+    function _createAndShipStrategy(
+        address maker,
+        uint64 salt,
+        bytes32[] memory siblingHashes,
+        uint16 maxUtilBps,
+        uint16 widenBps,
+        uint256 usdcLiquidity,
+        uint256 wethLiquidity
+    ) internal returns (ISwapVM.Order memory order, bytes32 orderHash) {
+        bytes memory encArgs = EncumbranceArgsBuilder.build(siblingHashes, maxUtilBps, widenBps);
+        bytes memory program = abi.encodePacked(
+            hex"1408", uint64(salt), // Controls._salt
+            hex"1100",               // XYCSwap._xycSwapXD
+            uint8(35), uint8(encArgs.length), encArgs // BoneDry._encumberedCap
+        );
+
+        order = MakerTraitsLib.build(MakerTraitsLib.Args({
+            maker: maker,
+            receiver: address(0),
+            shouldUnwrapWeth: false,
+            useAquaInsteadOfSignature: true,
+            allowZeroAmountIn: false,
+            hasPreTransferInHook: false,
+            hasPostTransferInHook: false,
+            hasPreTransferOutHook: false,
+            hasPostTransferOutHook: false,
+            preTransferInTarget: address(0),
+            preTransferInData: "",
+            postTransferInTarget: address(0),
+            postTransferInData: "",
+            preTransferOutTarget: address(0),
+            preTransferOutData: "",
+            postTransferOutTarget: address(0),
+            postTransferOutData: "",
+            program: program
+        }));
+
+        bytes memory strategy = abi.encode(order);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(USDC);
+        tokens[1] = address(WETH);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = usdcLiquidity;
+        amounts[1] = wethLiquidity;
+
+        vm.prank(maker);
+        orderHash = aqua.ship(address(router), strategy, tokens, amounts);
+    }
+
+    /// @dev Helper to ship a sibling strategy for a maker
+    function _shipSibling(
+        address maker,
+        uint64 salt,
+        uint256 usdcLiquidity,
+        uint256 wethLiquidity
+    ) internal returns (bytes32 siblingHash) {
+        bytes memory program = abi.encodePacked(
+            hex"1408", uint64(salt), // Controls._salt
+            hex"1100"                // XYCSwap._xycSwapXD
+        );
+
+        ISwapVM.Order memory order = MakerTraitsLib.build(MakerTraitsLib.Args({
+            maker: maker,
+            receiver: address(0),
+            shouldUnwrapWeth: false,
+            useAquaInsteadOfSignature: true,
+            allowZeroAmountIn: false,
+            hasPreTransferInHook: false,
+            hasPostTransferInHook: false,
+            hasPreTransferOutHook: false,
+            hasPostTransferOutHook: false,
+            preTransferInTarget: address(0),
+            preTransferInData: "",
+            postTransferInTarget: address(0),
+            postTransferInData: "",
+            preTransferOutTarget: address(0),
+            preTransferOutData: "",
+            postTransferOutTarget: address(0),
+            postTransferOutData: "",
+            program: program
+        }));
+
+        bytes memory strategy = abi.encode(order);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(USDC);
+        tokens[1] = address(WETH);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = usdcLiquidity;
+        amounts[1] = wethLiquidity;
+
+        vm.prank(maker);
+        siblingHash = aqua.ship(address(router), strategy, tokens, amounts);
+    }
+
+    /// @notice Case 1: No siblings, full backing -> quote unchanged
+    function test_Case1_noSiblings_fullBacking() public {
+        address maker = makeAddr("case1Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        bytes32[] memory siblings = new bytes32[](0);
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            1,
+            siblings,
+            10_000, // maxUtilBps = 100%
+            2_000,  // widenBps = 20%
+            10_000e6, // 10,000 USDC
+            10e18     // 10 WETH
+        );
+
+        uint256 amountIn = 1_000e6; // 1,000 USDC
+        // Standard XYC formula: (1000e6 * 10e18) / (10000e6 + 1000e6) = 10e24 / 11e6 = 909090909090909090
+        uint256 expectedOut = (amountIn * 10e18) / (10_000e6 + amountIn);
+
+        (, uint256 amountOut,) = router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        emit log_named_uint("Case 1 Quote amountOut", amountOut);
+        emit log_named_uint("Case 1 Expected XYC", expectedOut);
+        assertEq(amountOut, expectedOut, "Quote should be completely unhaircut with zero encumbrance");
+    }
+
+    /// @notice Case 2: One sibling at 50% backing -> quote haircut by roughly widenBps/2
+    function test_Case2_oneSibling_haircut() public {
+        address maker = makeAddr("case2Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 5 WETH (50% of 10 WETH backing)
+        bytes32 sibHash = _shipSibling(maker, 101, 10_000e6, 5e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 10_000; // 100%
+        uint16 widenBps = 2_000;   // 20%
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            2,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+        uint256 rawOut = (amountIn * 10e18) / (10_000e6 + amountIn);
+
+        // util = 5e18 * 1e4 / 10e18 = 5000 (50%)
+        // haircut = rawOut * 2000 * 5000 / 1e8 = rawOut * 10_000_000 / 100_000_000 = rawOut * 10% (widenBps / 2)
+        uint256 expectedHaircut = (rawOut * uint256(widenBps) * 5000) / 1e8;
+        uint256 expectedOut = rawOut - expectedHaircut;
+
+        (, uint256 amountOut,) = router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        emit log_named_uint("Raw XYC amountOut", rawOut);
+        emit log_named_uint("Expected haircut (10% of quote)", expectedHaircut);
+        emit log_named_uint("Haircut amountOut", amountOut);
+
+        assertEq(amountOut, expectedOut, "Quote haircut should exactly match widenBps * util / 1e8");
+        assertLt(amountOut, rawOut, "Encumbered quote must be less than raw quote");
+    }
+
+    /// @notice Case 3: Siblings above maxUtilBps -> reverts EncumbranceExceeded
+    function test_Case3_exceedsMaxUtil_reverts() public {
+        address maker = makeAddr("case3Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 8 WETH (80% of backing)
+        bytes32 sibHash = _shipSibling(maker, 201, 10_000e6, 8e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 7_500; // 75% cap
+        uint16 widenBps = 2_000;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            3,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        // util is 8000, which exceeds maxUtilBps (7500)
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, 8000, 7500));
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            1_000e6,
+            takerTraitsAndData
+        );
+    }
+
+    /// @notice Case 4: Sibling docked between ship and fill -> encumbrance drops, quote widens back (proves 0xff skip)
+    function test_Case4_siblingDocked_restoresQuote() public {
+        address maker = makeAddr("case4Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 8 WETH (80% of backing)
+        bytes32 sibHash = _shipSibling(maker, 301, 10_000e6, 8e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 7_500; // 75% cap
+        uint16 widenBps = 2_000;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            4,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+
+        // While sibling is active, quote reverts with EncumbranceExceeded
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, 8000, 7500));
+        router.quote(order, address(USDC), address(WETH), amountIn, takerTraitsAndData);
+
+        // Maker docks the sibling strategy
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(USDC);
+        tokens[1] = address(WETH);
+        vm.prank(maker);
+        aqua.dock(address(router), sibHash, tokens);
+
+        // After docking, sibling has tokensCount == 0xff, so instruction skips it!
+        // Encumbrance drops to 0, quote succeeds at full amount
+        uint256 expectedOut = (amountIn * 10e18) / (10_000e6 + amountIn);
+        (, uint256 amountOut,) = router.quote(order, address(USDC), address(WETH), amountIn, takerTraitsAndData);
+
+        emit log_named_uint("Post-dock restored quote amountOut", amountOut);
+        assertEq(amountOut, expectedOut, "Quote should fully restore after sibling strategy is docked");
+    }
+
+    /// @notice Case 5: Maker revokes ERC-20 allowance -> backing == 0, reverts
+    function test_Case5_allowanceRevoked_reverts() public {
+        address maker = makeAddr("case5Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        bytes32[] memory siblings = new bytes32[](0);
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            5,
+            siblings,
+            10_000,
+            2_000,
+            10_000e6,
+            10e18
+        );
+
+        // Maker revokes allowance
+        vm.prank(maker);
+        WETH.approve(address(aqua), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceZeroBacking.selector));
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            1_000e6,
+            takerTraitsAndData
+        );
+    }
+
+    /// @notice Case 6: amountOut > free after haircut -> reverts EncumbranceInsufficient
+    function test_Case6_insufficientFree_reverts() public {
+        address maker = makeAddr("case6Maker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 9.5 WETH. Backing = 10 WETH -> free = 0.5 WETH
+        bytes32 sibHash = _shipSibling(maker, 501, 10_000e6, 9.5e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 10_000; // 100% (so util check passes)
+        uint16 widenBps = 1_000;    // 10% haircut
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            6,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+        uint256 rawOut = (amountIn * 10e18) / (10_000e6 + amountIn); // ~0.909e18
+        uint256 haircut = (rawOut * uint256(widenBps) * 9500) / 1e8; // ~0.086e18
+        uint256 haircutOut = rawOut - haircut; // ~0.823e18
+        uint256 free = 10e18 - 9.5e18; // 0.5e18
+
+        emit log_named_uint("Post-haircut amountOut", haircutOut);
+        emit log_named_uint("Free unencumbered backing", free);
+        assertTrue(haircutOut > free, "haircutOut should exceed free backing");
+
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceInsufficient.selector, haircutOut, free));
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+    }
+
+    /// @notice Case 7: Quote/swap divergence -> quote succeeds, sibling filled, swap then reverts
+    function test_Case7_quoteSwapDivergence() public {
+        address maker = makeAddr("case7Maker");
+        address taker = makeAddr("case7Taker");
+
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 4 WETH (40% util)
+        bytes32 sibHash = _shipSibling(maker, 601, 10_000e6, 4e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 5_000; // 50% max utilization
+        uint16 widenBps = 2_000;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            7,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+
+        // --- STEP 1: Quote at evaluation time ---
+        // Util is 4e18 / 10e18 = 40% < 50% maxUtil. Quote succeeds!
+        (, uint256 quotedOut,) = router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+        emit log_named_uint("Quote succeeded! Quoted amountOut", quotedOut);
+        assertGt(quotedOut, 0, "Initial quote must succeed");
+
+        // --- STEP 2: Real-world event between quote and swap ---
+        // Maker moves funds out of wallet, reducing balance from 10 WETH to 7 WETH
+        // (Simulating a maker withdrawal or fill across sibling venues)
+        vm.prank(maker);
+        WETH.transfer(address(0xDEAD), 3e18);
+        assertEq(WETH.balanceOf(maker), 7e18, "Maker balance reduced to 7 WETH");
+
+        // New utilization: 4e18 * 1e4 / 7e18 = 5,714 bps (57.14%)
+        // 5,714 >= 5,000 (maxUtilBps)
+        uint256 expectedNewUtil = (uint256(4e18) * 1e4) / uint256(7e18);
+        emit log_named_uint("New utilization bps after maker moved funds", expectedNewUtil);
+        assertTrue(expectedNewUtil >= maxUtilBps, "Utilization pushed past maxUtilBps");
+
+        // --- STEP 3: Swap execution at fill time ---
+        // Taker attempts to execute the swap on-chain
+        deal(address(USDC), taker, amountIn);
+        vm.prank(taker);
+        USDC.approve(address(router), amountIn);
+
+        // VM refuses the swap on-chain because collateral obligation was breached
+        vm.prank(taker);
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, expectedNewUtil, maxUtilBps));
+        router.swap(
+            order,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        emit log_string("Swap reverted with EncumbranceExceeded: protected taker from toxic fill!");
+    }
+
+    /// @notice Bonus: Self-referential sibling hash is provably harmless (skipped, not double counted)
+    function test_Bonus_selfReferentialSiblingIsHarmless() public {
+        address maker = makeAddr("bonusMaker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // First predict order and orderHash
+        bytes32[] memory emptySiblings = new bytes32[](0);
+        bytes memory encArgs = EncumbranceArgsBuilder.build(emptySiblings, 10_000, 2_000);
+        bytes memory programWithoutSiblings = abi.encodePacked(
+            hex"1408", uint64(999),
+            hex"1100",
+            uint8(35), uint8(encArgs.length), encArgs
+        );
+        ISwapVM.Order memory protoOrder = MakerTraitsLib.build(MakerTraitsLib.Args({
+            maker: maker,
+            receiver: address(0),
+            shouldUnwrapWeth: false,
+            useAquaInsteadOfSignature: true,
+            allowZeroAmountIn: false,
+            hasPreTransferInHook: false,
+            hasPostTransferInHook: false,
+            hasPreTransferOutHook: false,
+            hasPostTransferOutHook: false,
+            preTransferInTarget: address(0),
+            preTransferInData: "",
+            postTransferInTarget: address(0),
+            postTransferInData: "",
+            preTransferOutTarget: address(0),
+            preTransferOutData: "",
+            postTransferOutTarget: address(0),
+            postTransferOutData: "",
+            program: programWithoutSiblings
+        }));
+        bytes32 ownHash = router.hash(protoOrder);
+
+        // Now build strategy with ownHash included in siblings!
+        bytes32[] memory selfSiblings = new bytes32[](1);
+        selfSiblings[0] = ownHash;
+
+        (ISwapVM.Order memory selfOrder,) = _createAndShipStrategy(
+            maker,
+            999,
+            selfSiblings,
+            10_000,
+            2_000,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+        uint256 expectedOut = (amountIn * 10e18) / (10_000e6 + amountIn);
+
+        (, uint256 amountOut,) = router.quote(
+            selfOrder,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        emit log_named_uint("Self-referential quote amountOut", amountOut);
+        assertEq(amountOut, expectedOut, "Self-referential hash must be skipped without inflating encumbrance");
+    }
 }
+
