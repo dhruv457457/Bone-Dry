@@ -461,7 +461,11 @@ export function Swap({
                     <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink2)", lineHeight: 1.5 }}>
                       <strong>Bone Dry book · {route.makersConsidered} {route.makersConsidered === 1 ? "strategy" : "strategies"}, all published by us.</strong>{" "}
                       This is where opcode 35 runs. It is a demonstration of the constraint, not a market.
-                      The 146-maker book beside it is real third-party Aqua liquidity, and cannot carry our instruction.
+                      {/* Derived, not hardcoded: "146" was the strategy count on 1inch's router
+                          the day this was written, and it was labelled makers. Both drift. */}
+                      {route.alternatives?.[0]?.makersConsidered
+                        ? ` The ${route.alternatives[0].makersConsidered}-wallet book beside it is real third-party Aqua liquidity, and cannot carry our instruction.`
+                        : " The book beside it is real third-party Aqua liquidity, and cannot carry our instruction."}
                     </p>
                   ) : null}
                   {/* Alternatives — the losing book is visible rather than erased */}
