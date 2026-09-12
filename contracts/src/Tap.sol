@@ -51,7 +51,13 @@ contract Tap is IHooks {
     error HookNotImplemented();
 
     event Filled(address indexed maker, uint256 amountIn, uint256 amountOut);
-    event MakerSkipped(address indexed maker, uint256 wanted);
+    event MakerSkipped(
+        address indexed maker,
+        bytes32 indexed strategyHash,
+        address indexed token,
+        uint256 wanted,
+        bytes4  reason            // revert selector, or 0x0 if the revert data was empty
+    );
 
     /// @param strategies  each is abi.encode(ISwapVM.Order) as shipped to Aqua
     /// @param takerTraits packed TakerTraits blob, shared across the fills
@@ -230,12 +236,13 @@ contract Tap is IHooks {
             uint256, uint256 out, bytes32
         ) {
             expected = out;
-        } catch {
-            emit MakerSkipped(orders[i].maker, slice);
+        } catch (bytes memory reasonData) {
+            bytes4 reason = reasonData.length >= 4 ? bytes4(reasonData) : bytes4(0);
+            emit MakerSkipped(orders[i].maker, keccak256(d.strategies[i]), c.tokenOut, slice, reason);
             return;
         }
         if (expected == 0 || expected > depth[i]) {
-            emit MakerSkipped(orders[i].maker, slice);
+            emit MakerSkipped(orders[i].maker, keccak256(d.strategies[i]), c.tokenOut, slice, bytes4(0));
             return;
         }
 
@@ -257,9 +264,10 @@ contract Tap is IHooks {
             c.unplaced += slice - usedIn;
             c.totalOut += out;
             emit Filled(orders[i].maker, usedIn, out);
-        } catch {
+        } catch (bytes memory reasonData) {
+            bytes4 reason = reasonData.length >= 4 ? bytes4(reasonData) : bytes4(0);
             c.unplaced += slice; // taken but not spent; handed back below
-            emit MakerSkipped(orders[i].maker, slice);
+            emit MakerSkipped(orders[i].maker, keccak256(d.strategies[i]), c.tokenOut, slice, reason);
         }
     }
 
