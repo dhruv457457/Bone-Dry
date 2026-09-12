@@ -7,6 +7,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import type { NetworkId } from "@/lib/networks";
 import { TokenIcon } from "./TokenIcon";
+import { CopyButton } from "./CopyButton";
 import type {
   ExposurePosition,
   ExposureResponse,
@@ -47,7 +48,10 @@ export function ExposureTable({
                   <span className={s.tokenCell}>
                     <TokenIcon chainId={chainId} address={p.token} symbol={p.symbol} size={20} />
                     <span className="num">{p.symbol}</span>
-                    <span className={`num ${s.dim}`}>{short(p.token)}</span>
+                    <span className={`num ${s.dim}`} style={{ display: "inline-flex", alignItems: "center" }}>
+                      <span>{short(p.token)}</span>
+                      <CopyButton value={p.token} title="Copy token address" />
+                    </span>
                   </span>
                 </td>
                 <td className={`num ${s.dim}`}>{compact(p.claimed, dec)}</td>
@@ -136,13 +140,24 @@ function PortfolioHistory({ chainId, address }: { chainId: NetworkId; address: A
                 <tr key={r.txHash}>
                   <td className={`num ${s.dim}`}>{fmtTime(r.timestamp)}</td>
                   <td className="num">
-                    {r.amountIn} <span className="hex">{short(r.tokenIn)}</span>
+                    {r.amountIn}{" "}
+                    <span className="hex" style={{ display: "inline-flex", alignItems: "center" }}>
+                      <span>{short(r.tokenIn)}</span>
+                      <CopyButton value={r.tokenIn} title="Copy token address" />
+                    </span>
                   </td>
                   <td className="num">
-                    {r.amountOut} <span className="hex">{short(r.tokenOut)}</span>
+                    {r.amountOut}{" "}
+                    <span className="hex" style={{ display: "inline-flex", alignItems: "center" }}>
+                      <span>{short(r.tokenOut)}</span>
+                      <CopyButton value={r.tokenOut} title="Copy token address" />
+                    </span>
                   </td>
                   <td>
-                    <span className="hex num">{short(r.txHash)}</span>
+                    <span className="hex num" style={{ display: "inline-flex", alignItems: "center" }}>
+                      <span>{short(r.txHash)}</span>
+                      <CopyButton value={r.txHash} title="Copy tx hash" />
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -172,7 +187,12 @@ function PortfolioHistory({ chainId, address }: { chainId: NetworkId; address: A
             <tbody>
               {data.strategies.rows.map((r) => (
                 <tr key={r.strategyHash}>
-                  <td className="hex num">{short(r.strategyHash)}</td>
+                  <td className="hex num">
+                    <span style={{ display: "inline-flex", alignItems: "center" }}>
+                      <span>{short(r.strategyHash)}</span>
+                      <CopyButton value={r.strategyHash} title="Copy strategy hash" />
+                    </span>
+                  </td>
                   <td className={`num ${s.dim}`}>{fmtTime(r.shippedAt)}</td>
                   <td>
                     <span className={`${s.badge} ${r.active ? s.badgeOk : s.badgeLoss}`}>

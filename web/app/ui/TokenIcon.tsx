@@ -27,6 +27,10 @@ export function TokenIcon({
   const url = iconUrl(chainId, address);
   const imgRef = useRef<HTMLImageElement>(null);
 
+  useEffect(() => {
+    setFailed(false);
+  }, [url]);
+
   // A repeat 404 (any Sepolia token, most of the time -- Trust Wallet only
   // lists mainnet addresses) is served from the browser's HTTP cache, which
   // can resolve as failed before React finishes hydrating and wires up
@@ -42,6 +46,7 @@ export function TokenIcon({
   }, [url]);
 
   if (!url || failed) {
+    const letter = (symbol || "?").slice(0, 1).toUpperCase();
     return (
       <span
         aria-hidden
@@ -52,14 +57,16 @@ export function TokenIcon({
           width: size,
           height: size,
           borderRadius: "50%",
-          background: "var(--ink)",
-          color: "var(--paper)",
-          fontSize: size * 0.42,
+          background: "var(--ink, #1b1b1a)",
+          color: "var(--paper, #fbfaf6)",
+          fontSize: Math.max(9, size * 0.45),
+          fontWeight: 600,
           fontFamily: "var(--mono)",
           flexShrink: 0,
+          boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.15)",
         }}
       >
-        {symbol.slice(0, 1).toUpperCase()}
+        {letter}
       </span>
     );
   }

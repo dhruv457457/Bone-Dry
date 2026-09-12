@@ -2,12 +2,17 @@
   max-width: 1180px;
   margin: 0 auto;
   padding: 0 24px 96px;
+}
 
+.shell,
+.modalBackdrop,
+.modalCard {
   /* ── Phase A Design Tokens: Depth, Hierarchy, State Cues ── */
   --card-bg: #ffffff;
   --card-bg-subtle: #faf8f2;
   --card-border: #e2ddd0;
   --card-border-subtle: #eae6db;
+  --card-border-hover: #b8b09f;
   --card-border-focus: var(--ink);
 
   --radius-xs: 4px;
@@ -20,6 +25,7 @@
   --shadow-sm: 0 2px 8px -2px rgba(27, 27, 26, 0.06), 0 1px 3px rgba(27, 27, 26, 0.03);
   --shadow-md: 0 6px 20px -4px rgba(27, 27, 26, 0.07), 0 2px 6px -1px rgba(27, 27, 26, 0.03);
   --shadow-lg: 0 12px 32px -6px rgba(27, 27, 26, 0.10), 0 4px 12px -2px rgba(27, 27, 26, 0.04);
+  --shadow-xl: 0 20px 48px -10px rgba(27, 27, 26, 0.18), 0 8px 20px -4px rgba(27, 27, 26, 0.08);
   --shadow-elevated: 0 16px 40px -8px rgba(27, 27, 26, 0.14), 0 4px 12px -2px rgba(27, 27, 26, 0.05);
 
   --emerald: #1b663e;
@@ -1282,10 +1288,10 @@
 .modalBackdrop {
   position: fixed;
   inset: 0;
-  background: rgba(26, 24, 22, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: 999;
+  background: rgba(26, 24, 22, 0.60);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1301,13 +1307,16 @@
   width: 100%;
   max-width: 440px;
   max-height: 88vh;
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
+  background: #ffffff;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--card-border, #e2ddd0);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-xl, 0 20px 48px -10px rgba(27, 27, 26, 0.18));
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  z-index: 10000;
   animation: modalScaleUp 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes modalScaleUp {

@@ -4,6 +4,7 @@ import { useSolvencyRoute } from "@/hooks/useSolvencyRoute";
 import type { RouteResponse } from "./types";
 import type { Network } from "@/lib/networks";
 import s from "./desk.module.css";
+import { CopyButton } from "./CopyButton";
 
 function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -118,15 +119,18 @@ export function RouteInspector({
                   }}
                 >
                   <td>
-                    <a
-                      href={explorerUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="num"
-                      style={{ textDecoration: "underline", color: "inherit" }}
-                    >
-                      {short(slice.maker)}
-                    </a>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="num"
+                        style={{ textDecoration: "underline", color: "inherit" }}
+                      >
+                        {short(slice.maker)}
+                      </a>
+                      <CopyButton value={slice.maker} title="Copy maker address" />
+                    </div>
                   </td>
                   <td>
                     {isSolvent && (

@@ -255,7 +255,24 @@ const MAKER_POSITIONS_QUERY = `
  * wrong answer a solvency checker cannot give. Querying the Maker entity by
  * id sidesteps the ranking entirely.
  */
-export async function positionsForMaker(n: Network, maker: Address): Promise<Position[] | null> {
+export type MakerStrategy = { strategyHash: Hex; app: Address; tokens: Address[] };
+
+/**
+ * One round trip, two views of the same maker.
+ *
+ * The subgraph's `maker.strategies` already carries each active strategy's own
+ * decoded token list (`tokens` — the exact two addresses it was shipped with,
+ * per Aqua's `ship()` argument, same fact `liquidPairsFromGraph` relies on
+ * elsewhere) in the very query `positionsForMaker` was throwing away after
+ * using it only to fill in `strategyHashes`/`app` on the per-token view. A
+ * second GQL round trip to ask for what the first response already contained
+ * would be the wrong fix; this keeps the raw list and lets callers who want
+ * per-strategy detail — not just per-token totals — use it directly.
+ */
+export async function makerBook(
+  n: Network,
+  maker: Address
+): Promise<{ positions: Position[]; strategies: MakerStrategy[] } | null> {
   if (!(await indexFresh(n))) return null;
 
   const data = await gql<{
@@ -265,11 +282,17 @@ export async function positionsForMaker(n: Network, maker: Address): Promise<Pos
     } | null;
   }>(n, MAKER_POSITIONS_QUERY, { id: maker.toLowerCase() });
   if (!data) return null;
-  if (!data.maker) return [];
+  if (!data.maker) return { positions: [], strategies: [] };
 
-  const strategies = data.maker.strategies ?? [];
-  return data.maker.positions.map((p) => {
-    const forToken = strategies.filter((s) =>
+  const rawStrategies = data.maker.strategies ?? [];
+  const strategies: MakerStrategy[] = rawStrategies.map((s) => ({
+    strategyHash: s.strategyHash,
+    app: s.app,
+    tokens: s.tokens.map((t) => t.toLowerCase() as Address),
+  }));
+
+  const positions = data.maker.positions.map((p) => {
+    const forToken = rawStrategies.filter((s) =>
       s.tokens.map((t) => t.toLowerCase()).includes(p.token.toLowerCase())
     );
     return {
@@ -281,6 +304,14 @@ export async function positionsForMaker(n: Network, maker: Address): Promise<Pos
       app: forToken.length > 0 ? forToken[0].app : null,
     };
   });
+
+  return { positions, strategies };
+}
+
+/** Kept for the callers that only ever wanted the per-token view. */
+export async function positionsForMaker(n: Network, maker: Address): Promise<Position[] | null> {
+  const book = await makerBook(n, maker);
+  return book ? book.positions : null;
 }
 
 const APPS_QUERY = `

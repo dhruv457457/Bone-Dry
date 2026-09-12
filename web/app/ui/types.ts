@@ -118,11 +118,31 @@ export type ExposurePosition = {
   covered: boolean;
 };
 
+/** One side of a strategy's claim — a strategy is usually shipped with two of
+ *  these, one per token in the pair it prices. */
+export type ExposureStrategySide = {
+  token: `0x${string}`;
+  symbol: string;
+  decimals: number;
+  claimed: string;
+  backed: string;
+  covered: boolean;
+};
+
+/** One active strategy, its own claim per side — not the per-token total
+ *  above, which sums every strategy sharing that token together. */
+export type ExposureStrategy = {
+  strategyHash: `0x${string}`;
+  app: `0x${string}`;
+  sides: ExposureStrategySide[];
+};
+
 export type ExposureResponse = {
   available: boolean;
   reason?: string;
   maker: `0x${string}`;
   positions: ExposurePosition[];
+  strategies: ExposureStrategy[];
   fullyCoveredCount: number;
   totalPositions: number;
   sources?: ExposureSources;
