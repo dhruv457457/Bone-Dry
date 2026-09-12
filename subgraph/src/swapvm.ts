@@ -92,7 +92,7 @@ export function handleEncumbranceApplied(e: EncumbranceApplied): void {
     pos.updatedAt = e.block.timestamp;
   }
   pos.backing = e.params.backing;
-  pos.lastUpdatedAt = e.block.timestamp;
+  pos.backingObservedAt = e.block.timestamp;
   if (e.params.backing.gt(ZERO)) {
     let util = pos.totalCommitted.times(BigInt.fromI32(10000)).div(e.params.backing);
     pos.utilBps = util.toI32();

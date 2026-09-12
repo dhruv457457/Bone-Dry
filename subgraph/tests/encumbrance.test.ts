@@ -13,6 +13,7 @@ import { EncumbranceApplied } from "../generated/SwapVM/SwapVM";
 import { handleShipped, handlePushed } from "../src/aqua";
 import { handleMakerSkipped } from "../src/tap";
 import { handleEncumbranceApplied } from "../src/swapvm";
+import { MakerTokenPosition } from "../generated/schema";
 
 const MAKER = "0x1111111111111111111111111111111111111111";
 const APP = "0x2222222222222222222222222222222222222222";
@@ -136,6 +137,7 @@ function mockEncumbranceApplied(
   e.parameters.push(
     new ethereum.EventParam("adjustedTo", ethereum.Value.fromUnsignedBigInt(adjTo))
   );
+  e.block.timestamp = BigInt.fromI32(1700000000);
   return e;
 }
 
@@ -192,13 +194,30 @@ describe("Phase 6c Encumbrance & Events", () => {
     assert.fieldEquals("MakerRefusal", refusalId, "reasonName", "QuoteUnusable");
   });
 
+  test("freshly-shipped strategy leaves backing, utilBps, and backingObservedAt null", () => {
+    handleShipped(mockShippedEncumbered());
+    handlePushed(mockPushed(BigInt.fromString("3000000000000000000")));
+
+    assert.fieldEquals("MakerTokenPosition", pid(), "totalCommitted", "3000000000000000000");
+    assert.fieldEquals("MakerTokenPosition", pid(), "activeStrategies", "1");
+
+    let pos = MakerTokenPosition.load(pid())!;
+    assert.assertTrue(pos.get("backing") == null);
+    assert.assertTrue(pos.get("utilBps") == null);
+    assert.assertTrue(pos.get("backingObservedAt") == null);
+  });
+
   test("EncumbranceApplied creates EncumbranceApplication and refreshes MakerTokenPosition", () => {
     // 1. Initial ship and push
     handleShipped(mockShippedEncumbered());
     handlePushed(mockPushed(BigInt.fromString("3000000000000000000"))); // 3 WETH committed
 
-    // Verify initial position
+    // Verify initial position has null backing metrics
     assert.fieldEquals("MakerTokenPosition", pid(), "totalCommitted", "3000000000000000000");
+    let posBefore = MakerTokenPosition.load(pid())!;
+    assert.assertTrue(posBefore.get("backing") == null);
+    assert.assertTrue(posBefore.get("utilBps") == null);
+    assert.assertTrue(posBefore.get("backingObservedAt") == null);
 
     // 2. EncumbranceApplied: 10 WETH backing, 80% util, exactIn, logIndex 5
     let e = mockEncumbranceApplied(
@@ -220,8 +239,9 @@ describe("Phase 6c Encumbrance & Events", () => {
     assert.fieldEquals("EncumbranceApplication", appId, "backing", "10000000000000000000");
     assert.fieldEquals("EncumbranceApplication", appId, "encumbered", "8000000000000000000");
 
-    // Verify MakerTokenPosition refreshed: backing = 10 WETH, utilBps = (3 WETH / 10 WETH) * 10000 = 3000 bps
+    // Verify MakerTokenPosition refreshed: backing = 10 WETH, utilBps = (3 WETH / 10 WETH) * 10000 = 3000 bps, backingObservedAt = 1700000000
     assert.fieldEquals("MakerTokenPosition", pid(), "backing", "10000000000000000000");
     assert.fieldEquals("MakerTokenPosition", pid(), "utilBps", "3000");
+    assert.fieldEquals("MakerTokenPosition", pid(), "backingObservedAt", "1700000000");
   });
 });

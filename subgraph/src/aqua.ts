@@ -54,9 +54,6 @@ function position(m: Address, token: Address, ts: BigInt): MakerTokenPosition {
     p.token = token;
     p.totalCommitted = ZERO;
     p.activeStrategies = ZERO;
-    p.backing = ZERO;
-    p.utilBps = 0;
-    p.lastUpdatedAt = ts;
   }
   p.updatedAt = ts;
   return p as MakerTokenPosition;

@@ -83,9 +83,9 @@ type MakerTokenPosition @entity(immutable: false) {
   token: Bytes!
   totalCommitted: BigInt!
   activeStrategies: BigInt!
-  backing: BigInt!
-  utilBps: Int!
-  lastUpdatedAt: BigInt!
+  backing: BigInt
+  utilBps: Int
+  backingObservedAt: BigInt
   updatedAt: BigInt!
 }
 
