@@ -98,24 +98,33 @@ export async function GET(req: Request) {
     // how the second one went unnoticed in the first place.
     const fillableBooks = attempts.filter((a) => a.book.hook !== "");
 
-    // Largest amountOut wins. Ties and all-zero fall to the first book, which is
-    // the evidence book, so behaviour is unchanged whenever the second is empty.
+    // Ranked by the RATE a taker actually gets, not by raw output.
     //
-    // KNOWN WEAKNESS, deliberately left visible rather than papered over: this is
-    // the standard exact-in definition of best execution, and it does not account
-    // for a book that fills only part of the input. Measured on Base right now,
-    // the Bone Dry book absorbs the whole 0.1 USDC at 17% of the oracle rate,
-    // while the evidence book fills 97 units at 110% of it and leaves the rest
-    // unsold. Maximising amountOut picks the first, which is right for a taker who
-    // wants the input sold and wrong for one who would rather keep it.
+    // Maximising amountOut is the textbook exact-in rule and it is wrong here,
+    // because the books absorb different amounts of the input. Measured on Base:
+    // the Bone Dry book swallowed the whole 0.1 USDC at 17% of the oracle rate
+    // (three small XYC positions, far past their reserves) while the evidence
+    // book filled 97 units at 110% and left the rest unsold. Raw amountOut picks
+    // the first, routing the taker into a six-times-worse price for the privilege
+    // of having more of their input consumed.
     //
-    // The response carries amountFilled and every alternative's amountOut, so the
-    // surface can show the rate and let the taker choose. It must: routing someone
-    // into a six-times-worse price without showing them the comparison is the kind
-    // of silent decision this project exists to argue against.
+    // Rate is amountOut/amountFilled, compared by cross-multiplication so there
+    // is no division and no float. A book that filled nothing has no rate and
+    // ranks last. Ties fall to the larger fill, then to the first book — the
+    // evidence book — so behaviour is unchanged whenever the second is empty.
+    const betterRate = (a: typeof attempts[number], b: typeof attempts[number]) => {
+      const af = a.plan.takeIn, bf = b.plan.takeIn;
+      if (af === 0n) return false;
+      if (bf === 0n) return true;
+      const lhs = a.plan.amountOut * bf;
+      const rhs = b.plan.amountOut * af;
+      if (lhs !== rhs) return lhs > rhs;
+      return af > bf;
+    };
+
     const best =
       fillableBooks.reduce<typeof attempts[number] | null>(
-        (acc, a) => (acc === null || a.plan.amountOut > acc.plan.amountOut ? a : acc),
+        (acc, a) => (acc === null || betterRate(a, acc) ? a : acc),
         null
       ) ?? attempts[0];
 
@@ -127,6 +136,7 @@ export async function GET(req: Request) {
         bookLabel: a.book.label,
         encumbranceAware: a.book.encumbranceAware,
         amountOut: a.plan.amountOut,
+        amountFilled: a.plan.takeIn,
         makersUsed: a.plan.slices.length,
         makersConsidered: a.depths.length,
         fillable: a.book.hook !== "",
