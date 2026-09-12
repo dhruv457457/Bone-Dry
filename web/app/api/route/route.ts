@@ -35,8 +35,24 @@ export async function GET(req: Request) {
     let depths: MakerDepth[];
     let source: string;
     if (indexed !== null) {
-      depths = indexed;
-      source = "indexed-db";
+      // The index is a candidate list, not a quote.
+      //
+      // Tap.sol:119 re-reads every candidate's depth live through
+      // Lens.quotableDepth, and then either fills a maker whole or skips them —
+      // a quote landing above `depth[i]` is a skip, never a clamp. So a plan
+      // sized against indexed depth that has since fallen does not fill small;
+      // every maker is skipped, `totalOut` reaches zero, and Tap.sol:176 throws
+      // NoSolventMaker(). The taker pays gas to be refused by our own hook,
+      // which is the single outcome this project promises never to produce.
+      //
+      // Measured on Base: one routed maker was indexed at 3,927,565,582,548 and
+      // held 2,423,165,503,335 live — 38% less. The transaction reverted.
+      //
+      // Planning below replays Tap's algorithm exactly; this makes it replay on
+      // Tap's inputs too. One multicall, and it is the difference between a
+      // quote and a guess.
+      depths = await measureDepth(n, indexed, tokenOut);
+      source = "indexed-db + live depth recheck";
     } else {
       // The index for history, a short chain scan for the tail it has not reached.
       const fromGraph = await strategiesFromGraph(n, n.router);
