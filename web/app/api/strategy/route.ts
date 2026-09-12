@@ -1,9 +1,12 @@
-import { encodeFunctionData, isAddress, getAddress } from "viem";
-import { AquaProgramBuilder, Order, MakerTraits, instructions } from "@1inch/swap-vm-sdk";
+import { encodeFunctionData, isAddress, getAddress, concatHex, isHex, size, type Hex } from "viem";
+import { AquaProgramBuilder, Order, MakerTraits, instructions, SwapVmProgram } from "@1inch/swap-vm-sdk";
 import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
-import { networkFrom } from "@/lib/networks";
+import { networkFrom, clientFor, BEACON_STRATEGY_ADDRESS } from "@/lib/networks";
 import { addressParam, amountParam, uintParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail } from "@/lib/json";
+import { aquaAbi } from "@/lib/chain";
+import { makerBook } from "@/lib/graph";
+import { buildEncumbranceInstruction, MAX_INSTRUCTION_SIBLINGS } from "@/lib/encumbrance";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +30,7 @@ const { extruction } = instructions;
 // SwapRegisters mismatch against the real router's ABI (an extra
 // amountNetPulled field the original interface copy was missing) and could
 // never actually be called by the router. See IExtruction.sol's comment for
-// the full story. This is the corrected, verified-reachable deployment.
-const BEACON_STRATEGY_ADDRESS = "0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7"; // Base Sepolia only
+// the full story. This is the corrected, verified-reachable deployment (exported from lib/networks).
 
 
 /**
@@ -91,6 +93,81 @@ export async function POST(req: Request) {
       }
     }
 
+    // Encumbrance constraint (OP_ENCUMBERED_CAP, opcode 35).
+    // If maxUtilBps is provided, maker is publishing an encumbered strategy.
+    const maxUtilBps =
+      body.maxUtilBps != null ? uintParam(String(body.maxUtilBps), 10000, 16, "maxUtilBps") : undefined;
+    if (maxUtilBps !== undefined && maxUtilBps > 10000) {
+      throw new BadInput("maxUtilBps must not exceed 10000 (100%)");
+    }
+    const widenBps =
+      body.widenBps != null ? uintParam(String(body.widenBps), 0, 16, "widenBps") : 0;
+
+    if (maxUtilBps !== undefined && !n.boneDryRouter) {
+      throw new BadInput(`encumbered strategies are not supported on ${n.label} (no BoneDryRouter deployed)`);
+    }
+
+    // When maxUtilBps is present, ship to boneDryRouter and query rawBalances under it.
+    // Without encumbrance, ship to n.router unchanged.
+    const app = maxUtilBps !== undefined ? n.boneDryRouter! : n.router;
+
+    let declaredTotalEncumbrance = 0n;
+    let sampledSiblingHashes: Hex[] = [];
+    let allSiblingHashes: Hex[] = [];
+
+    if (maxUtilBps !== undefined) {
+      if (Array.isArray(body.siblingHashes)) {
+        for (let i = 0; i < body.siblingHashes.length; i++) {
+          const h = body.siblingHashes[i];
+          if (typeof h !== "string" || !isHex(h) || size(h) !== 32) {
+            throw new BadInput(`invalid sibling hash at index ${i}: ${h}`);
+          }
+          allSiblingHashes.push(h as Hex);
+        }
+      } else {
+        // Query makerBook from graph to discover active sibling strategies on tokenOut
+        const book = await makerBook(n, maker);
+        if (book === null) {
+          throw new BadInput(
+            !n.graphUrl
+              ? `no index available to discover siblings on ${n.label}; pass siblingHashes explicitly`
+              : `the ${n.label} index is unavailable or still catching up; pass siblingHashes explicitly`
+          );
+        }
+        const outLower = tokenOut.toLowerCase();
+        allSiblingHashes = book.strategies
+          .filter((st) => st.tokens.some((t) => t.toLowerCase() === outLower))
+          .map((st) => st.strategyHash);
+      }
+
+      // Sample only up to MAX_INSTRUCTION_SIBLINGS (6) into the on-chain wire args
+      sampledSiblingHashes = allSiblingHashes.slice(0, MAX_INSTRUCTION_SIBLINGS);
+
+      // Compute declaredTotalEncumbrance server-side from live claims on tokenOut
+      // across ALL siblings (via aqua.rawBalances under boneDryRouter).
+      // Under-declaring reverts EncumbranceUnderdeclared (Encumbrance.sol:191) at fill time;
+      // never trust a client-supplied total, and fail loudly if balances cannot be read.
+      if (allSiblingHashes.length > 0) {
+        const client = clientFor(n);
+        const calls = allSiblingHashes.map(
+          (sibHash) =>
+            ({
+              address: n.aqua,
+              abi: aquaAbi,
+              functionName: "rawBalances",
+              args: [maker, app, sibHash, tokenOut],
+            }) as const
+        );
+        const results = await client.multicall({ contracts: calls, allowFailure: false });
+        for (let i = 0; i < results.length; i++) {
+          const [bal, tokensCount] = results[i] as unknown as [bigint, number];
+          if (tokensCount !== 0xff) {
+            declaredTotalEncumbrance += bal;
+          }
+        }
+      }
+    }
+
     // Salt is a uint64. Random by default for xyc so two makers shipping in the same
     // block don't collide; for oracle, salt is only applied if explicitly requested.
     const salt =
@@ -105,7 +182,7 @@ export async function POST(req: Request) {
     let builder = new AquaProgramBuilder();
     if (salt !== 0) builder = builder.salt({ salt: BigInt(salt) });
 
-    let program;
+    let program: SwapVmProgram;
     if (pricing === "oracle") {
       program = builder
         .add(
@@ -119,6 +196,17 @@ export async function POST(req: Request) {
       program = builder.xycSwapXD().build();
     }
 
+    if (maxUtilBps !== undefined) {
+      const encInstruction = buildEncumbranceInstruction({
+        declaredTotalEncumbrance,
+        siblingHashes: sampledSiblingHashes,
+        maxUtilBps,
+        widenBps,
+      });
+      const fullProgramHex = concatHex([String(program) as Hex, encInstruction]);
+      program = new SwapVmProgram(fullProgramHex);
+    }
+
     const traits = MakerTraits.default().with({ useAquaInsteadOfSignature: true });
     const order = Order.new({ maker: new SdkAddress(maker), traits, program });
     const strategy = String(order.encode()) as `0x${string}`;
@@ -129,21 +217,29 @@ export async function POST(req: Request) {
     const data = encodeFunctionData({
       abi: AQUA_ABI,
       functionName: "ship",
-      args: [n.router, strategy, tokens, amounts],
+      args: [app, strategy, tokens, amounts],
     });
 
     return j({
       chainId: n.id,
       to: n.aqua,
+      app,
       data,
       maker,
-      router: n.router,
+      router: app,
       strategy,
       programHex: String(program),
       salt,
       feeBps: pricing === "oracle" ? 0 : feeBps,
       tokens,
       amounts,
+      ...(maxUtilBps !== undefined && {
+        maxUtilBps,
+        widenBps,
+        declaredTotalEncumbrance: declaredTotalEncumbrance.toString(),
+        siblingHashes: sampledSiblingHashes,
+        allSiblingCount: allSiblingHashes.length,
+      }),
       note: "Sign and send this as a transaction from the maker's own wallet. It only records a claim in Aqua — no funds move.",
     });
   } catch (e) {

@@ -36,6 +36,8 @@ export type Network = {
   rpcFallbacks: string[];
   aqua: Address;
   router: Address;
+  /** Opcode-35 encumbrance-aware router. Only deployed on Base and Base Sepolia. */
+  boneDryRouter?: Address;
   poolManager: Address;
   usdc: Address;
   weth: Address;
@@ -56,6 +58,8 @@ export type Network = {
 };
 
 const WETH_PREDEPLOY: Address = "0x4200000000000000000000000000000000000006";
+
+export const BEACON_STRATEGY_ADDRESS: Address = "0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7"; // Base Sepolia only
 
 export const NETWORKS: Record<NetworkId, Network> = {
   8453: {
@@ -80,6 +84,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     ],
     aqua: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
     router: "0x111111338c5091E8440b67B168bAe16a668AC0De",
+    boneDryRouter: "0x74195573Fa9bC965667e03319F2C58567d4B96BE",
     poolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     weth: WETH_PREDEPLOY,
@@ -118,6 +123,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     // renumbered the opcodes and will not run the SDK's own programs.
     aqua: "0x7a062f824FAbdf2360354Ad52B3752065150Da61",
     router: "0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7",
+    boneDryRouter: "0x75E8971831675A3eF0CAbc4fd441dA7aeB481146",
     poolManager: "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
     usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     weth: WETH_PREDEPLOY,

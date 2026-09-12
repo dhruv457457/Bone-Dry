@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSendTransaction } from "wagmi";
-import { keccak256, type Address, type Hex } from "viem";
+import { keccak256, erc20Abi, type Address, type Hex } from "viem";
 import s from "../app.module.css";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
 import { DepthChart, type RangePreset } from "./DepthChart";
 import { units, short as shortAddr, toRaw } from "@/lib/format";
 import type { ExposureResponse } from "../types";
-import { publicClientFor, type Network } from "@/lib/networks";
+import { publicClientFor, type Network, BEACON_STRATEGY_ADDRESS } from "@/lib/networks";
 
 type Token = { address: string; symbol: string; decimals: number };
 
@@ -49,6 +49,7 @@ export function Provide({
   const [error, setError] = useState<string | null>(null);
   const [shippedHash, setShippedHash] = useState<Hex | null>(null);
   const [beaconSpreadBps, setBeaconSpreadBps] = useState<number | null>(null);
+  const [beaconSpreadError, setBeaconSpreadError] = useState(false);
 
   // Encumbrance Strategy parameters
   const [maxUtilBps, setMaxUtilBps] = useState(8000); // 80% default
@@ -59,39 +60,65 @@ export function Provide({
 
   const { sendTransactionAsync } = useSendTransaction();
 
+  // Oracle pricing is only deployed on Base Sepolia for WETH/USDC (same condition route.ts:82-92 enforces)
+  const isWethUsdc = useMemo(() => {
+    return (
+      (tokenIn.address.toLowerCase() === net.weth.toLowerCase() &&
+        tokenOut.address.toLowerCase() === net.usdc.toLowerCase()) ||
+      (tokenIn.address.toLowerCase() === net.usdc.toLowerCase() &&
+        tokenOut.address.toLowerCase() === net.weth.toLowerCase())
+    );
+  }, [tokenIn.address, tokenOut.address, net.weth, net.usdc]);
+
+  const oracleAvailable = net.id === 84532 && isWethUsdc;
+
+  // If Oracle pricing becomes unavailable (e.g. user changed chain/pair), reset to xyc
+  useEffect(() => {
+    if (!oracleAvailable && pricing === "oracle") {
+      setPricing("xyc");
+    }
+  }, [oracleAvailable, pricing]);
+
   // Read fixed spread from BeaconStrategy if oracle pricing is selected
   useEffect(() => {
-    if (pricing !== "oracle") return;
+    if (pricing !== "oracle" || !oracleAvailable) return;
     let active = true;
+    setBeaconSpreadError(false);
     const client = publicClientFor(net);
-    const BEACON_STRATEGY: Address = "0x7890123456789012345678901234567890123456";
     const BEACON_ABI = [
       {
         type: "function",
-        name: "fixedSpreadBps",
+        name: "spreadBps",
         inputs: [],
-        outputs: [{ name: "", type: "uint16" }],
+        outputs: [{ name: "", type: "uint256" }],
         stateMutability: "view",
       },
     ] as const;
 
     client
       .readContract({
-        address: BEACON_STRATEGY,
+        address: BEACON_STRATEGY_ADDRESS,
         abi: BEACON_ABI,
-        functionName: "fixedSpreadBps",
+        functionName: "spreadBps",
       })
       .then((val) => {
-        if (active) setBeaconSpreadBps(Number(val));
+        if (active) {
+          setBeaconSpreadBps(Number(val));
+          setBeaconSpreadError(false);
+        }
       })
-      .catch(() => {
-        if (active) setBeaconSpreadBps(50); // 50 bps fallback
+      .catch((err) => {
+        console.warn("[beacon] could not read spread:", err);
+        if (active) {
+          setBeaconSpreadBps(null);
+          setBeaconSpreadError(true);
+        }
       });
 
     return () => {
       active = false;
     };
-  }, [pricing, net]);
+  }, [pricing, oracleAvailable, net]);
 
   // Read maker's live exposure from /api/exposure
   const [exposure, setExposure] = useState<ExposureResponse | null>(null);
@@ -121,34 +148,137 @@ export function Provide({
     };
   }, [net.id, address]);
 
-  // Parse wallet position for tokenIn
+  // Live on-chain balances and allowance for tokenIn and tokenOut
+  const [onChainData, setOnChainData] = useState<{
+    heldIn: bigint | null;
+    balanceOut: bigint | null;
+    allowanceOut: bigint | null;
+  }>({
+    heldIn: null,
+    balanceOut: null,
+    allowanceOut: null,
+  });
+
+  useEffect(() => {
+    if (!address) {
+      setOnChainData({ heldIn: null, balanceOut: null, allowanceOut: null });
+      return;
+    }
+    let active = true;
+    const client = publicClientFor(net);
+    client
+      .multicall({
+        contracts: [
+          {
+            address: tokenIn.address as Address,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [address],
+          },
+          {
+            address: tokenOut.address as Address,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [address],
+          },
+          {
+            address: tokenOut.address as Address,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [address, net.aqua as Address],
+          },
+        ],
+        allowFailure: true,
+      })
+      .then((res) => {
+        if (!active) return;
+        const bIn = res[0].status === "success" ? (res[0].result as bigint) : null;
+        const bOut = res[1].status === "success" ? (res[1].result as bigint) : null;
+        const aOut = res[2].status === "success" ? (res[2].result as bigint) : null;
+        setOnChainData({ heldIn: bIn, balanceOut: bOut, allowanceOut: aOut });
+      })
+      .catch(() => {
+        if (!active) return;
+        setOnChainData({ heldIn: null, balanceOut: null, allowanceOut: null });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [net, address, tokenIn.address, tokenOut.address]);
+
+  // Wallet position for tokenIn (used to show held balance on "Offer tokenIn")
   const tokenInPos = useMemo(() => {
     if (!exposure?.positions) return null;
     return exposure.positions.find((p) => p.token.toLowerCase() === tokenIn.address.toLowerCase()) ?? null;
   }, [exposure, tokenIn.address]);
 
-  const held = useMemo(() => {
-    if (!tokenInPos) return null;
+  /** These fall back to index values, which arrive as JSON strings from a
+   *  service this component does not control. An unparseable one used to be
+   *  caught; inlining the BigInt() dropped that, so a single malformed row
+   *  would throw during render and blank the whole tab. */
+  const bigOrNull = (v: string | undefined): bigint | null => {
+    if (v == null) return null;
     try {
-      return BigInt(tokenInPos.held);
+      return BigInt(v);
     } catch {
       return null;
     }
-  }, [tokenInPos]);
+  };
 
-  const alreadyPromised = useMemo(() => {
-    if (!tokenInPos) return 0n;
-    try {
-      return BigInt(tokenInPos.claimed);
-    } catch {
-      return 0n;
+  const heldIn = onChainData.heldIn ?? bigOrNull(tokenInPos?.held);
+
+  // Position for tokenOut: Encumbrance.sol:193-195 evaluates deliverable backing = min(balance, allowance)
+  const tokenOutPos = useMemo(() => {
+    if (!exposure?.positions) return null;
+    return exposure.positions.find((p) => p.token.toLowerCase() === tokenOut.address.toLowerCase()) ?? null;
+  }, [exposure, tokenOut.address]);
+
+  const balanceOut = onChainData.balanceOut ?? bigOrNull(tokenOutPos?.held);
+  const allowanceOut = onChainData.allowanceOut;
+
+  const backingOut = useMemo(() => {
+    if (balanceOut === null || allowanceOut === null) return null;
+    return balanceOut < allowanceOut ? balanceOut : allowanceOut;
+  }, [balanceOut, allowanceOut]);
+
+  // Sibling strategies filtered to tokenOut (§0.8)
+  const liveSiblings = useMemo(() => {
+    if (!exposure?.strategies) return [];
+    return exposure.strategies.filter((st) =>
+      st.sides.some((sd) => sd.token.toLowerCase() === tokenOut.address.toLowerCase())
+    );
+  }, [exposure, tokenOut.address]);
+
+  const siblingLimitExceeded = liveSiblings.length > 6;
+
+  // Live promised encumbrance across all siblings on tokenOut
+  const alreadyPromisedOut = useMemo(() => {
+    if (liveSiblings.length > 0) {
+      return liveSiblings.reduce((sum, strat) => {
+        const side = strat.sides.find((s) => s.token.toLowerCase() === tokenOut.address.toLowerCase());
+        if (!side) return sum;
+        try {
+          return sum + BigInt(side.claimed);
+        } catch {
+          return sum;
+        }
+      }, 0n);
     }
-  }, [tokenInPos]);
+    if (tokenOutPos) {
+      try {
+        return BigInt(tokenOutPos.claimed);
+      } catch {
+        return 0n;
+      }
+    }
+    return 0n;
+  }, [liveSiblings, tokenOutPos, tokenOut.address]);
 
-  const capacity = useMemo(() => {
-    if (held === null) return null;
-    return held > alreadyPromised ? held - alreadyPromised : 0n;
-  }, [held, alreadyPromised]);
+  const capacityOut = useMemo(() => {
+    if (backingOut === null) return null;
+    return backingOut > alreadyPromisedOut ? backingOut - alreadyPromisedOut : 0n;
+  }, [backingOut, alreadyPromisedOut]);
 
   // Sizing helper based on preset
   const handleSelectPreset = useCallback(
@@ -176,29 +306,36 @@ export function Provide({
   const rawClaimOut = useMemo(() => toRaw(claimOut, tokenOut.decimals), [claimOut, tokenOut.decimals]);
 
   const amountInvalid = rawClaimIn === 0n || rawClaimOut === 0n;
-  const newTotalPromised = alreadyPromised + rawClaimIn;
-  const covered = held === null || newTotalPromised <= held;
-  const shortBy = held !== null && newTotalPromised > held ? newTotalPromised - held : 0n;
+  const newTotalPromisedOut = alreadyPromisedOut + rawClaimOut;
+  const covered = backingOut === null || newTotalPromisedOut <= backingOut;
+  const shortBy = backingOut !== null && newTotalPromisedOut > backingOut ? newTotalPromisedOut - backingOut : 0n;
 
   const coverPct = useMemo(() => {
-    if (held === null || held === 0n) return 0;
-    if (newTotalPromised === 0n) return 100;
-    const pct = Number((held * 10000n) / newTotalPromised) / 100;
+    if (backingOut === null || backingOut === 0n) return 0;
+    if (newTotalPromisedOut === 0n) return 100;
+    const pct = Number((backingOut * 10000n) / newTotalPromisedOut) / 100;
     return Math.min(100, Math.max(0, pct));
-  }, [held, newTotalPromised]);
+  }, [backingOut, newTotalPromisedOut]);
 
   const disabled = !address || wrongChain || amountInvalid || busy;
 
-  // Current utilization of maker wallet for this token (0 to 100)
-  const currentUtilPct = held && held > 0n ? Math.min(100, Number((alreadyPromised * 10000n) / held) / 100) : 0;
+  // Current utilization of maker wallet for tokenOut (0 to 100)
+  // Uncapped, because the contract's is.
+  //
+  // Encumbrance.sol:202 computes util = mulDiv(declaredTotalEncumbrance, 1e4,
+  // backing) with no ceiling, and reverts at util >= maxUtilBps. A maker who has
+  // promised three times their backing sits at 30,000 bps. Clamping this to 100%
+  // would report the single worst position on the network as merely "full" — on
+  // the one screen whose entire subject is over-promising. The chart still plots
+  // against a 0-100 axis, so clamp there, at the drawing, not here at the number.
+  const currentUtilPct =
+    backingOut && backingOut > 0n
+      ? Number((alreadyPromisedOut * 10000n) / backingOut) / 100
+      : 0;
+  const utilPlotPct = Math.min(100, currentUtilPct);
 
-  // Sibling strategies from index
-  const liveSiblings = useMemo(() => {
-    if (!exposure?.strategies) return [];
-    return exposure.strategies;
-  }, [exposure]);
-
-  const siblingLimitExceeded = liveSiblings.length > 6;
+  const allowanceBounded =
+    balanceOut !== null && allowanceOut !== null && allowanceOut < balanceOut;
 
   const handleShip = async () => {
     if (disabled || !address) return;
@@ -222,6 +359,7 @@ export function Provide({
           pricing,
           maxUtilBps,
           widenBps,
+          siblingHashes: liveSiblings.map((s) => s.strategyHash),
         }),
       });
 
@@ -271,7 +409,7 @@ export function Provide({
 
   const maxUtilRatio = maxUtilBps / 10000;
   const cliffX = START_X + maxUtilRatio * USABLE_WIDTH;
-  const currentUtilX = START_X + (currentUtilPct / 100) * USABLE_WIDTH;
+  const currentUtilX = START_X + (utilPlotPct / 100) * USABLE_WIDTH;
 
   const currentHaircutBps = Math.round((currentUtilPct / 100) * widenBps);
   const currentQuoteVal = Math.max(0, 1 - (currentUtilPct / 100) * (widenBps / 10000));
@@ -366,7 +504,7 @@ export function Provide({
           {/* 1. Live Exposure Card */}
           <section className={`${s.card} ${s.cardPad}`}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-              <span className={s.label}>Your Live Exposure</span>
+              <span className={s.label}>Your Live Exposure ({tokenOut.symbol})</span>
               {address ? (
                 <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
                   {shortAddr(address)}
@@ -382,24 +520,53 @@ export function Provide({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Wallet Backing</span>
                 <span className={s.mono} style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
-                  {held === null ? "—" : units(held, tokenIn.decimals, 2)} {tokenIn.symbol}
+                  {backingOut === null ? "—" : units(backingOut, tokenOut.decimals, 4)} {tokenOut.symbol}
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
+                <span style={{ fontSize: 12, color: "var(--ink3)" }}>Wallet Balance</span>
+                <span className={s.mono} style={{ fontSize: 12, color: "var(--ink2)" }}>
+                  {balanceOut === null ? "—" : units(balanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 2 }}>
+                <span style={{ fontSize: 12, color: "var(--ink3)" }}>Aqua Allowance</span>
+                <span className={s.mono} style={{ fontSize: 12, color: allowanceBounded ? "var(--short)" : "var(--ink2)" }}>
+                  {allowanceOut === null ? "—" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                </span>
+              </div>
+
+              {allowanceBounded && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "5px 8px",
+                    background: "rgba(194, 78, 25, 0.08)",
+                    border: "1px solid rgba(194, 78, 25, 0.25)",
+                    borderRadius: 4,
+                    fontSize: 11,
+                    color: "var(--short)",
+                  }}
+                >
+                  ⚠ Allowance &lt; balance: Aqua approval ({allowanceOut === null ? "0" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}) limits deliverable backing.
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 8 }}>
                 <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Total Promised (Live Siblings)</span>
-                <span className={s.mono} style={{ fontSize: 14, color: alreadyPromised > 0n ? "var(--ink)" : "var(--ink3)" }}>
-                  {units(alreadyPromised, tokenIn.decimals, 2)} {tokenIn.symbol}
+                <span className={s.mono} style={{ fontSize: 14, color: alreadyPromisedOut > 0n ? "var(--ink)" : "var(--ink3)" }}>
+                  {units(alreadyPromisedOut, tokenOut.decimals, 4)} {tokenOut.symbol}
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
                 <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Free Capacity</span>
                 <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>
-                  {capacity === null ? "—" : units(capacity, tokenIn.decimals, 2)} {tokenIn.symbol}
+                  {capacityOut === null ? "—" : units(capacityOut, tokenOut.decimals, 4)} {tokenOut.symbol}
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
                 <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Current Utilization</span>
-                <span className={s.mono} style={{ fontSize: 14, fontWeight: 600, color: currentUtilPct >= 80 ? "var(--short)" : "var(--ink)" }}>
+                <span className={s.mono} style={{ fontSize: 14, fontWeight: 600, color: currentUtilPct >= (maxUtilBps / 100) ? "var(--short)" : "var(--ink)" }}>
                   {currentUtilPct.toFixed(1)}%
                 </span>
               </div>
@@ -410,13 +577,13 @@ export function Provide({
                 className={s.barFill}
                 style={{
                   width: `${Math.min(100, currentUtilPct)}%`,
-                  background: currentUtilPct >= 80 ? "var(--short)" : "var(--ink)",
+                  background: currentUtilPct >= (maxUtilBps / 100) ? "var(--short)" : "var(--ink)",
                 }}
               />
             </div>
 
             <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)", lineHeight: 1.4 }}>
-              Aqua enforces no limits on commitment size. Bone Dry checks that total commitments remain solvent before routing trades.
+              Encumbrance backing is evaluated on <strong>{tokenOut.symbol}</strong> as min(balance, allowance).
             </p>
           </section>
 
@@ -427,32 +594,38 @@ export function Provide({
             </span>
 
             {/* Pricing Model Segmented Toggle */}
-            <div style={{ marginBottom: 14 }}>
-              <div className={s.seg} style={{ width: "100%" }}>
-                <button
-                  type="button"
-                  onClick={() => setPricing("xyc")}
-                  className={`${s.segBtn} ${pricing === "xyc" ? s.segBtnOn : ""}`}
-                  style={{ flex: 1, textAlign: "center" }}
-                >
-                  Constant Product
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPricing("oracle")}
-                  className={`${s.segBtn} ${pricing === "oracle" ? s.segBtnOn : ""}`}
-                  style={{ flex: 1, textAlign: "center" }}
-                >
-                  Oracle Spread
-                </button>
+            {oracleAvailable ? (
+              <div style={{ marginBottom: 14 }}>
+                <div className={s.seg} style={{ width: "100%" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPricing("xyc")}
+                    className={`${s.segBtn} ${pricing === "xyc" ? s.segBtnOn : ""}`}
+                    style={{ flex: 1, textAlign: "center" }}
+                  >
+                    Constant Product
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPricing("oracle")}
+                    className={`${s.segBtn} ${pricing === "oracle" ? s.segBtnOn : ""}`}
+                    style={{ flex: 1, textAlign: "center" }}
+                  >
+                    Oracle Spread
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div style={{ marginBottom: 14, fontSize: 11.5, color: "var(--ink3)" }}>
+                Pricing model: <strong>Constant Product (xy=k)</strong>. Oracle pricing via BeaconStrategy is only deployed on Base Sepolia for WETH/USDC.
+              </div>
+            )}
 
             <div className={s.inset} style={{ marginBottom: 12 }}>
               <div className={s.fieldHead}>
                 <span className={s.label}>Offer {tokenIn.symbol}</span>
                 <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                  held {held === null ? "—" : units(held, tokenIn.decimals, 2)}
+                  held {heldIn === null ? "—" : units(heldIn, tokenIn.decimals, 2)}
                 </span>
               </div>
               <div className={s.amountRow}>
@@ -502,8 +675,12 @@ export function Provide({
               </div>
               <div className={s.amountRow}>
                 {pricing === "oracle" ? (
-                  <span className={s.mono} style={{ fontSize: 14, color: "var(--ink3)", padding: "4px 0" }}>
-                    {beaconSpreadBps === null ? "…" : `${beaconSpreadBps} bps (${(beaconSpreadBps / 100).toFixed(2)}%)`}
+                  <span className={s.mono} style={{ fontSize: 14, color: beaconSpreadError ? "var(--short)" : "var(--ink3)", padding: "4px 0" }}>
+                    {beaconSpreadError
+                      ? "— (could not read spread)"
+                      : beaconSpreadBps === null
+                        ? "…"
+                        : `${beaconSpreadBps} bps (${(beaconSpreadBps / 100).toFixed(2)}%)`}
                   </span>
                 ) : (
                   <>
@@ -655,7 +832,7 @@ export function Provide({
             {liveSiblings.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 130, overflowY: "auto", marginTop: 8 }}>
                 {liveSiblings.slice(0, 6).map((strat, idx) => {
-                  const matchingSide = strat.sides.find((sd) => sd.token.toLowerCase() === tokenIn.address.toLowerCase()) || strat.sides[0];
+                  const matchingSide = strat.sides.find((sd) => sd.token.toLowerCase() === tokenOut.address.toLowerCase()) || strat.sides[0];
                   return (
                     <div
                       key={strat.strategyHash}
@@ -955,7 +1132,7 @@ export function Provide({
                         />
                         <circle
                           cx={currentUtilX}
-                          cy={currentUtilX <= cliffX ? TOP_AXIS_Y + Math.pow(currentUtilPct / (maxUtilBps / 100), 1.35) * (widenBps / 10000) * 130 : BASE_AXIS_Y}
+                          cy={currentUtilX <= cliffX ? TOP_AXIS_Y + ((utilPlotPct / 100) * widenBps / 10000) * 130 : BASE_AXIS_Y}
                           r={6}
                           fill="var(--ink)"
                           stroke="var(--paper)"
