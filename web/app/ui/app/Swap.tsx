@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
+import { FindingCard } from "./Shell";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr } from "@/lib/format";
-import type { MakerRow, MakersResponse, PoolResponse, RouteResponse } from "../types";
+import type { CoverageResponse, MakerRow, MakersResponse, PoolResponse, RouteResponse } from "../types";
 import type { NetworkId } from "@/lib/networks";
 
 type Token = { address: string; symbol: string; decimals: number };
@@ -70,6 +71,7 @@ export function Swap({
   onExplore,
   onLookup,
   quoteStamp,
+  finding,
 }: {
   chainId: NetworkId;
   net: { label: string; explorer?: string; aquaIsOurs?: boolean };
@@ -95,6 +97,7 @@ export function Swap({
   onExplore: () => void;
   onLookup: () => void;
   quoteStamp: string;
+  finding: CoverageResponse | null;
 }) {
   const [primer, setPrimer] = useState(false);
   const [raw, setRaw] = useState(false);
@@ -212,6 +215,13 @@ export function Swap({
   return (
     <div className={`${s.cols} ${s.in}`}>
       <div className={s.colNarrow}>
+        <FindingCard
+          finding={finding}
+          chainLabel={net.aquaIsOurs ? "Base" : net.label}
+          onEvidence={onExplore}
+          stamp={quoteStamp}
+        />
+
         {/* ── the swap itself ──────────────────────────────────────────── */}
         <section className={`${s.card} ${s.cardPad}`}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 16 }}>

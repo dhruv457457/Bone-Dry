@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import s from "./desk.module.css";
-import Exposure from "./Exposure";
-import { units, compact, toRaw, short, pct } from "@/lib/format";
+import s from "./app.module.css";
+import { units, toRaw, short } from "@/lib/format";
 import { useAccount, useSwitchChain, useWriteContract, useSendTransaction } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 /** A user closing the wallet popup is not an error worth shouting about. */
@@ -31,11 +30,16 @@ import {
   type PairToken,
 } from "@/lib/pairs";
 import { keccak256, type Address, type Hex } from "viem";
-import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse } from "./types";
+import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, AppsResponse, ExposureResponse } from "./types";
 import { TokenIcon } from "./TokenIcon";
-import { PriceChart, type RangePreset } from "./PriceChart";
+import { CopyButton } from "./CopyButton";
+import { DepthChart, type RangePreset } from "./app/DepthChart";
+import { Header, FindingLine, WrongChain, Footer, TABS, type Tab } from "./app/Shell";
+import { Swap } from "./app/Swap";
+import { Explore } from "./app/Explore";
+import { Portfolio } from "./app/Portfolio";
+import { Lookup } from "./app/Lookup";
 import { TokenSearchModal } from "./TokenSearchModal";
-import { RouteInspector } from "./RouteInspector";
 import type { SearchableToken } from "@/lib/tokenList";
 
 type Token = { address: string; symbol: string; decimals: number };
@@ -113,18 +117,19 @@ export default function Desk() {
   // Four jobs, four views. Everything below used to be one long scroll --
   // swap, become a maker, check your own exposure, and browse anyone else's --
   // stacked on top of each other regardless of which one a visitor came for.
-  const [tab, setTab] = useState<"swap" | "provide" | "portfolio" | "explore">("swap");
+  const [tab, setTab] = useState<Tab>("swap");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const t = params.get("tab");
-      if (t === "provide" || t === "portfolio" || t === "explore" || t === "swap") {
-        setTab(t);
-      }
+      if (TABS.includes(t as Tab)) setTab(t as Tab);
+      const a = params.get("address");
+      if (a) setDeepAddress(a);
     }
   }, []);
 
+  const [deepAddress, setDeepAddress] = useState<string | undefined>();
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
   const tokenOut = flipped ? currentPair.token0 : currentPair.token1;
@@ -307,15 +312,16 @@ export default function Desk() {
     };
   }, [address, tokenIn.address, txState.phase, chainId]);
 
-  // Coverage does not depend on the swap inputs, so it is fetched once instead
-  // of on every keystroke. It is also the slowest call: a multicall per position.
+  // Fetched at the same depth as the finding above it. At first=12 the rail
+  // could announce 145 short positions and the Evidence tab it links to would
+  // then list twelve — the headline and its own proof disagreeing on screen. It is also the slowest call: a multicall per position.
   // A failure here used to be swallowed, so the panel simply never appeared and
   // nothing said why — say why instead.
   useEffect(() => {
     let live = true;
     setCoverage(null);
     setCoverageError(null);
-    getJson<CoverageResponse>(`/api/coverage?chain=${chainId}&first=12`, 60_000)
+    getJson<CoverageResponse>(`/api/coverage?chain=${chainId}&first=200`, 60_000)
       .then((c) => {
         if (!live) return;
         // The server says whether this network has an index; the client used to
@@ -513,241 +519,118 @@ export default function Desk() {
     }
   }, [route, address, tokenIn.address, tokenIn.symbol, tokenIn.decimals, currentPair, pKey, balance, load, net, chainId, writeContractAsync]);
 
-  const usedMakers = new Set((route?.slices ?? []).map((x) => x.maker.toLowerCase()));
-  const improvement = Number(route?.improvementBps ?? "0");
+  const stamp = busy ? "reading…" : "read just now";
 
   return (
-    <div className={s.shell}>
-      <header className={s.masthead}>
-        {/* Compact here, not a hero: the landing page already made the claim, and
-            this fold belongs to the thing the visitor came to use. */}
-        <div className={s.appNav}>
-          <Link className={s.appMark} href="/">
-            BONE<em>&middot;</em>DRY
-          </Link>
-          <div className={s.navControls}>
-            <PairSwitch
-              pairs={availablePairs}
-              pairId={currentPair.id}
-              currentPair={currentPair}
-              onChange={setPairId}
-              onOpenSearch={() => {
+    <div className={s.root}>
+      <Header
+        tab={tab}
+        onTab={setTab}
+        chainId={chainId}
+        onChain={setChainId}
+        busy={busy}
+        wallet={<ConnectButton chainStatus="none" showBalance={false} accountStatus="address" />}
+      />
+
+      {wrongChain ? (
+        <WrongChain netName={net.label} onFix={() => switchChain({ chainId })} />
+      ) : null}
+
+      <main className={s.main}>
+        {tab === "swap" && (
+          <Swap
+            finding={finding}
+            chainId={chainId}
+            net={net}
+            tokenIn={tokenIn}
+            tokenOut={tokenOut}
+            input={input}
+            onInput={setInput}
+            balance={balance}
+            route={route}
+            makers={makers}
+            pool={pool}
+            busy={busy}
+            error={error}
+            connected={isConnected}
+            wrongChain={wrongChain}
+            txPhase={txState.phase}
+            txHash={txState.hash}
+            txNote={txState.note}
+            received={txState.received}
+            onSwap={executeSwap}
+            onFlip={() => setFlipped((f) => !f)}
+            onPickToken={(which) => {
+              setSearchTarget(which);
+              setSearchModalOpen(true);
+            }}
+            onExplore={() => setTab("explore")}
+            onLookup={() => setTab("lookup")}
+            quoteStamp={stamp}
+          />
+        )}
+
+        {tab === "provide" && (
+          <>
+            <FindingLine
+              finding={finding}
+              chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
+              onEvidence={() => setTab("explore")}
+              stamp={stamp}
+            />
+            <ShipStrategy
+              net={net}
+              tokenIn={tokenIn}
+              tokenOut={tokenOut}
+              address={address}
+              wrongChain={wrongChain}
+              onShipped={load}
+              onPickPair={() => {
                 setSearchTarget("pair");
                 setSearchModalOpen(true);
               }}
             />
-            <NetworkSwitch chainId={chainId} onChange={setChainId} />
-          </div>
-        </div>
-        <hr className={s.mastRule} />
-        <div className={`${s.mastMeta} label`}>
-          <span>{net.label} &middot; chain {net.id}</span>
-          <span>{hook ? <>Hook <span className="hex">{short(hook)}</span></> : "no hook deployed here"}</span>
-          <span>Index {indexLabel(makers)}</span>
-          <span className={s.spin}>{busy ? "reading chain" : "idle"}</span>
-        </div>
-      </header>
+          </>
+        )}
 
-      <TabNav tab={tab} onChange={setTab} />
+        {tab === "portfolio" && (
+          <>
+            <FindingLine
+              finding={finding}
+              chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
+              onEvidence={() => setTab("explore")}
+              stamp={stamp}
+            />
+            <Portfolio
+              chainId={chainId}
+              net={net}
+              address={address}
+              onProvide={() => setTab("provide")}
+              onExplore={() => setTab("explore")}
+              onLookup={() => setTab("lookup")}
+              connectButton={<ConnectButton chainStatus="none" showBalance={false} />}
+            />
+          </>
+        )}
 
-      {tab === "swap" && (
-      <>
-      <Finding
-        coverage={finding}
-        chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
-        onSeeExplore={() => setTab("explore")}
-      />
-      {/* The swap is the proof the finding above is answerable, not the
-          headline itself -- that reversal is the point of this page now. */}
-      <div className={s.trade}>
-        <section className={s.swapCard}>
-          <div className={s.field}>
-            <div className={s.fieldHead}>
-              <span className="label">You pay</span>
-              {balance !== null && (
-                <button
-                  className={s.maxBtn}
-                  onClick={() => setInput(units(balance, tokenIn.decimals, 6).replace(/,/g, ""))}
-                >
-                  {units(balance, tokenIn.decimals, 4)} {tokenIn.symbol}
-                </button>
-              )}
-            </div>
-            <div className={s.amountRow}>
-              <input
-                value={input}
-                inputMode="decimal"
-                onChange={(e) => setInput(e.target.value)}
-                aria-label={`Amount of ${tokenIn.symbol} to sell`}
-              />
-              <button
-                type="button"
-                className={s.tickerBtn}
-                onClick={() => {
-                  setSearchTarget("tokenIn");
-                  setSearchModalOpen(true);
-                }}
-                aria-label={`Select token to pay (currently ${tokenIn.symbol})`}
-              >
-                <TokenIcon chainId={chainId} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
-                <span className={s.tickerLabel}>{tokenIn.symbol}</span>
-                <span className={s.tickerChevron}>▾</span>
-              </button>
-            </div>
-          </div>
-
-          <button
-            className={s.flipBtn}
-            onClick={() => setFlipped((f) => !f)}
-            aria-label="Swap the direction"
-          >
-            &#8645;
-          </button>
-
-          <div className={s.field}>
-            <span className="label">You receive</span>
-            <div
-              className={`${s.readout} ${route && route.amountOut !== "0" ? "" : s.readoutMuted}`}
-            >
-              {route ? units(route.amountOut, tokenOut.decimals, 6) : "--"}{" "}
-              <button
-                type="button"
-                className={s.tickerBtn}
-                onClick={() => {
-                  setSearchTarget("tokenOut");
-                  setSearchModalOpen(true);
-                }}
-                aria-label={`Select token to receive (currently ${tokenOut.symbol})`}
-              >
-                <TokenIcon chainId={chainId} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
-                <span className={s.tickerLabel}>{tokenOut.symbol}</span>
-                <span className={s.tickerChevron}>▾</span>
-              </button>
-            </div>
-            {route && improvement > 0 && (
-              <p className={s.beat}>
-                <b>+{improvement} bps</b> better than any single maker alone, by splitting
-                across {route.makersUsed}
-              </p>
-            )}
-          </div>
-
-          <SwapAction
-            route={route}
-            busy={busy}
-            tx={txState}
-            balance={balance}
-            decimals={tokenIn.decimals}
-            outDecimals={tokenOut.decimals}
-            outSymbol={tokenOut.symbol}
-            explorer={net.explorer}
-            wellhead={net.wellhead}
-            chainLabel={net.label}
-            address={address}
-            wrongChain={wrongChain}
-            onSwitch={() => switchChain({ chainId })}
-            onSwap={executeSwap}
-            onReload={load}
-          />
-        </section>
-
-        <aside className={s.proofCard}>
-          <PoolProof pool={pool} />
-          <dl className={s.facts}>
-            <div>
-              <dt className="label">Filled from</dt>
-              <dd className="num">
-                {route?.makersUsed ?? 0} of {route?.makersConsidered ?? 0} wallets
-              </dd>
-            </div>
-            <div>
-              <dt className="label">Skipped, cannot pay</dt>
-              <dd className="num">{route?.makersSkipped.length ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="label">Unfillable quote</dt>
-              <dd className="num">{route?.makersUnfillable?.length ?? 0}</dd>
-            </div>
-            {route && route.unfilled !== "0" && (
-              <div>
-                <dt className="label">Unfillable at this size</dt>
-                <dd className={`num ${s.loss}`}>
-                  {units(route.unfilled, tokenIn.decimals, 2)} {tokenIn.symbol}
-                </dd>
-              </div>
-            )}
-          </dl>
-        </aside>
-      </div>
-
-      <RouteInspector route={route} tokenIn={tokenIn} tokenOut={tokenOut} net={net} />
-
-      <section className={s.book}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>
-            Maker book &mdash;{" "}
-            <span className={s.tokenCell}>
-              <TokenIcon chainId={chainId} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
-              {tokenOut.symbol}
-            </span>
-          </h2>
-          <span className="label">
-            {makers ? `${makers.solvent} solvent of ${makers.indexed} live` : <span className={s.loadingDots}>reading…</span>}
-          </span>
-        </div>
-        <MakerBook makers={makers} used={usedMakers} decimals={tokenOut.decimals} slices={route?.slices} />
-      </section>
-
-      {/* Real, and not the first thing anyone should have to look at. Collapsed
-          by default -- <details> costs no JS and needs no state of its own. */}
-      <HookDataDisclosure route={route} />
-      </>
-      )}
-
-      {tab === "provide" && (
-        <ShipStrategy
-          net={net}
-          tokenIn={tokenIn}
-          tokenOut={tokenOut}
-          address={address}
-          wrongChain={wrongChain}
-          onShipped={load}
-        />
-      )}
-
-      {tab === "portfolio" && (
-        <Exposure
-          chainId={chainId}
-          address={address}
-          onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
-        />
-      )}
-
-      {tab === "explore" && (
-        <>
-          <Coverage
+        {tab === "explore" && (
+          <Explore
             coverage={coverage}
-            error={coverageError}
-            onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
+            coverageError={coverageError}
+            apps={appsData}
+            appsError={appsError}
+            net={net}
+            onLookup={() => setTab("lookup")}
+            onRetry={() => setChainId(chainId)}
           />
-          <AcrossAqua
-            data={appsData}
-            error={appsError}
-            onGoToBase={chainId === 84532 ? () => setChainId(8453) : undefined}
-          />
-          <MakerReliability chainId={chainId} />
-          <section className={s.exploreLink}>
-            <p>
-              Checking a wallet that has never touched this dashboard? The lookup
-              page takes any address, on either network, no connection required.
-            </p>
-            <Link href="/app/lookup" className={s.exploreLinkBtn}>
-              Check any wallet &rarr;
-            </Link>
-          </section>
-          <Deployed net={net} />
-        </>
-      )}
+        )}
+
+        {tab === "lookup" && (
+          <Lookup chainId={chainId} netName={net.label} initial={deepAddress} />
+        )}
+      </main>
+
+      <Footer net={net} stamp={stamp} />
 
       <TokenSearchModal
         isOpen={searchModalOpen}
@@ -764,843 +647,6 @@ export default function Desk() {
   );
 }
 
-/* Counts up from 0 once, on mount or whenever the target changes -- not a
-   general-purpose spring, just enough motion to make a number that only
-   ever renders once feel like it was measured just now rather than typed
-   into the JSX. Skips straight to the target under reduced motion. */
-function useCountUp(target: number, ms = 900) {
-  const [value, setValue] = useState(0);
-  const reduced = useRef(
-    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-  useEffect(() => {
-    if (reduced.current) {
-      setValue(target);
-      return;
-    }
-    let raf: number;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / ms);
-      // easeOutCubic -- fast start, settles rather than snapping.
-      const eased = 1 - Math.pow(1 - t, 3);
-      setValue(Math.round(target * eased));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, ms]);
-  return value;
-}
-
-/* The headline, not the swap card beside it. This is the whole pitch in one
-   sentence and one live number: most of what Aqua thinks it has is not
-   there. The swap below is the proof that this dashboard routes around it --
-   evidence for the claim made here, not the other way around. */
-function Finding({
-  coverage,
-  chainLabel,
-  onSeeExplore,
-}: {
-  coverage: CoverageResponse | null;
-  chainLabel: string;
-  onSeeExplore: () => void;
-}) {
-  const bad = useCountUp(coverage?.underCollateralised ?? 0);
-  if (!coverage) return null;
-  return (
-    <section className={s.finding}>
-      <p className={s.findingFig}>
-        <span className={s.findingBad}>{bad}</span>
-        <span className={s.findingOf}> of {coverage.positions}</span>
-      </p>
-      <p className={s.findingClaim}>
-        real maker positions on {chainLabel} can&apos;t deliver what they promised,
-        right now.
-      </p>
-      <p className={s.findingSub}>
-        Aqua has no way to check this on-chain -- the balance mapping isn&apos;t
-        enumerable, 1inch say so themselves. This is the index that can, and
-        the swap below only fills from makers who actually pass it.{" "}
-        <button className={s.findingLink} onClick={onSeeExplore}>
-          See the full breakdown &rarr;
-        </button>
-      </p>
-    </section>
-  );
-}
-
-/* The four jobs this dashboard does, as four places rather than one scroll.
-   Same tab visual language as the network/pair switchers above it, so the
-   page reads as one system rather than three different widgets bolted
-   together. */
-function TabNav({
-  tab,
-  onChange,
-}: {
-  tab: "swap" | "provide" | "portfolio" | "explore";
-  onChange: (t: "swap" | "provide" | "portfolio" | "explore") => void;
-}) {
-  const items: { id: typeof tab; label: string }[] = [
-    { id: "swap", label: "Swap" },
-    { id: "provide", label: "Provide" },
-    { id: "portfolio", label: "Portfolio" },
-    { id: "explore", label: "Explore" },
-  ];
-  return (
-    <div className={s.pageTabs} role="tablist" aria-label="Section">
-      {items.map((it) => (
-        <button
-          key={it.id}
-          role="tab"
-          aria-selected={it.id === tab}
-          className={`${s.pageTab} ${it.id === tab ? s.pageTabOn : ""}`}
-          onClick={() => onChange(it.id)}
-        >
-          {it.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/* HookData, unwrapped only on request. It is the realest proof on this page --
-   the exact bytes Tap.beforeSwap acts on -- and also the least useful thing to
-   put in front of someone deciding whether to swap. */
-function HookDataDisclosure({ route }: { route: RouteResponse | null }) {
-  if (!route?.hookData) return null;
-  const bytes = (route.hookData.length - 2) / 2;
-  return (
-    <details className={s.disclosure}>
-      <summary className="label">
-        Technical proof &mdash; hookData handed to Tap.beforeSwap ({bytes} bytes,{" "}
-        {route.slices.length} {route.slices.length === 1 ? "strategy" : "strategies"})
-      </summary>
-      <div className={s.blobBody}>{route.hookData}</div>
-    </details>
-  );
-}
-
-/* The number Aqua cannot produce.
-   Balances are keyed [maker][app][strategyHash][token] and the mapping is not
-   enumerable, so nothing on-chain can total what one maker promised across all
-   of their strategies. The index can. Next to the wallet balance, that is a
-   coverage ratio -- and on Base most of the largest positions fail it. */
-function Coverage({
-  coverage,
-  error,
-  onGoToBase,
-}: {
-  coverage: CoverageResponse | null;
-  error: string | null;
-  onGoToBase?: () => void;
-}) {
-  // A dead end with an apology in it is worse than no section. This one names
-  // the reason once and hands over the way out, because the view does exist —
-  // just not on this network.
-  if (error)
-    return (
-      <section className={s.coverage}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Coverage &mdash; promised against held, per maker</h2>
-          <span className="label">{error}</span>
-        </div>
-        <div className={s.coverageEmpty}>
-          <p>
-            Totalling what one maker has promised across every strategy is the thing no
-            contract can do, so this view needs an index. There is one on Base.
-          </p>
-          {onGoToBase && (
-            <button onClick={onGoToBase}>See it on Base</button>
-          )}
-        </div>
-      </section>
-    );
-  if (!coverage || coverage.rows.length === 0) return null;
-  const worst = coverage.rows.find((r) => r.known) ?? coverage.rows[0];
-
-  return (
-    <section className={s.coverage}>
-      <div className={s.sectionHead}>
-        <h2 className={s.sectionTitle}>Coverage &mdash; promised against held, per maker</h2>
-        <span className="label">
-          {coverage.underCollateralised} of {coverage.positions} under-collateralised
-        </span>
-      </div>
-
-      <p className={s.coverageLede}>
-        Aqua keys balances by maker, app, strategy and token, and the mapping is not
-        enumerable &mdash; so no contract can add up what one maker has promised across
-        every strategy they have live. The subgraph can. Set that total against the
-        wallet and the allowance and the promise becomes checkable. Right now the
-        largest position on Base belongs to a maker running{" "}
-        <strong>
-          {worst.activeStrategies} live strategies backed by {worst.wallet === "0" ? "nothing" : "less than they owe"}
-        </strong>
-        .
-      </p>
-
-      <CrossCheck check={coverage.onchainCrossCheck} />
-
-      <div className={s.tableWrap}>
-        <table className={s.table}>
-          <thead>
-            <tr>
-              <th>Maker</th>
-              <th>Token</th>
-              <th>Live strategies</th>
-              <th>Committed</th>
-              <th>Actually backed</th>
-              <th>Coverage</th>
-            </tr>
-          </thead>
-          <tbody>
-            {coverage.rows.map((r) => {
-              const bps = Number(r.coverageBps);
-              const pctOf = r.known ? Math.min(100, bps / 100) : 0;
-              return (
-                <tr key={`${r.maker}-${r.token}`}>
-                  <td className="num">{short(r.maker)}</td>
-                  <td className={`num ${s.dim}`}>{short(r.token)}</td>
-                  <td className="num">{r.activeStrategies}</td>
-                  <td className={`num ${s.dim}`}>{compact(r.committed, r.decimals)}</td>
-                  <td className="num">{compact(r.backed, r.decimals)}</td>
-                  <td>
-                    <span
-                      className={`num ${s.covPct} ${!r.known ? s.dim : bps === 0 ? s.zero : bps >= 10000 ? s.full : ""}`}
-                    >
-                      {r.known ? `${(bps / 100).toFixed(1)}%` : "unread"}
-                    </span>
-                    <span className={s.covBar} aria-hidden>
-                      <span className={s.covFill} style={{ width: `${pctOf}%` }} />
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function AcrossAqua({
-  data,
-  error,
-  onGoToBase,
-}: {
-  data: AppsResponse | null;
-  error: string | null;
-  onGoToBase?: () => void;
-}) {
-  if (error)
-    return (
-      <section className={s.acrossAqua}>
-        <div className={s.sectionHead}>
-          <h2 className={s.sectionTitle}>Across Aqua &mdash; every app this index sees, not just ours</h2>
-          <span className="label">{error}</span>
-        </div>
-        <div className={s.coverageEmpty}>
-          <p>
-            Aqua&apos;s registry is shared across any protocol that ships strategies to it.
-            Indexing across apps requires the subgraph on Base.
-          </p>
-          {onGoToBase && (
-            <button onClick={onGoToBase}>See it on Base</button>
-          )}
-        </div>
-      </section>
-    );
-
-  if (!data) return null;
-
-  const totalStrategies = data.apps.reduce((sum, a) => sum + a.activeStrategies, 0);
-
-  return (
-    <section className={s.acrossAqua}>
-      <div className={s.sectionHead}>
-        <h2 className={s.sectionTitle}>Across Aqua &mdash; every app this index sees, not just ours</h2>
-        <span className="label">
-          {data.apps.length} {data.apps.length === 1 ? "app" : "apps"}, {totalStrategies} live {totalStrategies === 1 ? "strategy" : "strategies"} total
-        </span>
-      </div>
-
-      <p className={s.coverageLede}>
-        Our subgraph listens to Aqua&apos;s contract events rather than filtering to Bone Dry&apos;s
-        router &mdash; so it indexes every consumer on the network. Here is every app currently
-        shipping live strategies under that same standardized schema.
-      </p>
-
-      <div className={s.tableWrap}>
-        <table className={s.table}>
-          <thead>
-            <tr>
-              <th>App</th>
-              <th>Status</th>
-              <th>Live strategies</th>
-              <th>Distinct makers</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.apps.map((a) => (
-              <tr key={a.app}>
-                <td>
-                  <span className="num" title={a.app}>{short(a.app)}</span>
-                </td>
-                <td>
-                  {a.isOurs ? (
-                    <span className={`${s.badge} ${s.badgeOk}`}>this app</span>
-                  ) : (
-                    <span className={s.dim}>--</span>
-                  )}
-                </td>
-                <td className="num">{a.activeStrategies}</td>
-                <td className="num">{a.distinctMakers}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-type ReliabilityRow = {
-  maker: Address;
-  fillsCount: number;
-  skipsCount: number;
-  totalVolumeSkipped: string;
-  flakeRate: number;
-  status: "RELIABLE" | "DEGRADED" | "UNRELIABLE";
-};
-
-/**
- * A maker's own track record: how often Tap has actually caught them unable
- * to deliver, not just whether they can right now. MakerSkipped fires every
- * time this happens (see Tap.sol) and had nothing reading it until this.
- *
- * Self-fetching rather than threaded through Desk's own load() -- this is
- * Explore-only, does not affect the swap quote, and a hook redeployed within
- * this same session means the honest answer today is "no history yet" on
- * every network, which is worth showing plainly rather than routing through
- * more state than a self-contained empty state needs.
- */
-function MakerReliability({ chainId }: { chainId: NetworkId }) {
-  const [data, setData] = useState<{ available: boolean; reason?: string; makers: ReliabilityRow[] } | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    fetch(`/api/reliability?chain=${chainId}`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (live) setData(json);
-      })
-      .catch(() => {
-        if (live) setData(null);
-      })
-      .finally(() => {
-        if (live) setLoading(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [chainId]);
-
-  return (
-    <section className={s.acrossAqua}>
-      <div className={s.sectionHead}>
-        <h2 className={s.sectionTitle}>Maker reliability &mdash; caught unable to deliver, not just able to right now</h2>
-        <span className="label">
-          {loading ? "reading chain…" : data?.available === false ? data.reason : `${data?.makers.length ?? 0} makers with a fill or skip on record`}
-        </span>
-      </div>
-      {data?.available && data.makers.length > 0 ? (
-        <div className={s.tableWrap}>
-          <table className={s.table}>
-            <thead>
-              <tr>
-                <th>Maker</th>
-                <th>Filled</th>
-                <th>Skipped</th>
-                <th>Flake rate</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.makers.map((m) => (
-                <tr key={m.maker}>
-                  <td className="num">{short(m.maker)}</td>
-                  <td className="num">{m.fillsCount}</td>
-                  <td className="num">{m.skipsCount}</td>
-                  <td className="num">{(m.flakeRate * 100).toFixed(1)}%</td>
-                  <td>
-                    <span
-                      className={`${s.badge} ${m.status === "RELIABLE" ? s.badgeOk : s.badgeLoss}`}
-                    >
-                      {m.status.toLowerCase()}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        !loading &&
-        data?.available && (
-          <p className={s.empty}>
-            No maker has been caught unable to deliver, or filled, against this network&apos;s
-            Tap hook in the recent window yet &mdash; the hook is new, not the finding empty.
-          </p>
-        )
-      )}
-    </section>
-  );
-}
-
-/** What is answering, and if it is the fallback, how far the index still has to
- *  go. A subgraph mid-sync answers every query truthfully and uselessly, so the
- *  distinction belongs on screen rather than buried in a JSON field. */
-function indexLabel(makers: MakersResponse | null): ReactNode {
-  if (!makers) return <span className={s.loadingDots}>reading…</span>;
-  if (!makers.index) return "rpc log paging";
-  if (makers.index.ready) return "aquifer subgraph";
-  if (makers.index.state === "syncing") {
-    const behind = Number(makers.index.behind).toLocaleString();
-    return `rpc fallback — index ${behind} blocks behind`;
-  }
-  return `rpc fallback — index ${makers.index.state}`;
-}
-
-/* Every address, linked. A judge should be able to leave this page and confirm
-   on a block explorer that the contracts exist and the pool is empty, rather
-   than taking a screenshot's word for it. Aqua and the router are marked when
-   they are ours, because on a testnet they are — 1inch have never deployed Aqua
-   to one — and quietly implying otherwise would be the wrong kind of shortcut. */
-function Deployed({ net }: { net: Network }) {
-  const rows: [string, string, boolean][] = [
-    ["Tap — the v4 hook", net.hook, false],
-    ["Wellhead — the router your wallet calls", net.wellhead, false],
-    ["Lens — the solvency read", net.lens, false],
-    ["Aqua", net.aqua, net.aquaIsOurs],
-    ["SwapVM router", net.router, net.aquaIsOurs],
-    ["Uniswap v4 PoolManager", net.poolManager, false],
-  ];
-  return (
-    <section className={s.deployed}>
-      <div className={s.sectionHead}>
-        <h2 className={s.sectionTitle}>Deployed on {net.label}</h2>
-        <span className="label">verify every one of these</span>
-      </div>
-      <ul className={s.deployList}>
-        {rows.map(([what, addr, ours]) =>
-          addr ? (
-            <li key={what}>
-              <span className={s.deployWhat}>
-                {what}
-                {ours ? <span className={s.ours}>our deployment</span> : null}
-              </span>
-              <a
-                className="num hex"
-                href={`${net.explorer}/address/${addr}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {short(addr)}
-              </a>
-            </li>
-          ) : null
-        )}
-      </ul>
-      {net.aquaIsOurs && (
-        <p className={s.deployNote}>
-          1inch have never deployed Aqua to a testnet, so Aqua and the SwapVM router
-          here are ours — built unmodified from their sources, which their licence
-          permits and their team confirmed. The router is tag <code>v1.0.2</code>:
-          <code> main</code> has renumbered the opcodes and will not run the SDK&apos;s
-          own programs.
-        </p>
-      )}
-    </section>
-  );
-}
-
-/* Two networks, two jobs — said plainly rather than left as a chain id.
-   Mainnet is other people's real Aqua and cannot be transacted against here;
-   Sepolia is our own deployment, where anyone can swap for nothing. */
-function NetworkSwitch({
-  chainId,
-  onChange,
-}: {
-  chainId: NetworkId;
-  onChange: (id: NetworkId) => void;
-}) {
-  const net = NETWORKS[chainId];
-  return (
-    <div className={s.netRow}>
-      <div className={s.netTabs} role="tablist" aria-label="Network">
-        {([8453, 1, 84532] as NetworkId[]).map((id) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={id === chainId}
-            className={`${s.netTab} ${id === chainId ? s.netTabOn : ""}`}
-            onClick={() => onChange(id)}
-          >
-            {NETWORKS[id].label}
-            {NETWORKS[id].testnet ? <span className={s.netFree}>free</span> : null}
-          </button>
-        ))}
-      </div>
-      <p className={s.netPurpose}>{net.purpose}</p>
-    </div>
-  );
-}
-
-/* Multiple pairs when available on this network.
-   Selecting a pair clears derived state and switches the trading desk's currencies. */
-function PairSwitch({
-  pairs,
-  pairId,
-  currentPair,
-  onChange,
-  onOpenSearch,
-}: {
-  pairs: PairConfig[];
-  pairId: string;
-  currentPair: PairConfig;
-  onChange: (id: string) => void;
-  onOpenSearch: () => void;
-}) {
-  const displayedPairs = pairs.slice(0, 3);
-  if (!displayedPairs.some((p) => p.id === currentPair.id)) {
-    displayedPairs.push(currentPair);
-  }
-
-  return (
-    <div className={s.pairRow}>
-      <div className={s.netTabs} role="tablist" aria-label="Trading pair">
-        {displayedPairs.map((p) => (
-          <button
-            key={p.id}
-            role="tab"
-            aria-selected={p.id === pairId}
-            className={`${s.netTab} ${p.id === pairId ? s.netTabOn : ""}`}
-            onClick={() => onChange(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          className={s.searchPairBtn}
-          onClick={onOpenSearch}
-          title="Search all tokens or paste address"
-        >
-          <span>🔍</span>
-          <span>Find pair</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* Everything a swapper needs to act, and nothing they do not.
-   The states worth distinguishing are: no wallet extension at all, a wallet on
-   the wrong chain, a route with nothing to fill, and a router that was never
-   deployed on this chain -- each of which is a different thing to do next. */
-function SwapAction({
-  route,
-  busy,
-  tx,
-  balance,
-  decimals,
-  outDecimals,
-  outSymbol,
-  explorer,
-  wellhead,
-  chainLabel,
-  address,
-  wrongChain,
-  onSwitch,
-  onSwap,
-  onReload,
-}: {
-  route: RouteResponse | null;
-  busy: boolean;
-  tx: { phase: string; hash?: string; note?: string; received?: bigint };
-  balance: bigint | null;
-  decimals: number;
-  outDecimals: number;
-  outSymbol: string;
-  explorer: string;
-  wellhead: string;
-  chainLabel: string;
-  address?: string;
-  wrongChain: boolean;
-  onSwitch: () => void;
-  onSwap: () => void;
-  onReload: () => void;
-}) {
-  const nothingToFill = !route?.hookData || route.amountFilled === "0";
-  const short_ =
-    balance !== null && route !== null && balance < BigInt(route.amountFilled || "0");
-  const pending = tx.phase === "approving" || tx.phase === "swapping";
-
-  return (
-    <div className={s.actions}>
-      {!wellhead ? (
-        <p className={s.note}>
-          Read-only on this network: no Wellhead router is deployed here. Everything
-          above still reads the chain directly — switch to Base Sepolia to trade.
-        </p>
-      ) : !address ? (
-        // RainbowKit's own button: it knows which wallets are installed, offers a
-        // QR for mobile when a WalletConnect id is configured, and disconnects for
-        // real rather than just forgetting the address.
-        <ConnectButton label="Connect wallet" chainStatus="none" showBalance={false} />
-      ) : wrongChain ? (
-        <button onClick={onSwitch}>Switch to {chainLabel}</button>
-      ) : (
-        <button onClick={onSwap} disabled={pending || busy || nothingToFill || short_}>
-          {tx.phase === "approving"
-            ? "Approving..."
-            : tx.phase === "swapping"
-              ? "Swapping..."
-              : nothingToFill
-                ? "Nothing to fill"
-                : short_
-                  ? "Not enough to swap"
-                  : "Swap"}
-        </button>
-      )}
-
-      <button className={s.secondary} onClick={onReload} disabled={busy}>
-        {busy ? "Reading..." : "Re-quote"}
-      </button>
-
-      {address && (
-        <span className={s.account}>
-          <ConnectButton chainStatus="none" showBalance={false} accountStatus="address" />
-        </span>
-      )}
-
-      {tx.phase === "done" && (
-        <p className={s.note}>
-          {tx.note
-            ? `Swap ${tx.note}. `
-            : tx.received !== undefined
-              ? `Filled. ${units(tx.received, outDecimals, 6)} ${outSymbol} received, and the pool still holds nothing. `
-              : "Filled, and the pool still holds nothing. "}
-          {tx.hash && explorer ? (
-            <a href={`${explorer}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="hex num">
-              {short(tx.hash)}
-            </a>
-          ) : (
-            <span className="hex num">{tx.hash ? short(tx.hash) : ""}</span>
-          )}
-        </p>
-      )}
-      {tx.note && tx.phase === "idle" && <p className={s.err}>{tx.note}</p>}
-    </div>
-  );
-}
-
-/* The proof: the whole thesis in one number, read straight out of PoolManager
-   storage via extsload. Not an indexer, not an event -- the slot itself. */
-function PoolProof({ pool }: { pool: PoolResponse | null }) {
-  // Only a live pool's zero means anything. Colour encodes that distinction:
-  // slate for a proven-empty live pool, red for anything else.
-  const proven = pool?.boneDry === true;
-  return (
-    <div className={s.proof}>
-      <div>
-        <span className="label">
-          Pool liquidity, read from PoolManager storage
-          {pool && !pool.initialized ? " — pool not initialized" : ""}
-        </span>
-        <div className={`${s.proofFig} ${proven ? s.proofDry : s.proofWet}`}>
-          {pool ? pool.liquidity : "--"}
-        </div>
-        <p className={s.proofNote}>
-          {pool
-            ? pool.initialized
-              ? "Live pool. Zero before a swap, zero after one."
-              : "Not initialized on this chain, so this zero proves nothing."
-            : "Reading PoolManager storage…"}
-        </p>
-      </div>
-      <div className={s.proofSide}>
-        <span className="label">Pool id</span>
-        <span className="num">{pool ? short(pool.poolId) : "--"}</span>
-        <span className={`label ${s.proofSubLabel}`}>
-          Initialized
-        </span>
-        <span className="num">{pool ? (pool.initialized ? "yes" : "not yet") : "--"}</span>
-      </div>
-    </div>
-  );
-}
-
-/* The book: five columns because five numbers disagree. `virtual` is what the
-   maker promised Aqua; `depth` is what a fill can actually take. The bar shows
-   the gap directly rather than making the reader subtract. */
-function MakerBook({
-  makers,
-  used,
-  decimals,
-  slices,
-}: {
-  makers: MakersResponse | null;
-  used: Set<string>;
-  decimals: number;
-  slices?: RouteResponse["slices"];
-}) {
-  if (!makers) return <p className={s.empty}>Indexing Aqua registry events...</p>;
-  if (makers.makers.length === 0)
-    return (
-      <p className={s.empty}>
-        No live strategy is shipped to this router yet. Aqua&apos;s balance mapping is not
-        enumerable, so an empty book means the registry has no matching Shipped event &mdash; not
-        that the read failed.
-      </p>
-    );
-
-  // A single maker can have dozens of strategies live, most of them holding
-  // nothing for this token. Listing every one buries the two rows that matter,
-  // so dormant strategies are counted rather than enumerated.
-  const live = makers.makers.filter((m) => m.virtual !== "0" || m.depth !== "0");
-  // Sorted by deliverable depth already, so the head of the list is the part a
-  // router would ever touch. The tail is real but it is not a reading.
-  const SHOWN = 8;
-  const rows = (live.length > 0 ? live : makers.makers.slice(0, 1)).slice(0, SHOWN);
-  const hidden = makers.makers.length - rows.length;
-  const max = rows.reduce((a, m) => (BigInt(m.virtual) > a ? BigInt(m.virtual) : a), 1n);
-
-  return (
-    <div className={s.tableWrap}>
-    <table className={s.table}>
-      <thead>
-        <tr>
-          <th>Maker</th>
-          <th>Promised</th>
-          <th>Wallet</th>
-          <th>Allowance</th>
-          <th>Deliverable</th>
-          <th>Shortfall</th>
-          <th>vs Oracle</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((m) => {
-          const isUsed = used.has(m.maker.toLowerCase());
-          const slice = isUsed
-            ? (slices?.find(
-                (s) => s.maker.toLowerCase() === m.maker.toLowerCase() && s.depth === m.depth
-              ) ??
-              slices?.find(
-                (s) => s.maker.toLowerCase() === m.maker.toLowerCase()
-              ))
-            : undefined;
-
-          return (
-            <tr key={`${m.maker}-${m.strategyHash}`} className={isUsed ? s.used : undefined}>
-              <td>
-                <span className="num">{short(m.maker)}</span>
-                <span className={s.bar} aria-hidden>
-                  <span className={s.barFill} style={{ width: `${pct(m.virtual, max)}%` }}>
-                    <span
-                      className={s.barReal}
-                      style={{ width: `${pct(m.depth, m.virtual === "0" ? "1" : m.virtual)}%` }}
-                    />
-                    <span className={s.barGap} />
-                  </span>
-                </span>
-              </td>
-              <td className={`num ${s.dim}`}>{compact(m.virtual, decimals)}</td>
-              <td className={`num ${s.dim}`}>{compact(m.wallet, decimals)}</td>
-              <td className={`num ${s.dim}`}>{compact(m.allowance, decimals)}</td>
-              <td className="num">{compact(m.depth, decimals)}</td>
-              <td className={`num ${m.shortfall !== "0" ? s.loss : s.dim}`}>
-                {m.shortfall === "0" ? "--" : compact(m.shortfall, decimals)}
-              </td>
-              <td>
-                {slice ? (
-                  slice.oracleDeviationBps === null ? (
-                    <span className={s.noOracle}>no oracle for this pair</span>
-                  ) : (
-                    (() => {
-                      const bps = BigInt(slice.oracleDeviationBps);
-                      // 25 bps threshold: Aqua constant-product curves within 25 bps of live oracle
-                      // track par closely; outside 25 bps indicates higher slippage or wider spread.
-                      const isOk = bps >= -25n && bps <= 25n;
-                      return (
-                        <span className={`${s.badge} ${isOk ? s.badgeOk : s.badgeLoss}`}>
-                          {bps > 0n ? `+${bps}` : `${bps}`} bps
-                        </span>
-                      );
-                    })()
-                  )
-                ) : (
-                  <span className={`num ${s.dim}`}>--</span>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-      {hidden > 0 && (
-        <tfoot>
-          <tr>
-            <td colSpan={7} className={`label ${s.dormant}`}>
-              + {hidden} more live {hidden === 1 ? "strategy" : "strategies"}, none with more{" "}
-              {makers.token.symbol} to give than these
-            </td>
-          </tr>
-        </tfoot>
-      )}
-    </table>
-    </div>
-  );
-}
-
-/* The index feeding a contract, checked both ways.
-   Lens.coverage() computes this same ratio on-chain but takes the strategy
-   hashes as calldata -- it cannot enumerate them. The subgraph supplies exactly
-   the list the contract cannot produce, so the two are independent computations
-   over the same facts. When they read different blocks, that is stated rather
-   than resolved: a maker who moved funds in between makes two correct answers
-   look like a bug. */
-function CrossCheck({ check }: { check: CoverageResponse["onchainCrossCheck"] }) {
-  if (!check) return null;
-  const skew = Number(check.blockSkew);
-  return (
-    <p className={s.crossCheck}>
-      <span className="label">Cross-checked on-chain</span>{" "}
-      <span className="num">
-        {check.agreed}/{check.checked} agree with Lens.coverage()
-      </span>
-      {check.disagreements > 0 && (
-        <span className={`num ${s.loss}`}> &middot; {check.disagreements} disagree</span>
-      )}
-      {check.inconclusive > 0 && (
-        <span className={`num ${s.dim}`}>
-          {" "}
-          &middot; {check.inconclusive} inconclusive, index is {skew.toLocaleString()} blocks
-          ahead of this RPC
-        </span>
-      )}
-    </p>
-  );
-}
-
-/* The maker side of the desk.
-   A maker claims an amount for each token and signs raw calldata from /api/strategy.
-   Funds stay in the maker's wallet until filled, but Aqua records the claim
-   immediately. Once confirmed, reloading the maker book picks up the new strategy. */
 function ShipStrategy({
   net,
   tokenIn,
@@ -1608,6 +654,7 @@ function ShipStrategy({
   address,
   wrongChain,
   onShipped,
+  onPickPair,
 }: {
   net: Network;
   tokenIn: Token;
@@ -1615,7 +662,9 @@ function ShipStrategy({
   address?: Address;
   wrongChain: boolean;
   onShipped: () => void;
+  onPickPair?: () => void;
 }) {
+  const [openStep, setOpenStep] = useState<1 | 2 | 3>(1);
   const [claimIn, setClaimIn] = useState("");
   const [claimOut, setClaimOut] = useState("");
   const [feeBps, setFeeBps] = useState("0");
@@ -1628,6 +677,30 @@ function ShipStrategy({
   const [beaconSpreadBps, setBeaconSpreadBps] = useState<number | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
+
+  /**
+   * What this wallet has already promised, and what it actually holds.
+   *
+   * This is the panel the whole screen is built around: Aqua will accept an
+   * over-promise without complaint, so the only place anyone is told is here,
+   * before they sign. Read from the same endpoint Lookup uses, so a maker
+   * checking themselves and a stranger checking them see the same figures.
+   */
+  const [exposure, setExposure] = useState<ExposureResponse | null>(null);
+  useEffect(() => {
+    if (!address) {
+      setExposure(null);
+      return;
+    }
+    let live = true;
+    fetch(`/api/exposure?chain=${net.id}&maker=${address}`)
+      .then((r) => r.json())
+      .then((d: ExposureResponse) => live && !d.error && d.available !== false && setExposure(d))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [address, net.id, shippedHash]);
 
   const isBeaconEligible =
     net.id === 84532 &&
@@ -1793,181 +866,484 @@ function ShipStrategy({
     }
   };
 
+  // Held, already promised, and what is therefore free to promise — all in the
+  // token being claimed. `capacity` floors at zero: a wallet already short does
+  // not have negative room to promise into, it has none.
+  const pos = exposure?.positions.find(
+    (x) => x.token.toLowerCase() === tokenIn.address.toLowerCase()
+  );
+  const held = pos ? BigInt(pos.held) : null;
+  const alreadyPromised = pos ? BigInt(pos.claimed) : 0n;
+  const capacity = held === null ? null : held > alreadyPromised ? held - alreadyPromised : 0n;
+  const thisClaim = (() => {
+    try {
+      return BigInt(toRaw(claimIn || "0", tokenIn.decimals));
+    } catch {
+      return 0n;
+    }
+  })();
+  const coverPct =
+    capacity === null || thisClaim === 0n
+      ? 100
+      : Math.min(100, Number((capacity * 10000n) / thisClaim) / 100);
+  const covered = coverPct >= 100;
+  const shortBy = capacity !== null && thisClaim > capacity ? thisClaim - capacity : 0n;
+
   return (
-    <section className={s.ship}>
-      <div className={s.sectionHead}>
-        <h2 className={s.sectionTitle}>Ship a strategy &mdash; {tokenIn.symbol} / {tokenOut.symbol}</h2>
-        <span className="label">become a maker</span>
-      </div>
-      <div className={s.shipCard}>
-        <div className={s.field}>
-          <div className={s.fieldHead}>
-            <span className="label">Pricing model</span>
-          </div>
-          <div className={s.pricingRow}>
-            <div className={s.pricingTabs} role="radiogroup" aria-label="Pricing model">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={pricing === "xyc"}
-                className={`${s.pricingTab} ${pricing === "xyc" ? s.pricingTabOn : ""}`}
-                onClick={() => setPricing("xyc")}
-              >
-                Constant-product curve
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={pricing === "oracle"}
-                disabled={!isBeaconEligible}
-                className={`${s.pricingTab} ${pricing === "oracle" ? s.pricingTabOn : ""} ${!isBeaconEligible ? s.pricingTabDisabled : ""}`}
-                onClick={() => {
-                  if (isBeaconEligible) setPricing("oracle");
-                }}
-              >
-                Oracle (Chainlink, via Beacon)
-              </button>
-            </div>
-          </div>
-          {!isBeaconEligible ? (
-            <p className={s.shipCaption}>
-              Only available for WETH/USDC on Base Sepolia right now
-            </p>
-          ) : (
-            <p className={s.shipCaption}>
-              {pricing === "oracle"
-                ? "BeaconStrategy: prices off Chainlink oracle mid minus fixed spread via SwapVM opcode 0x20 (Extruction)."
-                : "Standard SwapVM XYC invariant curve."}
-            </p>
-          )}
+    <div className={s.in}>
+      <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
+        <div>
+          <h1 className={`${s.display} ${s.h1}`}>Ship a strategy</h1>
+          <p style={{ margin: 0, color: "var(--ink2)", maxWidth: "60ch", fontSize: 15 }}>
+            Aqua lets you promise the same tokens twice. This is where you&apos;d see it.
+          </p>
         </div>
-
-        <PriceChart
-          chainId={net.id}
-          tokenIn={tokenIn}
-          tokenOut={tokenOut}
-          pricing={pricing}
-          preset={rangePreset}
-          onSelectPreset={handleSelectPreset}
-          onSpotPrice={setSpotPrice}
-        />
-
-        <div className={s.field}>
-          <div className={s.fieldHead}>
-            <span className="label">Claim {tokenIn.symbol}</span>
-          </div>
-          <div className={s.amountRow}>
-            <input
-              value={claimIn}
-              inputMode="decimal"
-              onChange={(e) => {
-                // Typing in either claim field is a deliberate override of
-                // whatever a preset last filled in -- so, symmetrically with
-                // "you receive" below, it drops to "custom" and only touches
-                // the field being edited. Auto-recalculating the other field
-                // here too would mean the two inputs behave differently
-                // depending on which one the user happens to type into first.
-                setClaimIn(e.target.value);
-                setRangePreset("custom");
-              }}
-              aria-label={`Claim amount for ${tokenIn.symbol}`}
-              placeholder="0.0"
-            />
-            <span className={s.ticker}>
-              <TokenIcon chainId={net.id} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
-              {tokenIn.symbol}
-            </span>
-          </div>
-        </div>
-
-        <div className={s.field}>
-          <div className={s.fieldHead}>
-            <span className="label">Claim {tokenOut.symbol}</span>
-          </div>
-          <div className={s.amountRow}>
-            <input
-              value={claimOut}
-              inputMode="decimal"
-              onChange={(e) => {
-                setClaimOut(e.target.value);
-                setRangePreset("custom");
-              }}
-              aria-label={`Claim amount for ${tokenOut.symbol}`}
-              placeholder="0.0"
-            />
-            <span className={s.ticker}>
-              <TokenIcon chainId={net.id} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
-              {tokenOut.symbol}
-            </span>
-          </div>
-        </div>
-
-        {pricing === "oracle" ? (
-          <div className={s.field}>
-            <div className={s.fieldHead}>
-              <span className="label">Your fee (spread)</span>
+        {onPickPair && (
+          <button
+            type="button"
+            className={s.ticker}
+            onClick={onPickPair}
+            style={{ cursor: "pointer", padding: "5px 14px 5px 8px" }}
+            title="Change trading pair"
+          >
+            <div style={{ display: "flex", alignItems: "center", marginRight: 2 }}>
+              <TokenIcon chainId={net.id} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={20} />
+              <span style={{ marginLeft: -4 }}>
+                <TokenIcon chainId={net.id} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={20} />
+              </span>
             </div>
-            <div className={s.amountRow}>
-              <input
-                value={beaconSpreadBps === null ? "…" : String(beaconSpreadBps)}
-                disabled
-                readOnly
-                aria-label="Fee in basis points"
-                className={s.inputDisabled}
-              />
-              <span className={s.ticker}>bps (fixed)</span>
-            </div>
-            <p className={s.shipCaption}>
-              {beaconSpreadBps === null
-                ? "Reading the deployed contract's fixed spread…"
-                : `BeaconStrategy charges a fixed ${(beaconSpreadBps / 100).toFixed(2)}% spread, read live from the contract — not configurable here`}
-            </p>
-          </div>
-        ) : (
-          <div className={s.field}>
-            <div className={s.fieldHead}>
-              <span className="label">Your fee (bps)</span>
-            </div>
-            <div className={s.amountRow}>
-              <input
-                value={feeBps}
-                inputMode="numeric"
-                onChange={(e) => setFeeBps(e.target.value)}
-                aria-label="Fee in basis points"
-                placeholder="0"
-              />
-              <span className={s.ticker}>bps</span>
-            </div>
-            <p className={s.shipCaption}>Spread you earn on every fill. 0 is fine to start.</p>
-          </div>
+            <span style={{ fontWeight: 600 }}>{tokenIn.symbol} / {tokenOut.symbol}</span>
+            <span style={{ fontSize: 10, color: "var(--ink3)", marginLeft: 4 }}>▾</span>
+          </button>
         )}
+      </div>
 
-        <div className={s.actions}>
-          <button onClick={handleShip} disabled={disabled}>
+      <div className={s.cols}>
+        <div className={s.stack} style={{ flex: "2 1 480px", minWidth: 0 }}>
+          {/* ── 01 · Pricing mechanism ── */}
+          <section className={`${s.card} ${s.cardPad}`}>
+            <button
+              type="button"
+              onClick={() => setOpenStep(1)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                textAlign: "left",
+                marginBottom: openStep === 1 ? 14 : 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span className={s.label} style={{ margin: 0 }}>
+                  01 · Pricing mechanism
+                </span>
+                {openStep !== 1 && (
+                  <span className={s.pill} style={{ fontSize: 11 }}>
+                    {pricing === "oracle" ? "Chainlink-priced" : "Constant product"}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: "var(--ink3)" }}>
+                {openStep === 1 ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {openStep === 1 && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 10, borderBottom: "1px solid var(--line)" }}>
+                  <span style={{ fontSize: 13, color: "var(--ink2)" }}>Target pair:</span>
+                  {onPickPair && (
+                    <button
+                      type="button"
+                      className={s.ticker}
+                      onClick={onPickPair}
+                      style={{ cursor: "pointer", padding: "3px 10px 3px 6px", fontSize: 11.5 }}
+                      title="Change trading pair"
+                    >
+                      <div style={{ display: "flex", alignItems: "center", marginRight: 2 }}>
+                        <TokenIcon chainId={net.id} address={tokenIn.address as Address} symbol={tokenIn.symbol} size={16} />
+                        <span style={{ marginLeft: -4 }}>
+                          <TokenIcon chainId={net.id} address={tokenOut.address as Address} symbol={tokenOut.symbol} size={16} />
+                        </span>
+                      </div>
+                      <span>{tokenIn.symbol} / {tokenOut.symbol}</span>
+                      <span style={{ fontSize: 9, color: "var(--ink3)", marginLeft: 3 }}>▾</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className={s.modelGrid} role="radiogroup" aria-label="Pricing model">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={pricing === "xyc"}
+                    className={`${s.model} ${pricing === "xyc" ? s.modelOn : ""}`}
+                    onClick={() => setPricing("xyc")}
+                  >
+                    <span className={s.modelName}>Constant product</span>
+                    <span className={s.modelDesc}>
+                      A curve. Price moves with every fill, no external input, always quotable.
+                    </span>
+                    <span className={s.modelNote}>available on every network</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={pricing === "oracle"}
+                    disabled={!isBeaconEligible}
+                    className={`${s.model} ${pricing === "oracle" ? s.modelOn : ""} ${!isBeaconEligible ? s.modelOff : ""}`}
+                    onClick={() => {
+                      if (isBeaconEligible) setPricing("oracle");
+                    }}
+                  >
+                    <span className={s.modelName}>Chainlink-priced</span>
+                    <span className={s.modelDesc}>
+                      Quotes off the oracle answer minus a fixed spread. No curve, no impact — and it
+                      stops quoting when the feed goes stale.
+                    </span>
+                    <span
+                      className={s.modelNote}
+                      style={!isBeaconEligible ? { color: "var(--tan)" } : undefined}
+                    >
+                      {isBeaconEligible ? "available here" : "WETH/USDC on Base Sepolia only"}
+                    </span>
+                  </button>
+                </div>
+
+                <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className={`${s.btn} ${s.btnSolid}`}
+                    onClick={() => setOpenStep(2)}
+                  >
+                    Next: Depth &amp; range →
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* ── 02 · Depth and range ── */}
+          <section className={`${s.card} ${s.cardPad}`}>
+            <button
+              type="button"
+              onClick={() => setOpenStep(2)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                textAlign: "left",
+                marginBottom: openStep === 2 ? 14 : 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span className={s.label} style={{ margin: 0 }}>
+                  02 · Depth and range
+                </span>
+                {openStep !== 2 && (
+                  <span className={s.pill} style={{ fontSize: 11 }}>
+                    {rangePreset === "full" ? "Full range" : rangePreset === "custom" ? "Custom" : `±${rangePreset}%`}
+                    {spotPrice ? ` · $${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ""}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: "var(--ink3)" }}>
+                {openStep === 2 ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {openStep === 2 && (
+              <>
+                <DepthChart
+                  chainId={net.id}
+                  tokenIn={tokenIn}
+                  tokenOut={tokenOut}
+                  pricing={pricing}
+                  preset={rangePreset}
+                  spreadBps={beaconSpreadBps}
+                  onSelectPreset={handleSelectPreset}
+                  onSpotPrice={setSpotPrice}
+                />
+                <p style={{ margin: "14px 0 0", fontSize: 13, color: "var(--ink3)", maxWidth: "78ch" }}>
+                  The curve is the depth <em>your</em> strategy offers at each price, computed from your
+                  claim. Chainlink returns one answer, not a series, so no historical price line is drawn.
+                </p>
+                <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className={s.btn}
+                    onClick={() => setOpenStep(1)}
+                  >
+                    ← Back: Pricing
+                  </button>
+                  <button
+                    type="button"
+                    className={`${s.btn} ${s.btnSolid}`}
+                    onClick={() => setOpenStep(3)}
+                  >
+                    Next: Claim &amp; fee →
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* ── 03 · Claim and fee ── */}
+          <section className={`${s.card} ${s.cardPad}`}>
+            <button
+              type="button"
+              onClick={() => setOpenStep(3)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                textAlign: "left",
+                marginBottom: openStep === 3 ? 14 : 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span className={s.label} style={{ margin: 0 }}>
+                  03 · Claim and fee
+                </span>
+                {openStep !== 3 && (
+                  <span className={s.pill} style={{ fontSize: 11 }}>
+                    {claimIn || "0"} {tokenIn.symbol} / {claimOut || "0"} {tokenOut.symbol}
+                    {pricing === "oracle" ? (beaconSpreadBps !== null ? ` · ${beaconSpreadBps} bps spread` : "") : ` · ${feeBps || "0"} bps fee`}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: "var(--ink3)" }}>
+                {openStep === 3 ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {openStep === 3 && (
+              <>
+                <div className={s.claimGrid}>
+                  <div className={`${s.claimBox} ${covered ? "" : s.claimBoxWarn}`}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                      <span className={s.label} style={{ fontSize: 9.5, letterSpacing: ".11em" }}>
+                        Claim {tokenIn.symbol}
+                      </span>
+                      <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+                        held {held === null ? "—" : units(held, tokenIn.decimals, 2)}
+                      </span>
+                    </div>
+                    <input
+                      className={s.claimIn}
+                      value={claimIn}
+                      inputMode="decimal"
+                      onChange={(e) => {
+                        setClaimIn(e.target.value);
+                        setRangePreset("custom");
+                      }}
+                      aria-label={`Claim amount for ${tokenIn.symbol}`}
+                      placeholder="0.0"
+                    />
+                  </div>
+
+                  <div className={s.claimBox}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                      <span className={s.label} style={{ fontSize: 9.5, letterSpacing: ".11em" }}>
+                        Claim {tokenOut.symbol}
+                      </span>
+                    </div>
+                    <input
+                      className={s.claimIn}
+                      value={claimOut}
+                      inputMode="decimal"
+                      onChange={(e) => {
+                        setClaimOut(e.target.value);
+                        setRangePreset("custom");
+                      }}
+                      aria-label={`Claim amount for ${tokenOut.symbol}`}
+                      placeholder="0.0"
+                    />
+                  </div>
+
+                  <div className={s.claimBox}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                      <span className={s.label} style={{ fontSize: 9.5, letterSpacing: ".11em" }}>
+                        Your fee
+                      </span>
+                      <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+                        {pricing === "oracle" ? "bps · fixed" : "bps"}
+                      </span>
+                    </div>
+                    {pricing === "oracle" ? (
+                      <span className={s.claimIn} style={{ display: "block", color: "var(--ink3)" }}>
+                        {beaconSpreadBps === null ? "…" : beaconSpreadBps}
+                      </span>
+                    ) : (
+                      <input
+                        className={s.claimIn}
+                        value={feeBps}
+                        inputMode="numeric"
+                        onChange={(e) => setFeeBps(e.target.value)}
+                        aria-label="Fee in basis points"
+                        placeholder="0"
+                      />
+                    )}
+                  </div>
+                </div>
+                <p style={{ margin: "12px 0 0", fontSize: 13, color: "var(--ink3)" }}>
+                  {pricing === "oracle"
+                    ? beaconSpreadBps === null
+                      ? "Reading the deployed contract's fixed spread…"
+                      : `BeaconStrategy charges a fixed ${(beaconSpreadBps / 100).toFixed(2)}% spread, read live from the contract — not configurable here.`
+                    : "Spread you earn on every fill. 0 is fine to start."}
+                </p>
+                <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-start" }}>
+                  <button
+                    type="button"
+                    className={s.btn}
+                    onClick={() => setOpenStep(2)}
+                  >
+                    ← Back: Depth &amp; range
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+
+        <aside
+          style={{
+            flex: "1 1 320px",
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            position: "sticky",
+            top: 84,
+            alignSelf: "flex-start",
+          }}
+        >
+          <section className={`${s.coverCard} ${covered ? "" : s.coverCardWarn}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span className={s.pulseDot}>
+                <span style={{ background: covered ? "var(--ink)" : "var(--short)" }} />
+                <span style={{ background: covered ? "var(--ink)" : "var(--short)" }} />
+              </span>
+              <p className={s.label} style={{ margin: 0, letterSpacing: ".14em" }}>
+                If you publish this
+              </p>
+            </div>
+
+            {!address ? (
+              <p style={{ margin: 0, fontSize: 14.5, color: "var(--ink2)" }}>
+                Connect a wallet and this becomes a live check against what you actually hold.
+              </p>
+            ) : held === null ? (
+              <p style={{ margin: 0, fontSize: 14.5, color: "var(--ink2)" }}>
+                Reading what you hold and what you have already promised…
+              </p>
+            ) : (
+              <>
+                <p
+                  className={`${s.coverFig} ${s.roll}`}
+                  style={{ color: covered ? "var(--ink)" : "var(--short)" }}
+                >
+                  {Math.round(coverPct)}%
+                </p>
+                <p style={{ margin: "0 0 16px", fontSize: 14.5, color: "var(--ink2)", textWrap: "pretty" }}>
+                  {covered
+                    ? "Every promise you have out, including this one, is covered by tokens you actually hold."
+                    : `Publishing this leaves you ${units(shortBy, tokenIn.decimals, 2)} ${tokenIn.symbol} short. Aqua will accept it. Bone Dry will list you.`}
+                </p>
+                <div className={s.bar} style={{ height: 8, marginBottom: 14, width: "100%" }}>
+                  <span
+                    className={s.barFill}
+                    style={{ width: `${coverPct}%`, background: covered ? "var(--ink)" : "var(--short)" }}
+                  />
+                </div>
+                {[
+                  { label: "Held in wallet", value: units(held, tokenIn.decimals, 2), warn: false },
+                  {
+                    label: "Already promised",
+                    value: units(alreadyPromised, tokenIn.decimals, 2),
+                    warn: false,
+                  },
+                  {
+                    label: "Free to promise",
+                    value: units(capacity ?? 0n, tokenIn.decimals, 2),
+                    warn: false,
+                  },
+                  { label: "This strategy claims", value: claimIn || "0", warn: !covered },
+                ].map((c) => (
+                  <div className={s.kv} key={c.label} style={{ fontSize: 13.5 }}>
+                    <span style={{ color: "var(--ink3)" }}>{c.label}</span>
+                    <span
+                      className={s.mono}
+                      style={{ fontSize: 12, color: c.warn ? "var(--short)" : "var(--ink)" }}
+                    >
+                      {c.value}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+            <p style={{ margin: "14px 0 0", fontSize: 13, color: "var(--ink3)" }}>
+              Aqua accepts an over-promise without complaint. This is Bone Dry&apos;s own check, run
+              against you before you sign.
+            </p>
+          </section>
+
+          <button
+            className={`${s.btnBlock} ${!covered && address ? s.btnBlockShort : ""}`}
+            style={{ marginTop: 0 }}
+            onClick={handleShip}
+            disabled={disabled}
+          >
             {busy
-              ? "Shipping..."
+              ? "Shipping…"
               : !address
-                ? "Connect wallet"
+                ? "Connect wallet to publish"
                 : wrongChain
-                  ? "Wrong network"
+                  ? "Switch network to publish"
                   : amountInvalid
                     ? "Enter claim amounts"
-                    : "Ship this strategy"}
+                    : covered
+                      ? "Publish strategy"
+                      : "Publish anyway — over-promised"}
           </button>
-        </div>
 
-        {shippedHash && (
-          <div className={s.shipSuccess}>
-            <p className={s.note}>
-              Shipped. You are now a maker on this pair. Strategy hash:{" "}
-              <span className="hex num">{short(shippedHash)}</span>
+          {shippedHash ? (
+            <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink2)", display: "inline-flex", alignItems: "center" }}>
+              <span>Shipped. You are now a maker on this pair — strategy{" "}</span>
+              <span className={s.mono} style={{ fontSize: 12, margin: "0 4px" }}>
+                {short(shippedHash)}
+              </span>
+              <CopyButton value={shippedHash} title="Copy strategy hash" />
             </p>
-          </div>
-        )}
-
-        {error && <p className={s.err}>{error}</p>}
+          ) : null}
+          {error ? (
+            <p className={s.mono} style={{ margin: 0, fontSize: 11.5, color: "var(--short)" }}>
+              {error}
+            </p>
+          ) : null}
+          <p style={{ margin: 0, fontSize: 13, color: "var(--ink3)" }}>
+            {net.testnet
+              ? `${net.label} — faucet tokens are free, contracts are identical.`
+              : `Live on ${net.label}. One signature; indexed within two seconds.`}
+          </p>
+        </aside>
       </div>
-    </section>
+    </div>
   );
 }
-

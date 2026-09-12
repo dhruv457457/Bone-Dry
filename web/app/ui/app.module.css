@@ -310,6 +310,87 @@
   text-transform: uppercase;
 }
 
+/* Tall Finding Panel in the left rail */
+.findingCard {
+  background: var(--dark);
+  color: var(--dark-text);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+}
+.findingHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.findingStat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.findingFig {
+  font-family: var(--mono);
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--short-bright);
+  letter-spacing: -0.03em;
+}
+.findingSay {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--dark-soft);
+}
+.findingHisto {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 48px;
+  padding-top: 8px;
+  border-bottom: 1px solid var(--dark-rule);
+}
+.findingHistoBar {
+  flex: 1;
+  background: var(--short-bright);
+  border-radius: 2px 2px 0 0;
+  min-height: 3px;
+  transition: height 0.3s ease;
+}
+.findingHistoFull {
+  background: var(--dark-mute);
+}
+.findingAxis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--dark-ghost);
+  margin-top: 4px;
+}
+.findingFoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Collapsed single-line finding strip for Provide and Portfolio */
+.findingLine {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  border-radius: 10px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
 /* ── banners ──────────────────────────────────────────────────────────── */
 .warn {
   border: 1px solid var(--warn-line);
