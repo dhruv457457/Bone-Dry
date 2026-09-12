@@ -462,6 +462,13 @@
 .main { padding: 22px 0 80px; }
 .cols { display: grid; grid-template-columns: minmax(330px, 380px) 1fr; gap: 24px; align-items: start; }
 @media (max-width: 1080px) { .cols { grid-template-columns: 1fr; } }
+
+/* Provide is a builder, not a readout. Its left column carries two sliders with
+   presets, a sibling allocation list, the completeness warning and the ship
+   button, and 380px squeezes every one of them. The graph keeps the right --
+   it is the thing being explained -- but the controls get room. */
+.colsBuild { grid-template-columns: minmax(430px, 36%) 1fr; }
+@media (max-width: 1080px) { .colsBuild { grid-template-columns: 1fr; } }
 .colNarrow { min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 22px; }
 .colWide { min-width: 0; max-width: 100%; }
 .stack { display: flex; flex-direction: column; gap: 22px; }

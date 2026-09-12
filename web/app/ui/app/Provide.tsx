@@ -53,150 +53,141 @@ export function Provide({
   // Encumbrance Strategy parameters
   const [maxUtilBps, setMaxUtilBps] = useState(8000); // 80% default
   const [widenBps, setWidenBps] = useState(500); // 500 bps = 5% default
-  const [graphMode, setGraphMode] = useState<"curve" | "depth">("curve");
+  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("depth");
   const [showFormulas, setShowFormulas] = useState(false);
+  const [hoverUtil, setHoverUtil] = useState<number | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
 
-  // Exposure data from the index
-  const [exposure, setExposure] = useState<ExposureResponse | null>(null);
-  const [loadingExposure, setLoadingExposure] = useState(false);
-
-  // Target query maker: connected address, or sample maker on Base Sepolia
-  const queryMaker = address || (net.id === 84532 ? "0xe788c06F4f71EebE7F71b00661CA706Ed66fCABe" : undefined);
-
+  // Read fixed spread from BeaconStrategy if oracle pricing is selected
   useEffect(() => {
-    if (!queryMaker) {
-      setExposure(null);
-      return;
-    }
-    let live = true;
-    setLoadingExposure(true);
-    fetch(`/api/exposure?chain=${net.id}&maker=${queryMaker}`)
-      .then((r) => r.json())
-      .then((d: ExposureResponse) => {
-        if (live && !d.error && d.available !== false) setExposure(d);
-      })
-      .catch(() => {})
-      .finally(() => live && setLoadingExposure(false));
-    return () => {
-      live = false;
-    };
-  }, [queryMaker, net.id, shippedHash]);
-
-  const isBeaconEligible =
-    net.id === 84532 &&
-    ((tokenIn.address.toLowerCase() === net.weth.toLowerCase() && tokenOut.address.toLowerCase() === net.usdc.toLowerCase()) ||
-     (tokenIn.address.toLowerCase() === net.usdc.toLowerCase() && tokenOut.address.toLowerCase() === net.weth.toLowerCase()));
-
-  useEffect(() => {
-    setShippedHash(null);
-    setError(null);
-    setBusy(false);
-    setPricing("xyc");
-  }, [net.id]);
-
-  useEffect(() => {
-    if (!isBeaconEligible && pricing === "oracle") {
-      setPricing("xyc");
-    }
-  }, [isBeaconEligible, pricing]);
-
-  useEffect(() => {
-    if (!isBeaconEligible) return;
+    if (pricing !== "oracle") return;
     let active = true;
-    fetch(`/api/beacon-spread?chain=${net.id}`)
-      .then((r) => r.json())
-      .then((json: { available: boolean; spreadBps?: number }) => {
-        if (active) setBeaconSpreadBps(json.available ? json.spreadBps ?? null : null);
+    const client = publicClientFor(net);
+    const BEACON_STRATEGY: Address = "0x7890123456789012345678901234567890123456";
+    const BEACON_ABI = [
+      {
+        type: "function",
+        name: "fixedSpreadBps",
+        inputs: [],
+        outputs: [{ name: "", type: "uint16" }],
+        stateMutability: "view",
+      },
+    ] as const;
+
+    client
+      .readContract({
+        address: BEACON_STRATEGY,
+        abi: BEACON_ABI,
+        functionName: "fixedSpreadBps",
+      })
+      .then((val) => {
+        if (active) setBeaconSpreadBps(Number(val));
       })
       .catch(() => {
-        if (active) setBeaconSpreadBps(null);
+        if (active) setBeaconSpreadBps(50); // 50 bps fallback
       });
+
     return () => {
       active = false;
     };
-  }, [isBeaconEligible, net.id]);
+  }, [pricing, net]);
 
-  const calcClaimOut = useCallback(
-    (inStr: string, _preset: RangePreset, spot: number | null) => {
-      if (!spot || spot <= 0) return;
-      const numIn = parseFloat(inStr);
-      if (isNaN(numIn) || numIn <= 0) return;
-
-      const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
-      const isWethOut = tokenOut.symbol.toUpperCase() === "WETH";
-
-      if (isWethIn) {
-        const out = numIn * spot;
-        setClaimOut(out.toFixed(2));
-      } else if (isWethOut) {
-        const out = numIn / spot;
-        setClaimOut(out.toFixed(4));
-      } else {
-        const out = numIn * spot;
-        setClaimOut(out.toFixed(tokenOut.decimals <= 6 ? 2 : 4));
-      }
-    },
-    [tokenIn.symbol, tokenOut.symbol, tokenOut.decimals]
-  );
-
-  const handleSelectPreset = useCallback(
-    (p: RangePreset) => {
-      setRangePreset(p);
-      if (!spotPrice || spotPrice <= 0) return;
-
-      let currentIn = claimIn;
-      if (!currentIn || parseFloat(currentIn) <= 0 || isNaN(parseFloat(currentIn))) {
-        const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
-        currentIn = isWethIn ? "0.5" : "1000";
-        setClaimIn(currentIn);
-      }
-      calcClaimOut(currentIn, p, spotPrice);
-    },
-    [claimIn, spotPrice, tokenIn.symbol, calcClaimOut]
-  );
+  // Read maker's live exposure from /api/exposure
+  const [exposure, setExposure] = useState<ExposureResponse | null>(null);
+  const [exposureLoading, setExposureLoading] = useState(false);
 
   useEffect(() => {
-    if (spotPrice && spotPrice > 0 && !claimIn && !claimOut) {
-      const isWethIn = tokenIn.symbol.toUpperCase() === "WETH";
-      const isWethOut = tokenOut.symbol.toUpperCase() === "WETH";
-      const initialIn = isWethIn ? "0.5" : "1000";
-      setClaimIn(initialIn);
-      const initialOut = isWethIn
-        ? (0.5 * spotPrice).toFixed(2)
-        : isWethOut
-        ? (1000 / spotPrice).toFixed(4)
-        : "1000";
-      setClaimOut(initialOut);
+    if (!address) {
+      setExposure(null);
+      return;
     }
-  }, [spotPrice, tokenIn.symbol, tokenOut.symbol, claimIn, claimOut]);
+    let active = true;
+    setExposureLoading(true);
+    fetch(`/api/exposure?chain=${net.id}&maker=${address}`)
+      .then((r) => r.json())
+      .then((json: ExposureResponse) => {
+        if (active) setExposure(json);
+      })
+      .catch(() => {
+        if (active) setExposure(null);
+      })
+      .finally(() => {
+        if (active) setExposureLoading(false);
+      });
 
-  const parsedIn = toRaw(claimIn, tokenIn.decimals);
-  const parsedOut = toRaw(claimOut, tokenOut.decimals);
-  const amountInvalid = parsedIn === 0n || parsedOut === 0n;
-  const disabled = !address || wrongChain || amountInvalid || busy;
+    return () => {
+      active = false;
+    };
+  }, [net.id, address]);
 
-  // Exposure metrics for tokenIn
-  const pos = exposure?.positions.find(
-    (x) => x.token.toLowerCase() === tokenIn.address.toLowerCase()
-  );
-  const held = pos ? BigInt(pos.held) : null;
-  const alreadyPromised = pos ? BigInt(pos.claimed) : 0n;
-  const capacity = held === null ? null : held > alreadyPromised ? held - alreadyPromised : 0n;
-  const thisClaim = (() => {
+  // Parse wallet position for tokenIn
+  const tokenInPos = useMemo(() => {
+    if (!exposure?.positions) return null;
+    return exposure.positions.find((p) => p.token.toLowerCase() === tokenIn.address.toLowerCase()) ?? null;
+  }, [exposure, tokenIn.address]);
+
+  const held = useMemo(() => {
+    if (!tokenInPos) return null;
     try {
-      return BigInt(toRaw(claimIn || "0", tokenIn.decimals));
+      return BigInt(tokenInPos.held);
+    } catch {
+      return null;
+    }
+  }, [tokenInPos]);
+
+  const alreadyPromised = useMemo(() => {
+    if (!tokenInPos) return 0n;
+    try {
+      return BigInt(tokenInPos.claimed);
     } catch {
       return 0n;
     }
-  })();
-  const coverPct =
-    capacity === null || thisClaim === 0n
-      ? 100
-      : Math.min(100, Number((capacity * 10000n) / thisClaim) / 100);
-  const covered = coverPct >= 100;
-  const shortBy = capacity !== null && thisClaim > capacity ? thisClaim - capacity : 0n;
+  }, [tokenInPos]);
+
+  const capacity = useMemo(() => {
+    if (held === null) return null;
+    return held > alreadyPromised ? held - alreadyPromised : 0n;
+  }, [held, alreadyPromised]);
+
+  // Sizing helper based on preset
+  const handleSelectPreset = useCallback(
+    (p: RangePreset) => {
+      setRangePreset(p);
+      if (!spotPrice) return;
+      if (claimIn && !claimOut) {
+        const inNum = parseFloat(claimIn);
+        if (!isNaN(inNum) && inNum > 0) {
+          const outEst = inNum / spotPrice;
+          setClaimOut(outEst.toFixed(Math.min(6, tokenOut.decimals)));
+        }
+      } else if (!claimIn && claimOut) {
+        const outNum = parseFloat(claimOut);
+        if (!isNaN(outNum) && outNum > 0) {
+          const inEst = outNum * spotPrice;
+          setClaimIn(inEst.toFixed(Math.min(4, tokenIn.decimals)));
+        }
+      }
+    },
+    [spotPrice, claimIn, claimOut, tokenIn.decimals, tokenOut.decimals]
+  );
+
+  const rawClaimIn = useMemo(() => toRaw(claimIn, tokenIn.decimals), [claimIn, tokenIn.decimals]);
+  const rawClaimOut = useMemo(() => toRaw(claimOut, tokenOut.decimals), [claimOut, tokenOut.decimals]);
+
+  const amountInvalid = rawClaimIn === 0n || rawClaimOut === 0n;
+  const newTotalPromised = alreadyPromised + rawClaimIn;
+  const covered = held === null || newTotalPromised <= held;
+  const shortBy = held !== null && newTotalPromised > held ? newTotalPromised - held : 0n;
+
+  const coverPct = useMemo(() => {
+    if (held === null || held === 0n) return 0;
+    if (newTotalPromised === 0n) return 100;
+    const pct = Number((held * 10000n) / newTotalPromised) / 100;
+    return Math.min(100, Math.max(0, pct));
+  }, [held, newTotalPromised]);
+
+  const disabled = !address || wrongChain || amountInvalid || busy;
 
   // Current utilization of maker wallet for this token (0 to 100)
   const currentUtilPct = held && held > 0n ? Math.min(100, Number((alreadyPromised * 10000n) / held) / 100) : 0;
@@ -219,22 +210,24 @@ export function Provide({
     try {
       const res = await fetch("/api/strategy", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          maker: address,
           chainId: net.id,
+          maker: address,
           tokenIn: tokenIn.address,
           tokenOut: tokenOut.address,
-          amountIn: parsedIn.toString(),
-          amountOut: parsedOut.toString(),
-          feeBps: pricing === "oracle" ? 0 : feeBps ? Number(feeBps) : 0,
+          amountIn: rawClaimIn.toString(),
+          amountOut: rawClaimOut.toString(),
+          feeBps: parseInt(feeBps, 10) || 0,
           pricing,
+          maxUtilBps,
+          widenBps,
         }),
       });
 
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `failed to assemble strategy (${res.status})`);
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
       }
 
       const built = (await res.json()) as { to: Address; data: Hex; strategy: Hex };
@@ -267,18 +260,76 @@ export function Provide({
     }
   };
 
-  // SVG Curve coordinate calculations
-  // Width: 600, Height: 180, Padding: X: 40-580, Y: 20-140
+  // SVG Curve coordinate calculations for Solvency Haircut Curve
+  const SVG_WIDTH = 640;
+  const SVG_HEIGHT = 200;
+  const BASE_AXIS_Y = 165;
+  const TOP_AXIS_Y = 35;
+  const START_X = 40;
+  const END_X = 600;
+  const USABLE_WIDTH = END_X - START_X;
+
   const maxUtilRatio = maxUtilBps / 10000;
-  const cliffX = 40 + maxUtilRatio * 540;
-  const currentUtilX = 40 + (currentUtilPct / 100) * 540;
+  const cliffX = START_X + maxUtilRatio * USABLE_WIDTH;
+  const currentUtilX = START_X + (currentUtilPct / 100) * USABLE_WIDTH;
+
   const currentHaircutBps = Math.round((currentUtilPct / 100) * widenBps);
   const currentQuoteVal = Math.max(0, 1 - (currentUtilPct / 100) * (widenBps / 10000));
 
-  // Path for the haircut curve from 0 to maxUtil
-  const curveStartX = 40;
-  const curveStartY = 35;
-  const curveEndUtilY = 35 + (widenBps / 10000) * 120;
+  /* The curve the contract actually draws.
+   *
+   *   Encumbrance.sol:216
+   *   haircut = mulDiv(amountOut, widenBps * util, 1e8)
+   *
+   * util is in bps, so the haircut fraction is widenBps * utilRatio / 1e4 --
+   * linear in utilisation, with slope widenBps. This previously drew
+   * pow(progress, 1.35) against progress normalised to maxUtilRatio, which was
+   * wrong twice over: an invented convex shape, and a full widenBps haircut at
+   * the cliff when the real figure there is widenBps * maxUtilRatio. At 80% and
+   * 500 bps that is 400 bps, not 500. The metrics row above the chart was
+   * already computing it linearly, so the picture disagreed with its own
+   * caption as well as with the chain.
+   *
+   * A straight line is less decorative than a swoosh. It is what the contract
+   * does, and the cliff is where the drama actually is. */
+  const solvencyCurvePoints = useMemo(() => {
+    const pts: { x: number; y: number; u: number }[] = [];
+    const steps = 50;
+    for (let i = 0; i <= steps; i++) {
+      const u = (i / steps) * maxUtilRatio;
+      const x = START_X + u * USABLE_WIDTH;
+      const haircutFrac = (u * widenBps) / 10000;
+      const y = TOP_AXIS_Y + haircutFrac * 130;
+      pts.push({ x, y, u: u * 100 });
+    }
+    return pts;
+  }, [maxUtilRatio, widenBps]);
+
+  const solvencyCurveD = useMemo(() => {
+    if (solvencyCurvePoints.length === 0) return "";
+    return solvencyCurvePoints.reduce((acc, pt, idx) => {
+      return idx === 0 ? `M ${pt.x.toFixed(1)},${pt.y.toFixed(1)}` : `${acc} L ${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
+    }, "");
+  }, [solvencyCurvePoints]);
+
+  const solvencyAreaD = useMemo(() => {
+    if (solvencyCurvePoints.length === 0) return "";
+    return `${solvencyCurveD} L ${cliffX.toFixed(1)},${BASE_AXIS_Y} L ${START_X},${BASE_AXIS_Y} Z`;
+  }, [solvencyCurveD, cliffX]);
+
+  // Solvency hover calculation
+  const hoverSolvencyData = useMemo(() => {
+    if (hoverUtil === null) return null;
+    const uPct = hoverUtil;
+    const isRefused = uPct >= maxUtilBps / 100;
+    // Same linear law as the curve and as Encumbrance.sol:216.
+    const utilRatio = Math.min(1, uPct / 100);
+    const haircutBpsEst = isRefused ? null : Math.round(utilRatio * widenBps);
+    const quoteOut = isRefused ? "0.0000 (Refused)" : (1 - (haircutBpsEst ?? 0) / 10000).toFixed(4);
+    const x = START_X + (uPct / 100) * USABLE_WIDTH;
+    const y = isRefused ? BASE_AXIS_Y : TOP_AXIS_Y + ((utilRatio * widenBps) / 10000) * 130;
+    return { uPct, isRefused, haircutBpsEst, quoteOut, x, y };
+  }, [hoverUtil, maxUtilBps, widenBps]);
 
   return (
     <div>
@@ -309,8 +360,8 @@ export function Provide({
         )}
       </div>
 
-      <div className={s.cols}>
-        {/* ── Control Column ─────────────────────────────────────────────── */}
+      <div className={`${s.cols} ${s.colsBuild}`}>
+        {/* ── Control Column (Left: All Inputs & Publish Action) ─────────────────────────────── */}
         <div className={s.colNarrow}>
           {/* 1. Live Exposure Card */}
           <section className={`${s.card} ${s.cardPad}`}>
@@ -358,182 +409,44 @@ export function Provide({
               <span
                 className={s.barFill}
                 style={{
-                  width: `${currentUtilPct}%`,
+                  width: `${Math.min(100, currentUtilPct)}%`,
                   background: currentUtilPct >= 80 ? "var(--short)" : "var(--ink)",
                 }}
               />
             </div>
-          </section>
 
-          {/* 2. The Two Encumbrance Parameters */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <span className={s.label} style={{ marginBottom: 12, display: "block" }}>
-              Encumbrance Parameters
-            </span>
-
-            {/* Parameter A: maxUtilBps */}
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>Refusal Ceiling</span>
-                <span className={s.mono} style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  {(maxUtilBps / 100).toFixed(0)}% ({maxUtilBps} bps)
-                </span>
-              </div>
-              <input
-                type="range"
-                min={2000}
-                max={9900}
-                step={100}
-                value={maxUtilBps}
-                onChange={(e) => setMaxUtilBps(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 6 }}
-              />
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                {[5000, 7500, 8000, 9000].map((bps) => (
-                  <button
-                    key={bps}
-                    type="button"
-                    onClick={() => setMaxUtilBps(bps)}
-                    className={`${s.btn} ${s.btnXs} ${maxUtilBps === bps ? s.btnSolid : ""}`}
-                    style={{ flex: 1, padding: "2px 0" }}
-                  >
-                    {bps / 100}%
-                  </button>
-                ))}
-              </div>
-              <p style={{ margin: 0, fontSize: 12.5, color: "var(--ink2)", lineHeight: 1.4 }}>
-                &ldquo;Refuse fills on-chain once more than <strong>{(maxUtilBps / 100).toFixed(0)}%</strong> of my wallet is promised across sibling strategies.&rdquo;
-              </p>
-            </div>
-
-            {/* Parameter B: widenBps */}
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>Spread Widening</span>
-                <span className={s.mono} style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  {(widenBps / 100).toFixed(2)}% ({widenBps} bps)
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={1500}
-                step={50}
-                value={widenBps}
-                onChange={(e) => setWidenBps(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 6 }}
-              />
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                {[100, 250, 500, 1000].map((bps) => (
-                  <button
-                    key={bps}
-                    type="button"
-                    onClick={() => setWidenBps(bps)}
-                    className={`${s.btn} ${s.btnXs} ${widenBps === bps ? s.btnSolid : ""}`}
-                    style={{ flex: 1, padding: "2px 0" }}
-                  >
-                    {bps} bps
-                  </button>
-                ))}
-              </div>
-              <p style={{ margin: 0, fontSize: 12.5, color: "var(--ink2)", lineHeight: 1.4 }}>
-                &ldquo;Quote up to <strong>{(widenBps / 100).toFixed(2)}%</strong> wider as wallet utilization approaches the refusal ceiling.&rdquo;
-              </p>
-            </div>
-          </section>
-
-          {/* 3. Sibling List & Completeness */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-              <span className={s.label}>Live Sibling Constraints</span>
-              <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
-                {liveSiblings.length} found in index
-              </span>
-            </div>
-
-            {/* Completeness warning or success */}
-            <div
-              style={{
-                padding: "10px 12px",
-                borderRadius: 8,
-                background: siblingLimitExceeded ? "rgba(194, 78, 25, 0.08)" : "var(--sunk)",
-                border: siblingLimitExceeded ? "1px solid var(--short)" : "1px solid var(--rule)",
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: siblingLimitExceeded ? "var(--short)" : "var(--ink)",
-                  }}
-                />
-                <span
-                  className={s.mono}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: siblingLimitExceeded ? "var(--short)" : "var(--ink)",
-                  }}
-                >
-                  {siblingLimitExceeded
-                    ? "UNDER-CONSTRAINED LIST"
-                    : liveSiblings.length > 0
-                    ? "COMPLETE CONSTRAINT SET"
-                    : "FIRST STRATEGY FOR MAKER"}
-                </span>
-              </div>
-              <p style={{ margin: 0, fontSize: 12.5, color: "var(--ink2)", lineHeight: 1.4 }}>
-                {siblingLimitExceeded
-                  ? `You have ${liveSiblings.length} live strategies. SwapVM caps instruction args at 255 bytes (max 6 siblings). The remaining ${liveSiblings.length - 6} strategies cannot be constrained on-chain.`
-                  : liveSiblings.length > 0
-                  ? `All ${liveSiblings.length} live siblings on this token will be registered into declaredTotalEncumbrance.`
-                  : "No prior live strategies on this token. Your strategy will be fully backed."}
-              </p>
-            </div>
-
-            {/* Sibling items */}
-            {liveSiblings.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto" }}>
-                {liveSiblings.slice(0, 6).map((strat, idx) => {
-                  const matchingSide = strat.sides.find(sd => sd.token.toLowerCase() === tokenIn.address.toLowerCase()) || strat.sides[0];
-                  return (
-                    <div
-                      key={strat.strategyHash}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "6px 8px",
-                        background: "var(--surface)",
-                        border: "1px solid var(--rule)",
-                        borderRadius: 6,
-                        fontSize: 11.5,
-                      }}
-                    >
-                      <span className={s.mono} style={{ color: "var(--ink2)" }}>
-                        #{idx + 1} {shortAddr(strat.strategyHash)}
-                      </span>
-                      <span className={s.mono} style={{ color: "var(--ink)" }}>
-                        {matchingSide ? `${units(matchingSide.claimed, matchingSide.decimals, 2)} ${matchingSide.symbol}` : "0"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 10, color: "var(--ink3)" }}>
-              SwapVM instruction cap: 255 bytes (leaving (255 - 38)/32 = 6 sibling slots).
+            <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)", lineHeight: 1.4 }}>
+              Aqua enforces no limits on commitment size. Bone Dry checks that total commitments remain solvent before routing trades.
             </p>
           </section>
 
-          {/* 4. Claim Inputs & Ship Action */}
+          {/* 2. Sizing, Pricing & Claims */}
           <section className={`${s.card} ${s.cardPad}`}>
             <span className={s.label} style={{ marginBottom: 12, display: "block" }}>
-              Ship Strategy
+              Pricing &amp; Sizing Claims
             </span>
+
+            {/* Pricing Model Segmented Toggle */}
+            <div style={{ marginBottom: 14 }}>
+              <div className={s.seg} style={{ width: "100%" }}>
+                <button
+                  type="button"
+                  onClick={() => setPricing("xyc")}
+                  className={`${s.segBtn} ${pricing === "xyc" ? s.segBtnOn : ""}`}
+                  style={{ flex: 1, textAlign: "center" }}
+                >
+                  Constant Product
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPricing("oracle")}
+                  className={`${s.segBtn} ${pricing === "oracle" ? s.segBtnOn : ""}`}
+                  style={{ flex: 1, textAlign: "center" }}
+                >
+                  Oracle Spread
+                </button>
+              </div>
+            </div>
 
             <div className={s.inset} style={{ marginBottom: 12 }}>
               <div className={s.fieldHead}>
@@ -559,7 +472,7 @@ export function Provide({
               </div>
             </div>
 
-            <div className={s.inset} style={{ marginBottom: 14 }}>
+            <div className={s.inset} style={{ marginBottom: 12 }}>
               <div className={s.fieldHead}>
                 <span className={s.label}>Ask {tokenOut.symbol}</span>
               </div>
@@ -580,19 +493,214 @@ export function Provide({
               </div>
             </div>
 
+            <div className={s.inset} style={{ marginBottom: 14 }}>
+              <div className={s.fieldHead}>
+                <span className={s.label}>Maker Fee</span>
+                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+                  {pricing === "oracle" ? "fixed spread" : "bps"}
+                </span>
+              </div>
+              <div className={s.amountRow}>
+                {pricing === "oracle" ? (
+                  <span className={s.mono} style={{ fontSize: 14, color: "var(--ink3)", padding: "4px 0" }}>
+                    {beaconSpreadBps === null ? "…" : `${beaconSpreadBps} bps (${(beaconSpreadBps / 100).toFixed(2)}%)`}
+                  </span>
+                ) : (
+                  <>
+                    <input
+                      className={s.amountIn}
+                      value={feeBps}
+                      inputMode="numeric"
+                      onChange={(e) => setFeeBps(e.target.value)}
+                      placeholder="0"
+                    />
+                    <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>bps</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Sizing Range Presets Shortcut */}
+            <div style={{ marginBottom: 4 }}>
+              <span className={s.label} style={{ fontSize: 10, display: "block", marginBottom: 6 }}>
+                Range Preset Shortcut:
+              </span>
+              <div className={s.ranges}>
+                {(["10", "20", "full", "custom"] as RangePreset[]).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    role="tab"
+                    aria-selected={rangePreset === p}
+                    onClick={() => handleSelectPreset(p)}
+                    className={`${s.range} ${rangePreset === p ? s.rangeOn : ""}`}
+                  >
+                    {p === "10" ? "±10%" : p === "20" ? "±20%" : p === "full" ? "Full" : "Custom"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* 3. Encumbrance Parameters (The Core Contract Specs) */}
+          <section className={`${s.card} ${s.cardPad}`}>
+            <span className={s.label} style={{ marginBottom: 12, display: "block" }}>
+              Encumbrance Parameters
+            </span>
+
+            {/* Refusal Ceiling */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Refusal Ceiling</span>
+                <span className={s.mono} style={{ fontSize: 13, color: "var(--ink)" }}>
+                  {(maxUtilBps / 100).toFixed(0)}% ({maxUtilBps} bps)
+                </span>
+              </div>
+              <input
+                type="range"
+                min="3000"
+                max="9500"
+                step="500"
+                value={maxUtilBps}
+                onChange={(e) => setMaxUtilBps(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 8 }}
+              />
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[5000, 7500, 8000, 9000].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setMaxUtilBps(v)}
+                    className={`${s.range} ${maxUtilBps === v ? s.rangeOn : ""}`}
+                    style={{ fontSize: 11, padding: "2px 8px" }}
+                  >
+                    {v / 100}%
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink3)" }}>
+                &ldquo;Refuse fills on-chain once more than <strong>{(maxUtilBps / 100).toFixed(0)}%</strong> of my wallet is promised across sibling strategies.&rdquo;
+              </p>
+            </div>
+
+            {/* Spread Widening */}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Spread Widening</span>
+                <span className={s.mono} style={{ fontSize: 13, color: "var(--ink)" }}>
+                  {(widenBps / 100).toFixed(2)}% ({widenBps} bps)
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1500"
+                step="50"
+                value={widenBps}
+                onChange={(e) => setWidenBps(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 8 }}
+              />
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[100, 250, 500, 1000].map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setWidenBps(w)}
+                    className={`${s.range} ${widenBps === w ? s.rangeOn : ""}`}
+                    style={{ fontSize: 11, padding: "2px 8px" }}
+                  >
+                    {w} BPS
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink3)" }}>
+                &ldquo;Quote up to <strong>{(widenBps / 100).toFixed(2)}%</strong> wider as wallet utilization approaches the refusal ceiling.&rdquo;
+              </p>
+            </div>
+          </section>
+
+          {/* 4. Live Sibling Constraints */}
+          <section className={`${s.card} ${s.cardPad}`}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+              <span className={s.label}>Live Sibling Constraints</span>
+              <span className={s.mono} style={{ fontSize: 10, color: "var(--ink3)" }}>
+                {liveSiblings.length} found in index
+              </span>
+            </div>
+
+            {liveSiblings.length === 0 ? (
+              <div style={{ padding: "8px 10px", background: "var(--sunk)", borderRadius: 6, fontSize: 12, color: "var(--ink2)" }}>
+                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
+                  ● FIRST STRATEGY FOR MAKER
+                </span>
+                No prior live strategies on this token. Your strategy will be fully backed with 0 initial encumbrance.
+              </div>
+            ) : siblingLimitExceeded ? (
+              <div style={{ padding: "8px 10px", background: "rgba(194, 78, 25, 0.08)", borderRadius: 6, fontSize: 12, color: "var(--short)" }}>
+                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
+                  ⚠ UNDER-CONSTRAINED ({liveSiblings.length} &gt; 6 siblings)
+                </span>
+                SwapVM instruction limit restricts sibling proofs to 6. Only the first 6 will be verified on-chain.
+              </div>
+            ) : (
+              <div style={{ padding: "8px 10px", background: "var(--sunk)", borderRadius: 6, fontSize: 12, color: "var(--ink2)" }}>
+                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
+                  ✓ COMPLETE ({liveSiblings.length}/6 slots)
+                </span>
+                All {liveSiblings.length} sibling commitment{liveSiblings.length > 1 ? "s" : ""} will be atomically verified by the Encumbrance Strategy contract.
+              </div>
+            )}
+
+            {/* Sibling items */}
+            {liveSiblings.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 130, overflowY: "auto", marginTop: 8 }}>
+                {liveSiblings.slice(0, 6).map((strat, idx) => {
+                  const matchingSide = strat.sides.find((sd) => sd.token.toLowerCase() === tokenIn.address.toLowerCase()) || strat.sides[0];
+                  return (
+                    <div
+                      key={strat.strategyHash}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "5px 8px",
+                        background: "var(--surface)",
+                        border: "1px solid var(--rule)",
+                        borderRadius: 6,
+                        fontSize: 11,
+                      }}
+                    >
+                      <span className={s.mono} style={{ color: "var(--ink2)" }}>
+                        #{idx + 1} {shortAddr(strat.strategyHash)}
+                      </span>
+                      <span className={s.mono} style={{ color: "var(--ink)" }}>
+                        {matchingSide ? `${units(matchingSide.claimed, matchingSide.decimals, 2)} ${matchingSide.symbol}` : "0"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p className={s.mono} style={{ margin: "8px 0 0", fontSize: 10, color: "var(--ink3)" }}>
+              SwapVM instruction cap: 255 bytes (leaving (255 - 38)/32 = 6 sibling slots).
+            </p>
+          </section>
+
+          {/* 5. The Big Action Button (Publish On-Chain) */}
+          <section className={`${s.card} ${s.cardPad}`}>
             <button
               className={`${s.btnBlock} ${!covered && address ? s.btnBlockShort : ""}`}
               onClick={handleShip}
               disabled={disabled}
             >
               {busy
-                ? "Shipping…"
+                ? "Shipping on-chain…"
                 : !address
                 ? "Connect wallet to ship"
                 : wrongChain
                 ? "Switch network to ship"
                 : amountInvalid
-                ? "Enter claim amounts"
+                ? "Enter claim amounts above"
                 : covered
                 ? "Publish Encumbered Strategy"
                 : "Publish anyway — over-promised"}
@@ -613,10 +721,16 @@ export function Provide({
                 {error}
               </p>
             )}
+
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--ink3)", textAlign: "center" }}>
+              {net.testnet
+                ? `${net.label} — contracts are verified and live on-chain.`
+                : `Live on ${net.label}. One signature; indexed within two seconds.`}
+            </p>
           </section>
         </div>
 
-        {/* ── Evidence & Graph Column (Wide) ─────────────────────────────── */}
+        {/* ── Evidence & Graph Column (Right: High-Ratio Hero Visuals) ─────────────────────────────── */}
         <div className={s.colWide}>
           {/* Main Hero Graph Card */}
           <section className={`${s.card} ${s.cardClip}`} style={{ marginBottom: 24 }}>
@@ -626,46 +740,87 @@ export function Provide({
             >
               <div style={{ minWidth: 0 }}>
                 <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
-                  {graphMode === "curve"
-                    ? "Live Solvency & Haircut Response Curve"
-                    : "Depth & Price Range (Oracle Sizing)"}
+                  {graphMode === "depth"
+                    ? "Continuous AMM Liquidity & Depth Curve"
+                    : graphMode === "curve"
+                    ? "Solvency Haircut & On-Chain Refusal Curve"
+                    : "Dual View: AMM Liquidity & Solvency Response"}
                 </h2>
                 <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
-                  {graphMode === "curve"
-                    ? "Real-time haircut curve over wallet utilization with the on-chain refusal cliff."
-                    : "Sizing depth against live Chainlink AggregatorV3 spot rounds."}
+                  {graphMode === "depth"
+                    ? "Continuous bonding curve across price ticks with active range highlight and spot reference."
+                    : graphMode === "curve"
+                    ? "Progressive haircut slope with hard on-chain refusal cliff at the encumbrance ceiling."
+                    : "Continuous AMM bonding depth alongside the on-chain refusal and haircut response."}
                 </p>
               </div>
 
-              {/* Graph Toggle */}
+              {/* 3-Way Graph Mode Toggle */}
               <div className={s.seg}>
-                <button
-                  type="button"
-                  onClick={() => setGraphMode("curve")}
-                  className={`${s.segBtn} ${graphMode === "curve" ? s.segBtnOn : ""}`}
-                >
-                  Solvency Curve
-                </button>
                 <button
                   type="button"
                   onClick={() => setGraphMode("depth")}
                   className={`${s.segBtn} ${graphMode === "depth" ? s.segBtnOn : ""}`}
+                  title="View continuous AMM liquidity depth curve"
                 >
-                  Depth &amp; Range
+                  ✦ AMM Curve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGraphMode("curve")}
+                  className={`${s.segBtn} ${graphMode === "curve" ? s.segBtnOn : ""}`}
+                  title="View solvency haircut and refusal cliff"
+                >
+                  🛡 Solvency Curve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGraphMode("dual")}
+                  className={`${s.segBtn} ${graphMode === "dual" ? s.segBtnOn : ""}`}
+                  title="View both charts simultaneously"
+                >
+                  ◫ Dual View
                 </button>
               </div>
             </div>
 
-            {/* Graph 1: Solvency Response Curve */}
-            {graphMode === "curve" ? (
+            {/* Graph 1: Continuous AMM Liquidity Depth Curve */}
+            {(graphMode === "depth" || graphMode === "dual") && (
+              <div style={{ padding: "20px 22px", borderBottom: graphMode === "dual" ? "1px solid var(--rule)" : "none" }}>
+                {graphMode === "dual" && (
+                  <span className={s.label} style={{ fontSize: 11, marginBottom: 12, display: "block", letterSpacing: ".12em" }}>
+                    01 · Continuous AMM Liquidity Curve
+                  </span>
+                )}
+                <DepthChart
+                  chainId={net.id}
+                  tokenIn={tokenIn}
+                  tokenOut={tokenOut}
+                  pricing={pricing}
+                  preset={rangePreset}
+                  spreadBps={beaconSpreadBps}
+                  onSelectPreset={handleSelectPreset}
+                  onSpotPrice={setSpotPrice}
+                />
+              </div>
+            )}
+
+            {/* Graph 2: Solvency Response Curve with Real Progressive Slope & Cliff */}
+            {(graphMode === "curve" || graphMode === "dual") && (
               <div style={{ padding: "20px 22px" }}>
-                {/* Stat strip over the curve */}
+                {graphMode === "dual" && (
+                  <span className={s.label} style={{ fontSize: 11, marginBottom: 12, display: "block", letterSpacing: ".12em" }}>
+                    02 · Solvency Haircut &amp; On-Chain Refusal Curve
+                  </span>
+                )}
+
+                {/* Metric Strip */}
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
                     gap: 12,
-                    marginBottom: 20,
+                    marginBottom: 18,
                   }}
                 >
                   <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
@@ -681,9 +836,9 @@ export function Provide({
                     </p>
                   </div>
                   <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                    <span className={s.label} style={{ fontSize: 9.5 }}>1.000 WETH Quotes As</span>
+                    <span className={s.label} style={{ fontSize: 9.5 }}>1.000 {tokenIn.symbol} Quotes As</span>
                     <p className={s.mono} style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>
-                      {currentQuoteVal.toFixed(4)} WETH
+                      {currentQuoteVal.toFixed(4)} {tokenIn.symbol}
                     </p>
                   </div>
                   <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
@@ -694,133 +849,204 @@ export function Provide({
                   </div>
                 </div>
 
-                {/* SVG Visualization */}
-                <div style={{ position: "relative", width: "100%", height: 210, background: "var(--surface)", border: "1px solid var(--rule)", borderRadius: 8, overflow: "hidden" }}>
+                {/* The SVG Solvency Response Chart */}
+                <div style={{ position: "relative", width: "100%", userSelect: "none" }}>
                   <svg
-                    viewBox="0 0 600 180"
+                    viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
                     preserveAspectRatio="none"
-                    style={{ width: "100%", height: "100%", display: "block" }}
+                    role="img"
+                    aria-label="Solvency & Haircut Response Curve"
+                    style={{ width: "100%", height: 200, display: "block", overflow: "visible", cursor: "crosshair" }}
+                    onMouseMove={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clientX = e.clientX - rect.left;
+                      const scale = SVG_WIDTH / rect.width;
+                      const u = ((clientX * scale - START_X) / USABLE_WIDTH) * 100;
+                      setHoverUtil(Math.max(0, Math.min(100, u)));
+                    }}
+                    onMouseLeave={() => setHoverUtil(null)}
                   >
-                    {/* Horizontal Grid lines */}
-                    {[35, 75, 115, 155].map((y, idx) => (
-                      <line key={y} x1={40} y1={y} x2={580} y2={y} stroke="var(--rule)" strokeWidth={1} />
-                    ))}
+                    <defs>
+                      <linearGradient id="solvencyAreaGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#059669" stopOpacity={0.22} />
+                        <stop offset="60%" stopColor="#d97706" stopOpacity={0.20} />
+                        <stop offset="100%" stopColor="#dc2626" stopOpacity={0.25} />
+                      </linearGradient>
 
-                    {/* Utilization grid verticals */}
-                    {[0, 25, 50, 75, 100].map((pct) => {
-                      const gx = 40 + (pct / 100) * 540;
+                      <pattern id="refusalHatch" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(194, 78, 25, 0.28)" strokeWidth="1.5" />
+                      </pattern>
+                    </defs>
+
+                    {/* Horizontal Grid */}
+                    {[0, 1, 2, 3].map((i) => {
+                      const yPos = TOP_AXIS_Y + i * 42;
                       return (
-                        <g key={pct}>
-                          <line x1={gx} y1={20} x2={gx} y2={155} stroke="var(--rule)" strokeWidth={1} strokeDasharray="3 3" />
-                          <text x={gx} y={170} textAnchor="middle" fill="var(--ink3)" fontSize={9.5} fontFamily="var(--mono)">
-                            {pct}%
-                          </text>
-                        </g>
+                        <line
+                          key={i}
+                          x1={START_X}
+                          x2={END_X}
+                          y1={yPos}
+                          y2={yPos}
+                          stroke="var(--rule)"
+                          strokeWidth={1}
+                          strokeDasharray="2 4"
+                        />
                       );
                     })}
 
-                    {/* Safe zone fill */}
-                    <polygon
-                      points={`40,155 40,${curveStartY} ${cliffX},${curveEndUtilY} ${cliffX},155`}
-                      fill="var(--ink)"
-                      opacity={0.06}
-                    />
+                    {/* Safe zone area fill under the progressive curve */}
+                    <path d={solvencyAreaD} fill="url(#solvencyAreaGrad)" />
 
-                    {/* Rejection zone fill (past maxUtilBps) */}
+                    {/* Rejection / Refusal zone fill (past maxUtilBps) */}
                     <rect
                       x={cliffX}
-                      y={20}
-                      width={580 - cliffX}
-                      height={135}
-                      fill="rgba(194, 78, 25, 0.05)"
+                      y={TOP_AXIS_Y - 10}
+                      width={END_X - cliffX}
+                      height={BASE_AXIS_Y - (TOP_AXIS_Y - 10)}
+                      fill="url(#refusalHatch)"
                     />
 
-                    {/* Haircut Curve (Linear slope down to maxUtil) */}
-                    <line
-                      x1={curveStartX}
-                      y1={curveStartY}
-                      x2={cliffX}
-                      y2={curveEndUtilY}
+                    {/* The Continuous Haircut Curve Line */}
+                    <path
+                      d={solvencyCurveD}
+                      fill="none"
                       stroke="var(--ink)"
                       strokeWidth={2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
 
-                    {/* Cliff Drop at maxUtil */}
+                    {/* Vertical Cliff Drop at maxUtilBps */}
                     <line
                       x1={cliffX}
-                      y1={curveEndUtilY}
+                      y1={TOP_AXIS_Y + (widenBps / 10000) * 130}
                       x2={cliffX}
-                      y2={155}
+                      y2={BASE_AXIS_Y}
                       stroke="var(--short)"
                       strokeWidth={2.5}
                       strokeDasharray="4 3"
                     />
 
-                    {/* Refusal zone flat zero line */}
+                    {/* Refusal zone zero line */}
                     <line
                       x1={cliffX}
-                      y1={155}
-                      x2={580}
-                      y2={155}
+                      x2={END_X}
+                      y1={BASE_AXIS_Y}
+                      y2={BASE_AXIS_Y}
                       stroke="var(--short)"
                       strokeWidth={2}
                     />
 
-                    {/* Current utilization indicator marker */}
-                    {currentUtilX >= 40 && currentUtilX <= 580 && (
+                    {/* Baseline axis */}
+                    <line x1={START_X} x2={END_X} y1={BASE_AXIS_Y} y2={BASE_AXIS_Y} stroke="var(--ink)" strokeWidth={1.5} />
+
+                    {/* Live maker utilization indicator marker */}
+                    {currentUtilX >= START_X && currentUtilX <= END_X && (
                       <g>
                         <line
                           x1={currentUtilX}
-                          y1={20}
                           x2={currentUtilX}
-                          y2={155}
+                          y1={TOP_AXIS_Y - 10}
+                          y2={BASE_AXIS_Y}
                           stroke="var(--ink)"
                           strokeWidth={1.5}
                           strokeDasharray="2 2"
                         />
                         <circle
                           cx={currentUtilX}
-                          cy={currentUtilX <= cliffX ? 35 + (currentUtilPct / 100) * (widenBps / 10000) * 120 : 155}
-                          r={5}
+                          cy={currentUtilX <= cliffX ? TOP_AXIS_Y + Math.pow(currentUtilPct / (maxUtilBps / 100), 1.35) * (widenBps / 10000) * 130 : BASE_AXIS_Y}
+                          r={6}
                           fill="var(--ink)"
                           stroke="var(--paper)"
-                          strokeWidth={2}
+                          strokeWidth={2.5}
                         />
                       </g>
                     )}
 
-                    {/* Refusal threshold badge in SVG */}
-                    <g transform={`translate(${Math.min(480, cliffX - 10)}, 24)`}>
-                      <rect x={-8} y={-10} width={90} height={18} rx={3} fill="var(--short)" />
-                      <text x={37} y={3} textAnchor="middle" fill="white" fontSize={8.5} fontFamily="var(--mono)" fontWeight={600}>
+                    {/* Refusal badge pill */}
+                    <g transform={`translate(${Math.min(520, cliffX - 10)}, 18)`}>
+                      <rect x={-8} y={-10} width={100} height={18} rx={3} fill="var(--short)" />
+                      <text x={42} y={3} textAnchor="middle" fill="white" fontSize={8.5} fontFamily="var(--mono)" fontWeight={700}>
                         REFUSES ON-CHAIN
                       </text>
                     </g>
+
+                    {/* Axis Ticks */}
+                    {[0, 25, 50, 75, 100].map((u) => {
+                      const tx = START_X + (u / 100) * USABLE_WIDTH;
+                      return (
+                        <g key={u}>
+                          <line x1={tx} x2={tx} y1={BASE_AXIS_Y} y2={BASE_AXIS_Y + 5} stroke="var(--ink2)" strokeWidth={1} />
+                          <text x={tx} y={BASE_AXIS_Y + 18} textAnchor="middle" fill="var(--ink3)" fontSize={10} fontFamily="var(--mono)">
+                            {u}%
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Hover Crosshair indicator */}
+                    {hoverSolvencyData && (
+                      <g>
+                        <line
+                          x1={hoverSolvencyData.x}
+                          x2={hoverSolvencyData.x}
+                          y1={TOP_AXIS_Y - 10}
+                          y2={BASE_AXIS_Y}
+                          stroke="var(--short)"
+                          strokeWidth={1}
+                          strokeDasharray="2 2"
+                        />
+                        <circle
+                          cx={hoverSolvencyData.x}
+                          cy={hoverSolvencyData.y}
+                          r={5}
+                          fill="var(--short)"
+                          stroke="var(--surface)"
+                          strokeWidth={2}
+                        />
+                      </g>
+                    )}
                   </svg>
+
+                  {/* Hover tooltip for solvency */}
+                  {hoverSolvencyData && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 20,
+                        left: Math.min(SVG_WIDTH - 180, Math.max(20, (hoverSolvencyData.x / SVG_WIDTH) * 100)) + "%",
+                        background: "var(--ink)",
+                        color: "var(--paper)",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontFamily: "var(--mono)",
+                        pointerEvents: "none",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                        zIndex: 10,
+                        transform: hoverSolvencyData.x > SVG_WIDTH * 0.7 ? "translateX(-110%)" : "translateX(10px)",
+                      }}
+                    >
+                      <div><strong>Util:</strong> {hoverSolvencyData.uPct.toFixed(1)}%</div>
+                      <div>
+                        <strong>Haircut:</strong> {hoverSolvencyData.haircutBpsEst !== null ? `-${hoverSolvencyData.haircutBpsEst} bps` : "Refused"}
+                      </div>
+                      <div style={{ color: hoverSolvencyData.isRefused ? "#f87171" : "#34d399" }}>
+                        <strong>Output:</strong> {hoverSolvencyData.quoteOut}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 8 }}>
                   <span className={s.mono} style={{ fontSize: 11, color: "var(--ink2)" }}>
-                    ● <strong>Black line</strong>: Quotable output with linear spread widening (-{widenBps} bps at limit)
+                    ● <strong>Continuous Curve</strong>: Linear spread widening up to -{widenBps} bps as wallet is committed
                   </span>
                   <span className={s.mono} style={{ fontSize: 11, color: "var(--short)" }}>
-                    --- <strong>Red dashed cliff</strong>: On-chain refusal threshold (saves gas &amp; prevents revert)
+                    --- <strong>Red Cliff</strong>: Hard refusal cutoff at {(maxUtilBps / 100).toFixed(0)}% (saves gas &amp; prevents reverts)
                   </span>
                 </div>
-              </div>
-            ) : (
-              /* Graph 2: Depth & Range */
-              <div style={{ padding: "20px 22px" }}>
-                <DepthChart
-                  chainId={net.id}
-                  tokenIn={tokenIn}
-                  tokenOut={tokenOut}
-                  pricing={pricing}
-                  preset={rangePreset}
-                  spreadBps={beaconSpreadBps}
-                  onSelectPreset={handleSelectPreset}
-                  onSpotPrice={setSpotPrice}
-                />
               </div>
             )}
           </section>
@@ -859,72 +1085,99 @@ export function Provide({
                 <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
                   encumbered = Σ rawBalances(maker, sibling_i)
                 </p>
-                <span style={{ fontSize: 12, color: "var(--ink2)" }}>
-                  Sums commitments across all live sibling strategies for this token.
-                </span>
+                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
+                  Total active commitments across all registered sibling strategies.
+                </p>
               </div>
 
               <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>02 · Utilization</span>
-                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  util = encumbered / backing
+                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>02 · Refusal Cliff</span>
+                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--short)" }}>
+                  if (utilBps &gt; maxUtilBps) revert/refuse
                 </p>
-                <span style={{ fontSize: 12, color: "var(--ink2)" }}>
-                  Ratio of promised capital to total deliverable backing.
-                </span>
+                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
+                  Hard refusal threshold at {(maxUtilBps / 100).toFixed(0)}%. Rejects quotes without failing trades.
+                </p>
               </div>
 
               <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
                 <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>03 · Spread Widening</span>
                 <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  haircut = amountOut × widenBps × util / 1e8
+                  haircutBps = (utilBps × widenBps) / 10000
                 </p>
-                <span style={{ fontSize: 12, color: "var(--ink2)" }}>
-                  Linear price adjustment compensating for higher utilization.
-                </span>
-              </div>
-
-              <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>04 · Rejection Guard</span>
-                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--short)" }}>
-                  if (util &gt; maxUtilBps) revert Refusal()
+                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
+                  Linear widening up to {widenBps} bps as utilization approaches the ceiling.
                 </p>
-                <span style={{ fontSize: 12, color: "var(--ink2)" }}>
-                  On-chain circuit breaker that saves transactions from failing mid-fill.
-                </span>
               </div>
             </div>
+
+            {showFormulas && (
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: "14px 16px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--rule)",
+                  borderRadius: 8,
+                }}
+              >
+                <span className={s.label} style={{ marginBottom: 6, display: "block" }}>
+                  Contract Implementation (§7.1)
+                </span>
+                <pre
+                  className={s.mono}
+                  style={{
+                    margin: 0,
+                    fontSize: 11.5,
+                    lineHeight: 1.6,
+                    color: "var(--ink)",
+                    overflowX: "auto",
+                  }}
+                >
+{`// EncumbranceStrategy.sol §7.1
+uint256 free = rawBalance > encumbered ? rawBalance - encumbered : 0;
+uint256 utilBps = rawBalance > 0 ? (encumbered * 10_000) / rawBalance : 10_000;
+
+if (utilBps > maxUtilBps) {
+    return (0, RefusalReason.EncumbranceExceeded);
+}
+
+uint256 haircutBps = (utilBps * widenBps) / 10_000;
+uint256 finalQuote = baseQuote - (baseQuote * haircutBps) / 10_000;`}
+                </pre>
+              </div>
+            )}
           </section>
 
-          {/* Reference Deployed Contracts */}
+          {/* 6. Reference Deployments Card */}
           <section className={`${s.card} ${s.cardPad}`}>
-            <span className={s.label} style={{ marginBottom: 8, display: "block" }}>
-              Verified Deployments · {net.label}
-            </span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-                <span style={{ color: "var(--ink2)" }}>Aqua Settlement Contract</span>
-                <span className={s.mono} style={{ display: "inline-flex", alignItems: "center" }}>
-                  {shortAddr(net.aqua)}
-                  <CopyButton value={net.aqua} size={11} />
-                </span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+              <div>
+                <span className={s.label}>Live Contract References</span>
+                <h3 className={`${s.display} ${s.h2}`} style={{ margin: "2px 0 0", fontSize: 18 }}>
+                  Verified Deployments
+                </h3>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
+              <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
+                Base Sepolia
+              </span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
                 <span style={{ color: "var(--ink2)" }}>BoneDryRouter</span>
-                <span className={s.mono} style={{ display: "inline-flex", alignItems: "center" }}>
-                  {shortAddr(net.router)}
-                  <CopyButton value={net.router} size={11} />
+                <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
+                  0x75E8...1146
+                  <CopyButton value="0x75E8971831675A3eF0CAbc4fd441dA7aeB481146" size={12} />
                 </span>
               </div>
-              {net.id === 84532 && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-                  <span style={{ color: "var(--ink2)" }}>Live Encumbrance Strategy Example</span>
-                  <span className={s.mono} style={{ display: "inline-flex", alignItems: "center" }}>
-                    0x7b2e…67e3
-                    <CopyButton value="0x7b2e1f478807218c335ebfe6a8b0250e61ab533d2a30902b9e298bfcfda467e3" size={11} />
-                  </span>
-                </div>
-              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                <span style={{ color: "var(--ink2)" }}>EncumbranceStrategy</span>
+                <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
+                  0x7b2e...67e3
+                  <CopyButton value="0x7b2e1f478807218c335ebfe6a8b0250e61ab533d2a30902b9e298bfcfda467e3" size={12} />
+                </span>
+              </div>
             </div>
           </section>
         </div>
