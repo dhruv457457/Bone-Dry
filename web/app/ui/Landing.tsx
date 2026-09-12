@@ -213,18 +213,25 @@ export default function Landing() {
           </div>
 
           <div className={s.heroBody}>
+            {/* The drawing below is a man holding the two halves of a promise
+                together until they tear him apart, and its cliffs are labelled
+                PROMISED and DELIVERABLE. The headline has to be about that gap.
+                It used to read "A pool that holds nothing" — true, but a claim
+                about TVL, which left the picture arguing on its own. */}
             <h1 className={s.claim} data-claim>
               <span className={s.claimLine}>
-                <span>A pool that</span>
+                <span>A promise</span>
               </span>
               <span className={s.claimLine}>
-                <span>holds nothing.</span>
+                <span>that can&apos;t bounce.</span>
               </span>
             </h1>
             <p className={s.deck} data-fade>
-              A Uniswap v4 pool with zero TVL. Every swap is filled from 1inch
-              Aqua makers&apos; own wallets at the moment of the trade — and we
-              check they can actually pay before we route to them.
+              On 1inch Aqua a maker never deposits — the money stays in their
+              wallet and they only promise it. Nothing stops the same balance
+              being promised twice. This position reads what the wallet already
+              owes before it quotes, and refuses on chain rather than write a
+              cheque it cannot cover.
             </p>
           </div>
 
@@ -261,11 +268,47 @@ export default function Landing() {
             were <b>promising liquidity they did not hold</b>.
           </h2>
           <p className={s.findingNote} data-finding>
-            Aqua keys balances by maker, app, strategy and token, and the
-            mapping is not enumerable — so no contract can total what one maker
-            has promised across every strategy they have live. An index can. Set
-            that against the wallet and the promise becomes checkable. Read on
-            Base on {MEASURED}; the app re-runs the same scan live.
+            Aqua keys balances by maker, app, strategy and token, and the mapping
+            is not enumerable — so no contract can total what one maker has
+            promised. An index can. Set that against the wallet, and the promise
+            becomes checkable.
+          </p>
+
+          {/* Base is what the cards above show, and every address there is one a
+              judge can paste into a block explorer. Ethereum is where Aqua is
+              largest, and where the same check stops being a curiosity. Both
+              stay: the small number is verifiable by hand, the large one is the
+              size of the problem. Figures rather than prose — see .scale. */}
+          <div className={s.scale} data-finding>
+            <div className={s.scaleItem}>
+              <div className={s.scaleFig}>
+                102,593 <span>&rarr;</span> <em>4</em>
+              </div>
+              <p className={s.scaleSay}>
+                WETH advertised across Ethereum, against what those makers could
+                actually deliver.
+              </p>
+            </div>
+            <div className={s.scaleItem}>
+              <div className={s.scaleFig}>
+                600<span>&thinsp;/&thinsp;860</span>
+              </div>
+              <p className={s.scaleSay}>
+                Positions built from more than one strategy that promise more
+                than the wallet holds.
+              </p>
+            </div>
+            <div className={s.scaleItem}>
+              <div className={s.scaleFig}>
+                <em>419</em>
+              </div>
+              <p className={s.scaleSay}>Backed by nothing at all.</p>
+            </div>
+          </div>
+
+          <p className={s.scaleWhen} data-finding>
+            Base read on {MEASURED}; Ethereum from this project&apos;s own index.
+            The app re-runs both live.
           </p>
         </div>
       </section>
@@ -278,19 +321,115 @@ export default function Landing() {
             — before a swap and after one.
           </p>
         </div>
+        {/* These two were 3:2 (how a fill split) and 0.04 (quote-vs-chain drift).
+            Both true, both arguing the old pitch — a better router. The claim is
+            now about the promise, so these are the two figures that make it:
+            how far one wallet is stretched, and how little it costs to walk. */}
         <div className={s.proofItem} data-proof>
-          <div className={s.proofFig}>3 : 2</div>
+          <div className={s.proofFig}>257</div>
           <p className={s.proofSay}>
-            How a real fill split across two makers, matching their deliverable
-            depths exactly. A third promised the same and held none of it.
+            Live strategies one wallet carries against a single token — every one
+            of them promising the same balance.
           </p>
         </div>
         <div className={s.proofItem} data-proof>
-          <div className={s.proofFig}>0.04</div>
+          <div className={s.proofFig}>4,452</div>
           <p className={s.proofSay}>
-            Basis points between what the router quoted and what the chain paid
-            — two independent algorithms over the same state.
+            Gas a maker pays to revoke all of it. Nothing on Aqua is binding, and
+            nothing here pretends otherwise.
           </p>
+        </div>
+      </section>
+
+      {/* Three panels, three doors — the same three the app opens on. The swap
+          rows are the SNAPSHOT makers from the hero, so a reader who scrolled
+          past those cards meets the same addresses again doing something.
+          0x7553 promised 12,694 DAI and holds none of it; that is why it is
+          refused here rather than filled. Nothing on this strip is invented. */}
+      <section className={s.doing} id="doing">
+        <div className={s.doingHead} data-proof>
+          <h2 className={s.doingTitle}>What you can do with it</h2>
+          <p className={s.doingNote}>three doors, the same three the app opens on</p>
+        </div>
+
+        <div className={s.doingRow} data-proof>
+          <div>
+            <span className={s.doingNum}>01 — Swap</span>
+            <h3 className={s.doingH}>Fill from wallets, not a pool</h3>
+            <p className={s.doingP}>
+              Two of those three promised liquidity they do not hold. Routing
+              around them is not an error — it is the swap that would have
+              reverted, not happening.
+            </p>
+            <Link className={s.doingCta} href="/app">Open the desk &rarr;</Link>
+          </div>
+          <div className={s.panel}>
+            <div className={s.panelRow}>
+              <span>{SNAPSHOT[1].maker.slice(0, 6)}…{SNAPSHOT[1].maker.slice(-4)}</span>
+              <span>filled</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>{SNAPSHOT[0].maker.slice(0, 6)}…{SNAPSHOT[0].maker.slice(-4)}</span>
+              <span className={s.saved}>refused</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>{SNAPSHOT[2].maker.slice(0, 6)}…{SNAPSHOT[2].maker.slice(-4)}</span>
+              <span className={s.saved}>refused</span>
+            </div>
+          </div>
+        </div>
+
+        <div className={`${s.doingRow} ${s.doingFlip}`} data-proof>
+          <div>
+            <span className={s.doingNum}>02 — Provide</span>
+            <h3 className={s.doingH}>Ship a promise that polices itself</h3>
+            <p className={s.doingP}>
+              Your quote widens as your other strategies eat the same wallet,
+              then refuses outright. The index is what tells you your own list
+              is short.
+            </p>
+            <Link className={s.doingCta} href="/app">Become a maker &rarr;</Link>
+          </div>
+          <div className={s.panel}>
+            <div className={s.panelRow}>
+              <span>refuse above</span>
+              <span>80% committed</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>quote worse by</span>
+              <span>20% at the limit</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>siblings declared</span>
+              <span className={s.gone}>3 of 9 live</span>
+            </div>
+          </div>
+        </div>
+
+        <div className={s.doingRow} data-proof>
+          <div>
+            <span className={s.doingNum}>03 — Explore</span>
+            <h3 className={s.doingH}>Check any wallet on Aqua</h3>
+            <p className={s.doingP}>
+              Paste an address and total what it has promised everywhere, then
+              set that against what the wallet actually holds.
+            </p>
+            <Link className={s.doingCta} href="/app">Look one up &rarr;</Link>
+          </div>
+          <div className={s.panel}>
+            <div className={s.panelRow}>
+              <span>promised</span>
+              <span>{units(SNAPSHOT[0].promised, SNAPSHOT[0].decimals)} {SNAPSHOT[0].symbol}</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>deliverable</span>
+              <span className={s.gone}>0 {SNAPSHOT[0].symbol}</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>strategies live</span>
+              <span>across every Aqua app</span>
+            </div>
+          </div>
         </div>
       </section>
 

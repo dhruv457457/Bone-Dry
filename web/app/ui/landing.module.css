@@ -26,7 +26,10 @@
    timeline has finished, which is the order that matters. */
 .doodleHold {
   position: sticky;
-  bottom: 80px; /* the drawing sits above the hero's footer row, not on it */
+  /* The mountains are the floor of the page, so they sit ON it. Was 80px,
+     which left a strip of paper under the land and made it read as a card
+     rather than as ground. The hero footer row now clears it instead. */
+  bottom: 0;
   height: var(--band);
   z-index: 0;
 }
@@ -120,7 +123,6 @@
   background: var(--paper);
   border: 1px solid var(--rule);
   padding: 9px 11px;
-  will-change: transform;
 }
 /* The unbacked ones are drawn as outlines: present, promising, hollow. */
 .ghost {
@@ -170,6 +172,12 @@
   /* the notched corner, same trick as the reference */
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 34px), calc(100% - 34px) 100%, 0 100%);
   overflow: hidden;
+  /* The white band that kept appearing across this section.
+     .doodleHold is sticky with z-index: 0, which makes it a stacking context
+     the height of --band (210-340px) -- exactly the height of the block. As it
+     released over this section it painted the page ground on top of the dark.
+     Anything after the stage has to outrank it, so this claims a layer. */
+  z-index: 1;
 }
 .darkInner {
   max-width: 1240px;
@@ -193,6 +201,49 @@
   font-size: 16px;
 }
 
+/* The Ethereum figures, as figures.
+   These were a second paragraph first, and the section turned into a wall of
+   prose nobody would read standing up. Three numbers a judge can scan in two
+   seconds beat four lines they have to parse. Dark twin of .proofStrip. */
+.scale {
+  margin: 44px auto 0;
+  max-width: 940px;
+  display: grid;
+  gap: 26px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  text-align: left;
+}
+.scaleItem {
+  border-top: 1px solid rgba(251, 250, 246, 0.22);
+  padding-top: 14px;
+}
+.scaleFig {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: -0.04em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.scaleFig em {
+  font-style: normal;
+  color: var(--red-bright);
+}
+.scaleFig span {
+  color: rgba(251, 250, 246, 0.38);
+}
+.scaleSay {
+  margin: 9px 0 0;
+  color: rgba(251, 250, 246, 0.55);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.scaleWhen {
+  margin: 30px auto 0;
+  color: rgba(251, 250, 246, 0.38);
+  font-size: 13px;
+}
+
 /* Cards behind the statement, dimmed so the sentence still wins the squint test */
 .darkField { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .darkCard {
@@ -200,7 +251,6 @@
   width: 250px;
   border: 1px solid rgba(251, 250, 246, 0.16);
   padding: 9px 11px;
-  will-change: transform;
   background: rgba(251, 250, 246, 0.03);
 }
 .darkCard .cardTag { color: rgba(251, 250, 246, 0.42); }
@@ -209,6 +259,9 @@
 
 /* ── proof strip ──────────────────────────────────────────────────────── */
 .proofStrip {
+  position: relative;
+  z-index: 1;
+  background: var(--paper);
   max-width: 1240px;
   margin: 0 auto;
   padding: clamp(70px, 12vh, 130px) 24px;
@@ -226,8 +279,115 @@
 }
 .proofSay { margin: 10px 0 0; color: var(--ink-soft); font-size: 15px; max-width: 34ch; }
 
+/* ── what the app actually does ───────────────────────────────────────────
+   The page argued a problem for four sections and then asked for a click
+   without ever showing the product. These three panels are the three doors
+   the app opens on, in the same order, so the landing and the dashboard tell
+   one story instead of two. Built from the same SNAPSHOT rows as the cards
+   above: real Base makers, real balances, no invented data. */
+.doing {
+  position: relative;
+  z-index: 1;
+  background: var(--paper);
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px clamp(70px, 12vh, 130px);
+}
+.doingHead {
+  border-top: 1px solid var(--ink);
+  padding-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.doingTitle {
+  margin: 0;
+  font-size: clamp(21px, 2.5vw, 32px);
+  letter-spacing: -0.02em;
+}
+.doingNote { margin: 0; color: var(--ink-faint); font-size: 13px; }
+/* Three alternating rows rather than three equal cards.
+   It was a 3-column grid sitting directly under the proof strip, which is also
+   a 3-column grid — two of those in a row is why the section read as filler.
+   Rows let each door have its own moment, and the flip stops the eye settling
+   into a column. */
+.doingRow {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: clamp(26px, 5vw, 78px);
+  align-items: center;
+  padding: clamp(32px, 5vh, 54px) 0;
+  border-top: 1px solid var(--rule);
+}
+.doingRow:last-of-type { border-bottom: 1px solid var(--rule); }
+.doingFlip > :first-child { order: 2; }
+
+.doingNum {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.doingH {
+  margin: 11px 0 0;
+  font-size: clamp(25px, 3.3vw, 44px);
+  letter-spacing: -0.025em;
+  line-height: 1.04;
+  font-weight: 400;
+}
+.doingP {
+  margin: 15px 0 0;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 46ch;
+}
+.doingCta {
+  display: inline-block;
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 2px;
+}
+.doingCta:hover { color: var(--red); border-bottom-color: var(--red); }
+
+.panel {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 16px 18px 15px;
+}
+.panelRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.panelRow:first-child { border-top: 0; }
+.panelRow span:first-child { color: var(--ink-faint); }
+/* A refusal is the product working, so it is not dressed as an error. */
+.saved { color: var(--slate); }
+
+@media (max-width: 860px) {
+  .doingRow { grid-template-columns: 1fr; gap: 20px; }
+  .doingFlip > :first-child { order: 0; }
+}
+
 /* ── closing ──────────────────────────────────────────────────────────── */
 .close {
+  position: relative;
+  z-index: 1;
+  background: var(--paper);
   max-width: 1240px;
   margin: 0 auto;
   padding: 0 24px clamp(80px, 14vh, 150px);
@@ -291,29 +451,42 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.terra { stroke: #8f9aa7; stroke-width: 3.6; }
-/* The land itself. Barely a tone against the paper, but enough to be a mass
-   rather than an outline — and it is what the rope ends disappear into. */
-.terra .land { fill: rgba(143, 154, 167, 0.19); stroke: none; }
+.terra { stroke: #6f4630; stroke-width: 3.6; }
+/* The land itself. Rock, not haze — the two sides are volcanoes now, and a mass
+   you can read as stone is what makes the gorge between them feel like a drop.
+   It is also what the rope ends disappear into. */
+.terra .land { fill: rgba(122, 74, 48, 0.42); stroke: none; }
+
+/* ── the eruption ─────────────────────────────────────────────────────────
+   Both summits are venting. The drawing already said the promise was under
+   load; this says the ground it is anchored to is not stable either. Drawn in
+   the same hand as everything else — no gradients, no filters, just stacked
+   shapes with the hot core on top. */
+.lava { stroke: none; }
+.lava .plume { fill: #d64e2b; opacity: 0.9; }
+.lava .core { fill: #f0932b; }
+.lava .bit { fill: #d64e2b; }
+.lava .bitHot { fill: #f0932b; }
+.terra .crater { stroke: #5a3724; stroke-width: 3.2; }
+/* The rope is the promise, and it is the only thing in the drawing still named.
+   Figures were cut into the mountains for a while; two numbers on two peaks
+   turned the scene into a chart and took the strain out of it. */
+.ropeTag {
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  fill: var(--ink-faint);
+  stroke: none;
+}
 /* Rock layers across the face, and the short strokes that read as broken stone.
    Both lighter than the edge itself — the silhouette is the land, these are the
    texture on it. */
 .terra .strata { stroke-width: 2.4; opacity: 0.7; }
-/* Naming the two sides is what turns a drawing into a diagram: the gap that
-   opens between them is the shortfall this whole project measures. */
-/* Each label sits on its own land, reading outward away from the gap. On a
-   phone the gap is most of the screen and that land is off it, so they flip to
-   read inward instead — see the narrow breakpoint. */
-.plateauL { text-anchor: end; }
-.plateauR { text-anchor: start; }
-
-.plateau {
-  font-family: var(--mono);
-  font-size: 17px;
-  letter-spacing: 0.16em;
-  fill: var(--ink-faint);
-  stroke: none;
-}
+/* Naming the two sides is what turns a drawing into a diagram — but the words
+   PROMISED and DELIVERABLE only described the measurement. The figures are the
+   measurement, so they sit on the rock instead, cut into the inner face where
+   the stone is darkest and a light fill reads cleanly. Anchored outward from
+   the gorge so the gap between them stays the subject. */
 .terra .hatch { stroke-width: 2; opacity: 0.5; }
 .rope { stroke: #9c6b4d; stroke-width: 8; }
 .fig { stroke: var(--ink); stroke-width: 4.2; }
@@ -366,14 +539,11 @@
   }
   .stage { --band: clamp(170px, 24vh, 250px); }
   .runway { height: calc(112svh - var(--band)); }
-  /* far enough up that his feet clear the footer row */
-  .doodleHold { bottom: 94px; }
+  .doodleHold { bottom: 0; }
   /* The labels are the one thing that does not survive being scaled with
      everything else — they are type, not drawing. They also turn to face the
      gap, because the land they would otherwise sit on is off the screen. */
-  .plateau { font-size: 26px; letter-spacing: 0.1em; }
-  .plateauL { text-anchor: start; transform: translateX(26px); }
-  .plateauR { text-anchor: end; transform: translateX(-26px); }
+  .ropeTag { font-size: 22px; letter-spacing: 0.14em; }
   /* Less clearance to reserve, and a taller block of deck copy above it. */
   .heroBody { padding-bottom: clamp(30px, 13vh, 130px); }
 }
@@ -404,7 +574,7 @@
   .deck { font-size: 15px; max-width: 58ch; margin-top: 20px; }
   .heroBody { padding-bottom: clamp(40px, 28vh, 240px); }
   .stage { --band: clamp(190px, 32vh, 270px); }
-  .doodleHold { bottom: 64px; }
+  .doodleHold { bottom: 0; }
 }
 
 @media (min-width: 701px) and (max-height: 680px) {
@@ -412,5 +582,5 @@
   .deck { font-size: 14px; max-width: 62ch; margin-top: 14px; }
   .heroBody { padding-bottom: clamp(30px, 22vh, 170px); }
   .stage { --band: clamp(170px, 30vh, 230px); }
-  .doodleHold { bottom: 52px; }
+  .doodleHold { bottom: 0; }
 }

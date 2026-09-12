@@ -98,6 +98,28 @@ function Tubes({ parts }: { parts: readonly (readonly [string, number])[] }) {
   );
 }
 
+/** One crater's worth of fire, drawn once and mirrored for the far summit.
+ *  Four tongues rather than one: a single shape scaled as a unit reads as a
+ *  pulsing blob, and fire is several things moving at different speeds. Each
+ *  carries data-vflame so the flicker can be staggered per tongue, and the
+ *  embers carry data-ember so they can drift up and out on their own loops. */
+function Eruption() {
+  return (
+    <>
+      <path className={s.plume} data-vflame d="M 164 524 C 158 496, 150 476, 157 450 C 167 476, 173 490, 173 508 C 172 516, 168 520, 166 526 Z" />
+      <path className={s.plume} data-vflame d="M 195 524 C 198 500, 204 482, 199 456 C 191 480, 185 494, 185 510 C 185 517, 190 521, 192 526 Z" />
+      <path className={s.plume} data-vflame d="M 178 526 C 170 486, 157 458, 172 414 C 187 448, 199 468, 195 502 C 193 514, 185 520, 181 528 Z" />
+      <path className={s.core} data-vflame d="M 178 520 C 174 492, 168 472, 178 444 C 188 470, 192 486, 190 506 C 189 514, 183 517, 181 522 Z" />
+      <circle className={s.bit} data-ember cx="150" cy="404" r="5.5" />
+      <circle className={s.bitHot} data-ember cx="205" cy="378" r="4" />
+      <circle className={s.bit} data-ember cx="176" cy="352" r="3.5" />
+      <circle className={s.bitHot} data-ember cx="138" cy="438" r="3" />
+      <circle className={s.bit} data-ember cx="216" cy="422" r="3.5" />
+      <circle className={s.bitHot} data-ember cx="192" cy="330" r="2.6" />
+    </>
+  );
+}
+
 export default function Doodle() {
   const root = useRef<SVGSVGElement>(null);
 
@@ -136,6 +158,39 @@ export default function Doodle() {
         ease: "rough({ strength: 1.6, points: 24, clamp: true })",
         yoyo: true,
         repeat: -1,
+      });
+
+      // Every tongue on its own flicker. One shape scaled as a unit reads as a
+      // pulsing blob -- fire is several things moving at different speeds, so
+      // the duration and the delay both shift per tongue.
+      gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-vflame]")).forEach((el, i) => {
+        gsap.to(el, {
+          scaleY: 1.26,
+          scaleX: 0.88,
+          transformOrigin: "50% 100%",
+          duration: 0.28 + (i % 4) * 0.08,
+          ease: "rough({ strength: 2, points: 20, clamp: true })",
+          yoyo: true,
+          repeat: -1,
+          delay: (i % 5) * 0.06,
+        });
+      });
+
+      // Embers rise and go out. Staggered hard, or they pulse together and read
+      // as a string of lights rather than as something being thrown.
+      gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-ember]")).forEach((el, i) => {
+        gsap.fromTo(
+          el,
+          { y: 0, opacity: 0.95 },
+          {
+            y: -46 - (i % 3) * 16,
+            opacity: 0,
+            duration: 1.5 + (i % 4) * 0.4,
+            ease: "power1.out",
+            repeat: -1,
+            delay: (i % 6) * 0.31,
+          },
+        );
       });
 
       // How hard the whole thing is buzzing. The scroll writes the amplitude and
@@ -319,7 +374,12 @@ export default function Doodle() {
           SNAP + 0.31,
         )
         .to("[data-cliff-l]", { x: -620, duration: 0.4, ease: "none" }, SNAP)
-        .to("[data-cliff-r]", { x: 620, duration: 0.4, ease: "none" }, SNAP);
+        .to("[data-cliff-r]", { x: 620, duration: 0.4, ease: "none" }, SNAP)
+        // The ground does not just walk away, it goes up. Both craters blow at
+        // the same beat the arms give, scaled from the crater mouth so the
+        // column grows upward instead of ballooning in every direction.
+        .to("[data-lava-l]", { scale: 2.4, svgOrigin: "178 470", duration: 0.4, ease: "power2.out" }, SNAP)
+        .to("[data-lava-r]", { scale: 2.4, svgOrigin: "1262 470", duration: 0.4, ease: "power2.out" }, SNAP);
     }, svg);
 
     return () => {
@@ -352,6 +412,13 @@ export default function Doodle() {
         <g className={s.rope} data-rope data-shake>
           <path data-rope-l d={ROPE.leftTaut} />
           <path data-rope-r d={ROPE.rightTaut} />
+          {/* The one label left in the drawing. The mountains carried figures for
+              a while and it read as a chart; what he is actually holding is the
+              promise, so that is the only thing named. It buzzes with everything
+              else under load. */}
+          <text className={s.ropeTag} x="404" y="664" textAnchor="middle" data-shake>
+            THE PROMISE
+          </text>
         </g>
 
         {/* ── the ground, left and right ─────────────────────────────────── */}
@@ -361,58 +428,75 @@ export default function Doodle() {
           it is why these come after the rope. A single stroked curve read as an
           eyebrow; what makes it ground is a flat top running off the screen, a
           lip that overhangs, and a face that steps down in slabs. */}
+        {/* The outer profile is a volcano now rather than a flat plateau, but the
+          gorge lip (302, 601) and the whole inner face below it are untouched:
+          ROPE.leftTaut lands at (300, 622), inside that face, and moving the lip
+          would tear the rope off the rock. Everything left of 302 is new. */}
         <g className={s.terra} data-cliff-l>
           <path
             className={s.land}
-            d="M -4000 598 C -2400 602, -900 594, 60 600 C 172 603, 248 596, 302 601 C 328 608, 342 620, 336 638 C 331 656, 306 662, 302 678 C 298 697, 319 707, 317 726 C 315 748, 296 758, 301 782 L -4000 782 Z"
+            d="M -4000 706 C -2400 694, -1400 672, -900 656 C -600 644, -420 618, -262 608 C -214 604, -182 558, -150 550 C -100 536, -20 574, 30 556 C 62 544, 110 500, 150 440 L 178 472 L 206 448 C 244 508, 272 556, 302 601 C 328 608, 342 620, 336 638 C 331 656, 306 662, 302 678 C 298 697, 319 707, 317 726 C 315 748, 296 758, 301 782 L 301 2600 L -4000 2600 Z"
           />
-          <path d="M -4000 598 C -2400 602, -900 594, 60 600 C 172 603, 248 596, 302 601 C 328 608, 342 620, 336 638 C 331 656, 306 662, 302 678 C 298 697, 319 707, 317 726 C 315 748, 296 758, 301 782" />
-          <path
-            className={s.strata}
-            d="M 334 648 C 312 652, 292 650, 274 654"
-          />
-          <path
-            className={s.strata}
-            d="M 302 690 C 282 694, 264 692, 248 696"
-          />
-          <path
-            className={s.strata}
-            d="M 316 734 C 296 738, 278 736, 262 740"
-          />
+          <path d="M -4000 700 C -2400 690, -1400 674, -900 662 C -600 652, -420 632, -262 626 C -214 623, -182 592, -150 586 C -100 576, -20 602, 30 590 C 62 582, 112 556, 150 498" />
+          <path className={s.crater} d="M 150 440 L 178 472 L 206 448" />
+          <path d="M 206 448 C 244 508, 272 556, 302 601 C 328 608, 342 620, 336 638 C 331 656, 306 662, 302 678 C 298 697, 319 707, 317 726 C 315 748, 296 758, 301 782" />
+          <path className={s.strata} d="M 334 648 C 312 652, 292 650, 274 654" />
+          <path className={s.strata} d="M 302 690 C 282 694, 264 692, 248 696" />
+          <path className={s.strata} d="M 316 734 C 296 738, 278 736, 262 740" />
           <path className={s.hatch} d="M 306 616 L 294 632" />
           <path className={s.hatch} d="M 274 668 L 262 688" />
           <path className={s.hatch} d="M 288 712 L 274 732" />
-          <path className={s.hatch} d="M 186 596 L 178 610" />
-          <text className={`${s.plateau} ${s.plateauL}`} x="292" y="582">
-            PROMISED
-          </text>
+          <path className={s.hatch} d="M 246 556 L 236 572" />
+          <path className={s.hatch} d="M 104 566 L 94 582" />
+          <path className={s.strata} d="M 128 486 C 160 512, 196 520, 236 552" />
+          <path className={s.strata} d="M 62 560 C 104 566, 152 590, 196 618" />
+          <path className={s.strata} d="M -104 596 C -40 586, 26 600, 78 614" />
+          <path className={s.hatch} d="M 170 542 L 158 560" />
+          <path className={s.hatch} d="M 206 586 L 194 604" />
+          <path className={s.hatch} d="M 20 604 L 10 620" />
         </g>
 
+        <g className={s.lava} data-lava-l data-cliff-l>
+          <g transform="translate(178,418) scale(1.5) translate(-178,-472)">
+            <Eruption />
+          </g>
+        </g>
+
+        {/* Mirror of the left about x = 720. Same rule: the lip (1138, 601) and the
+          inner face below it are untouched, because ROPE.rightTaut ends at
+          (1140, 622) and has to stay buried in that rock. */}
         <g className={s.terra} data-cliff-r>
           <path
             className={s.land}
-            d="M 5440 598 C 3840 602, 2340 594, 1380 600 C 1268 603, 1192 596, 1138 601 C 1112 608, 1098 620, 1104 638 C 1109 656, 1134 662, 1138 678 C 1142 697, 1121 707, 1123 726 C 1125 748, 1144 758, 1139 782 L 5440 782 Z"
+            d="M 5440 706 C 3840 694, 2840 672, 2340 656 C 2040 644, 1860 618, 1702 608 C 1654 604, 1622 558, 1590 550 C 1540 536, 1460 574, 1410 556 C 1378 544, 1330 500, 1290 440 L 1262 472 L 1234 448 C 1198 508, 1170 556, 1138 601 C 1112 608, 1098 620, 1104 638 C 1109 656, 1134 662, 1138 678 C 1142 697, 1121 707, 1123 726 C 1125 748, 1144 758, 1139 782 L 1139 2600 L 5440 2600 Z"
           />
-          <path d="M 5440 598 C 3840 602, 2340 594, 1380 600 C 1268 603, 1192 596, 1138 601 C 1112 608, 1098 620, 1104 638 C 1109 656, 1134 662, 1138 678 C 1142 697, 1121 707, 1123 726 C 1125 748, 1144 758, 1139 782" />
-          <path
-            className={s.strata}
-            d="M 1106 648 C 1128 652, 1148 650, 1166 654"
-          />
-          <path
-            className={s.strata}
-            d="M 1138 690 C 1158 694, 1176 692, 1192 696"
-          />
-          <path
-            className={s.strata}
-            d="M 1124 734 C 1144 738, 1162 736, 1178 740"
-          />
+          <path d="M 5440 700 C 3840 690, 2840 674, 2340 662 C 2040 652, 1860 632, 1702 626 C 1654 623, 1622 592, 1590 586 C 1540 576, 1460 602, 1410 590 C 1378 582, 1328 556, 1290 498" />
+          <path className={s.crater} d="M 1290 440 L 1262 472 L 1234 448" />
+          <path d="M 1234 448 C 1198 508, 1170 556, 1138 601 C 1112 608, 1098 620, 1104 638 C 1109 656, 1134 662, 1138 678 C 1142 697, 1121 707, 1123 726 C 1125 748, 1144 758, 1139 782" />
+          <path className={s.strata} d="M 1106 648 C 1128 652, 1148 650, 1166 654" />
+          <path className={s.strata} d="M 1138 690 C 1158 694, 1176 692, 1192 696" />
+          <path className={s.strata} d="M 1124 734 C 1144 738, 1162 736, 1178 740" />
           <path className={s.hatch} d="M 1134 616 L 1146 632" />
           <path className={s.hatch} d="M 1166 668 L 1178 688" />
           <path className={s.hatch} d="M 1152 712 L 1166 732" />
-          <path className={s.hatch} d="M 1254 596 L 1262 610" />
-          <text className={`${s.plateau} ${s.plateauR}`} x="1148" y="582">
-            DELIVERABLE
-          </text>
+          <path className={s.hatch} d="M 1194 556 L 1204 572" />
+          <path className={s.hatch} d="M 1336 566 L 1346 582" />
+          <path className={s.strata} d="M 1312 486 C 1280 512, 1244 520, 1204 552" />
+          <path className={s.strata} d="M 1378 560 C 1336 566, 1288 590, 1244 618" />
+          <path className={s.strata} d="M 1544 596 C 1480 586, 1414 600, 1362 614" />
+          <path className={s.hatch} d="M 1270 542 L 1282 560" />
+          <path className={s.hatch} d="M 1234 586 L 1246 604" />
+          <path className={s.hatch} d="M 1420 604 L 1430 620" />
+        </g>
+
+        <g className={s.lava} data-lava-r data-cliff-r>
+          {/* mirrored about x = 720 rather than hand-copied: one set of curves to
+              keep in step instead of two that drift apart. */}
+          <g transform="translate(1440,0) scale(-1,1)">
+            <g transform="translate(178,418) scale(1.5) translate(-178,-472)">
+              <Eruption />
+            </g>
+          </g>
         </g>
 
         {/* ── the one holding it ─────────────────────────────────────────── */}
