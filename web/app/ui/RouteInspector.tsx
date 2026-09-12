@@ -18,7 +18,9 @@ function formatAmount(raw: bigint, decimals: number): string {
 
 type SliceFilter = "all" | "filled" | "skipped" | "unfillable";
 
-const ROUTE_COLS = "minmax(160px, 1.2fr) 120px 85px 120px 140px minmax(220px, 1.8fr)";
+// Trimmed to fit the Swap tab's 860px measure without a horizontal scrollbar:
+// the audit column already truncates with an ellipsis, so it gives up width first.
+const ROUTE_COLS = "minmax(140px, 1.1fr) 104px 72px 110px 128px minmax(160px, 1.6fr)";
 const PAGE_SIZE = 12;
 
 export function RouteInspector({
@@ -220,7 +222,7 @@ export function RouteInspector({
 
       <Table
         cols={ROUTE_COLS}
-        min={820}
+        min={760}
         head={
           <>
             <span>Maker</span>

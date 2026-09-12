@@ -983,20 +983,19 @@
 /* Swap's own ratio. 380px made the receive amount sit tight against its ticker;
    420 gives the pay/receive rows room. Additive -- .colsBuild is Provide's and
    has been re-tuned twice already. */
-/* Swap is a single centred column, not two.
-   Two columns need both sides to carry comparable weight, and this page cannot
-   guarantee that: the breakdown table is one row when one maker fills and fifty
-   when the book is deep. At one row the right column ended at 500px beside a
-   left column running past 900 -- which reads as content that failed to load,
-   not as a layout. No fixed ratio survives that range, so the column goes.
-   Reading order does the work instead: trade, result, how it was routed, the
-   wider book. */
-.colsSwap { grid-template-columns: minmax(0, 920px); justify-content: center; }
-/* The swap card is an input, not a table; at 920px it looks stranded. Uniswap
-   and 1inch both keep this control near 460 for the same reason. */
-.colsSwap .swapCol { width: min(100%, 468px); margin: 0 auto; }
+/* Swap is a single centred column on ONE measure.
+   Two columns could never balance -- the breakdown is one row when a single
+   maker fills and fifty when the book is deep -- so the column went. But the
+   first pass kept the swap card at 468px inside a 920px measure, which stacked
+   two different page widths and left nothing aligned to anything. A page reads
+   as one object when its blocks share an edge. 860px is that edge: it clears the
+   six-column breakdown's minimum without a horizontal scrollbar, and is narrow
+   enough that the swap card does not look stranded in it. */
+.colsSwap { grid-template-columns: minmax(0, 860px); justify-content: center; gap: 18px; }
+.colsSwap .swapCol { width: 100%; }
 
 /* Receipt metadata reads across, not down: pool state beside the book that
    filled. Collapses below 720px where a strip would crush both. */
-.receiptTop { display: grid; grid-template-columns: minmax(220px, 0.8fr) 1.6fr; gap: 14px; align-items: start; }
+.receiptTop { display: grid; grid-template-columns: minmax(200px, 0.75fr) 1.5fr; gap: 14px; align-items: stretch; }
+.receiptTop > * { min-width: 0; }
 @media (max-width: 720px) { .receiptTop { grid-template-columns: 1fr; } }
