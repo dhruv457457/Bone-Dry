@@ -1,6 +1,6 @@
-import { cachedStrategies, measureDepth, mergeStrategies, type MakerDepth } from "@/lib/aqua";
+import { cachedStrategies, indexStrategies, measureDepth, mergeStrategies, type MakerDepth } from "@/lib/aqua";
 import { dedupeByMaker, planLikeTap, filterFillable, encodeHookData, attachOracleDeviations } from "@/lib/router";
-import { networkFrom, tokensOf } from "@/lib/networks";
+import { networkFrom, tokensOf, appsOf, type AquaApp } from "@/lib/networks";
 import { allTokensFor } from "@/lib/pairs";
 import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
 import { depthFromIndex } from "@/lib/indexedDepth";
@@ -26,68 +26,124 @@ export async function GET(req: Request) {
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
 
-    // The background index (lib/indexer.ts) precomputes this exact depth
-    // check on a schedule so a live request never pays for it -- see the
-    // module comment there for why the live path below still exists and is
-    // not just slower: it is what runs until the index has been populated,
-    // and what runs for every chain this job has not been pointed at.
-    const indexed = await depthFromIndex(n, tokenOut);
-    let depths: MakerDepth[];
-    let source: string;
-    if (indexed !== null) {
-      // The index is a candidate list, not a quote.
-      //
-      // Tap.sol:119 re-reads every candidate's depth live through
-      // Lens.quotableDepth, and then either fills a maker whole or skips them —
-      // a quote landing above `depth[i]` is a skip, never a clamp. So a plan
-      // sized against indexed depth that has since fallen does not fill small;
-      // every maker is skipped, `totalOut` reaches zero, and Tap.sol:176 throws
-      // NoSolventMaker(). The taker pays gas to be refused by our own hook,
-      // which is the single outcome this project promises never to produce.
-      //
-      // Measured on Base: one routed maker was indexed at 3,927,565,582,548 and
-      // held 2,423,165,503,335 live — 38% less. The transaction reverted.
-      //
-      // Planning below replays Tap's algorithm exactly; this makes it replay on
-      // Tap's inputs too. One multicall, and it is the difference between a
-      // quote and a guess.
-      depths = await measureDepth(n, indexed, tokenOut);
-      source = "indexed-db + live depth recheck";
-    } else {
-      // The index for history, a short chain scan for the tail it has not reached.
-      const fromGraph = await strategiesFromGraph(n, n.router);
-      const rawStrategies = fromGraph ?? (await cachedStrategies(n)).strategies;
-      const strategies = rawStrategies.filter((s) => {
-        if (!s.tokens || s.tokens.length === 0) return true;
-        const toks = s.tokens.map((t) => t.toLowerCase());
-        return toks.includes(tokenIn.toLowerCase()) && toks.includes(tokenOut.toLowerCase());
-      });
-      depths = await measureDepth(n, strategies, tokenOut);
-      source = fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging";
-    }
+    // Each Aqua app is its own book, and they cannot be merged.
+    //
+    // Aqua keys balances [maker][app][strategyHash][token] and pull() reads
+    // msg.sender as the app (Aqua.sol:64), so a strategy shipped to one router
+    // can only ever be filled by that router. A v4 pool binds exactly one hook
+    // and Tap.router is immutable, so no single transaction can span two books.
+    // We therefore plan each independently and return the best COMPLETE plan --
+    // never a blend, which would not be executable.
+    const books = appsOf(n);
 
-    // Having the token is not the same as being willing to part with it. Probe
-    // each solvent maker once and drop the ones whose quote reverts, so their
-    // share of the input is not thrown away on a fill that can never land.
-    const { fillable, unfillable } = await filterFillable(n, depths, tokenIn, tokenOut, amountIn);
+    const planBook = async (book: AquaApp) => {
+      const indexed = await depthFromIndex(n, tokenOut, book.app);
+      let depths: MakerDepth[];
+      let source: string;
+      if (indexed !== null) {
+        // The index is a candidate list, not a quote.
+        //
+        // Tap.sol:119 re-reads every candidate's depth live through
+        // Lens.quotableDepth, and then either fills a maker whole or skips them —
+        // a quote landing above `depth[i]` is a skip, never a clamp. So a plan
+        // sized against indexed depth that has since fallen does not fill small;
+        // every maker is skipped, `totalOut` reaches zero, and Tap.sol:176 throws
+        // NoSolventMaker(). The taker pays gas to be refused by our own hook,
+        // which is the single outcome this project promises never to produce.
+        //
+        // Measured on Base: one routed maker was indexed at 3,927,565,582,548 and
+        // held 2,423,165,503,335 live — 38% less. The transaction reverted.
+        depths = await measureDepth(n, indexed, tokenOut, book.app);
+        source = "indexed-db + live depth recheck";
+      } else {
+        // The index for history, a short chain scan for the tail it has not reached.
+        const fromGraph = await strategiesFromGraph(n, book.app);
+        const rawStrategies =
+          fromGraph ??
+          (book.app.toLowerCase() === n.router.toLowerCase()
+            ? (await cachedStrategies(n)).strategies
+            : await indexStrategies(n, { app: book.app }));
+        const strategies = rawStrategies.filter((s) => {
+          if (!s.tokens || s.tokens.length === 0) return true;
+          const toks = s.tokens.map((t) => t.toLowerCase());
+          return toks.includes(tokenIn.toLowerCase()) && toks.includes(tokenOut.toLowerCase());
+        });
+        depths = await measureDepth(n, strategies, tokenOut, book.app);
+        source = fromGraph ? "aquifer-subgraph" : n.graphUrl ? `rpc-log-paging (index ${indexStateOf(n).status})` : "rpc-log-paging";
+      }
 
-    // One candidate per maker: `depths` is per-strategy, and sibling strategies
-    // of one maker all draw on the same wallet. This set is what ships in
-    // hookData, so it is also the exact set Tap.sol sums its own totalDepth
-    // over -- the two have to agree or every slice the hook computes is off.
-    const candidates = dedupeByMaker(fillable);
+      // Having the token is not the same as being willing to part with it. Probe
+      // each solvent maker once and drop the ones whose quote reverts, so their
+      // share of the input is not thrown away on a fill that can never land.
+      const { fillable, unfillable } = await filterFillable(n, depths, tokenIn, tokenOut, amountIn, book.app);
 
-    // Replay the hook rather than approximate it. Tap.sol re-derives every
-    // slice on-chain from freshly-read depths and either fills a maker whole
-    // or skips them; nothing it does resembles trimming a slice down. So the
-    // quote is produced by running that same algorithm here and only
-    // publishing a total the replay actually completed.
-    const plan = await planLikeTap(n, candidates, amountIn, tokenIn, tokenOut);
+      // One candidate per maker: `depths` is per-strategy, and sibling strategies
+      // of one maker all draw on the same wallet. This set is what ships in
+      // hookData, so it is also the exact set Tap.sol sums its own totalDepth
+      // over -- the two have to agree or every slice the hook computes is off.
+      const candidates = dedupeByMaker(fillable);
+
+      // Replay the hook rather than approximate it. Tap.sol re-derives every
+      // slice on-chain from freshly-read depths and either fills a maker whole
+      // or skips them; nothing it does resembles trimming a slice down.
+      const plan = await planLikeTap(n, candidates, amountIn, tokenIn, tokenOut, book.app);
+      return { book, source, depths, unfillable, candidates, plan };
+    };
+
+    const attempts = await Promise.all(books.map(planBook));
+
+    // A book with no hook on this chain can be quoted but never filled, so it
+    // cannot win -- routing to it would produce a plan with nowhere to send it.
+    // It still appears in `alternatives`, because silently dropping a book is
+    // how the second one went unnoticed in the first place.
+    const fillableBooks = attempts.filter((a) => a.book.hook !== "");
+
+    // Largest amountOut wins. Ties and all-zero fall to the first book, which is
+    // the evidence book, so behaviour is unchanged whenever the second is empty.
+    //
+    // KNOWN WEAKNESS, deliberately left visible rather than papered over: this is
+    // the standard exact-in definition of best execution, and it does not account
+    // for a book that fills only part of the input. Measured on Base right now,
+    // the Bone Dry book absorbs the whole 0.1 USDC at 17% of the oracle rate,
+    // while the evidence book fills 97 units at 110% of it and leaves the rest
+    // unsold. Maximising amountOut picks the first, which is right for a taker who
+    // wants the input sold and wrong for one who would rather keep it.
+    //
+    // The response carries amountFilled and every alternative's amountOut, so the
+    // surface can show the rate and let the taker choose. It must: routing someone
+    // into a six-times-worse price without showing them the comparison is the kind
+    // of silent decision this project exists to argue against.
+    const best =
+      fillableBooks.reduce<typeof attempts[number] | null>(
+        (acc, a) => (acc === null || a.plan.amountOut > acc.plan.amountOut ? a : acc),
+        null
+      ) ?? attempts[0];
+
+    const alternatives = attempts
+      .filter((a) => a !== best)
+      .map((a) => ({
+        app: a.book.app,
+        hook: a.book.hook || null,
+        bookLabel: a.book.label,
+        encumbranceAware: a.book.encumbranceAware,
+        amountOut: a.plan.amountOut,
+        makersUsed: a.plan.slices.length,
+        makersConsidered: a.depths.length,
+        fillable: a.book.hook !== "",
+        reason: a.book.hook === "" ? "no hook on this chain can call this router" : undefined,
+      }));
+
+    const { source, depths, unfillable, candidates, plan, book } = best;
     const { slices, binding: clamped } = plan;
 
     if (slices.length === 0) {
       return j({
         source,
+        app: book.app,
+        hook: book.hook || null,
+        bookLabel: book.label,
+        encumbranceAware: book.encumbranceAware,
+        alternatives,
         tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
         tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
         amountIn,
@@ -121,13 +177,22 @@ export async function GET(req: Request) {
     // subject to exactly the rules the split was, rather than a looser
     // approximation -- an earlier version cut corners here and reported
     // improvements over 10,000 bps because the baseline came out near zero.
-    const single = await planLikeTap(n, candidates.slice(0, 1), filled, tokenIn, tokenOut);
+    const single = await planLikeTap(n, candidates.slice(0, 1), filled, tokenIn, tokenOut, book.app);
 
     const improvementBps =
       single.amountOut > 0n ? ((plan.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
     return j({
       source,
+      /** The Aqua app this plan fills from, and the v4 hook that can reach it.
+       *  The taker must build its poolKey from THIS hook: a plan is only
+       *  executable through the one router its strategies were shipped to. */
+      app: book.app,
+      hook: book.hook || null,
+      bookLabel: book.label,
+      encumbranceAware: book.encumbranceAware,
+      /** The books that did not win, so a losing one is visible rather than erased. */
+      alternatives,
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },
       tokenOut: { ...TOKENS[tokenOut.toLowerCase()], address: tokenOut },
       chain: { id: n.id, label: n.label, testnet: n.testnet },

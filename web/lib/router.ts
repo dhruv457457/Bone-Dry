@@ -212,7 +212,8 @@ export async function planLikeTap(
   candidates: MakerDepth[],
   requested: bigint,
   tokenIn: Address,
-  tokenOut: Address
+  tokenOut: Address,
+  app: Address = n.router
 ): Promise<TapPlan> {
   const empty: TapPlan = { takeIn: 0n, slices: [], amountOut: 0n, perMaker: [], binding: [], candidates: [] };
   if (candidates.length === 0 || requested === 0n) return empty;
@@ -234,7 +235,8 @@ export async function planLikeTap(
       live,
       live.map((c) => (requested * c.depth) / totalDepth),
       tokenIn,
-      tokenOut
+      tokenOut,
+      app
     );
     const kept = live.filter((_, i) => ceiling[i] > 0n);
     if (kept.length === live.length) break;
@@ -275,7 +277,7 @@ export async function planLikeTap(
   // practice the closed form lands first time; this is here so a quote is
   // never published that the hook has not been shown to honour.
   for (let attempt = 0; attempt < 4 && takeIn > 0n; attempt++) {
-    const run = await replayTapFill(n, live, takeIn, tokenIn, tokenOut, sliceAt, asSlice);
+    const run = await replayTapFill(n, live, takeIn, tokenIn, tokenOut, sliceAt, asSlice, app);
     if (run) return { ...run, binding, candidates: live };
     takeIn = (takeIn * 995n) / 1000n;
   }
@@ -309,11 +311,12 @@ export async function planLikeTap(
       solo,
       [(requested * solo[0].depth) / soloTotal],
       tokenIn,
-      tokenOut
+      tokenOut,
+      app
     );
     let soloTake = soloCeiling[0] < requested ? soloCeiling[0] : requested;
     for (let attempt = 0; attempt < 3 && soloTake > 0n; attempt++) {
-      const run = await replayTapFill(n, solo, soloTake, tokenIn, tokenOut, soloSlice, soloAs);
+      const run = await replayTapFill(n, solo, soloTake, tokenIn, tokenOut, soloSlice, soloAs, app);
       if (run) {
         return {
           ...run,
@@ -342,7 +345,8 @@ async function replayTapFill(
   tokenIn: Address,
   tokenOut: Address,
   sliceAt: (takeIn: bigint, i: number) => bigint,
-  asSlice: (i: number, amountIn: bigint) => Slice
+  asSlice: (i: number, amountIn: bigint) => Slice,
+  app: Address = n.router
 ): Promise<Omit<TapPlan, "binding" | "candidates"> | null> {
   // --- pass 2 in the hook: pro-rata slices, quoted in one multicall ---
   //
@@ -368,7 +372,7 @@ async function replayTapFill(
   });
   if (probes.length === 0) return null;
 
-  const q = await quoteRoute(n, probes, tokenIn, tokenOut);
+  const q = await quoteRoute(n, probes, tokenIn, tokenOut, app);
 
   let remaining = takeIn;
   let totalOut = 0n;
@@ -403,7 +407,7 @@ async function replayTapFill(
       }
     });
     if (sweepProbes.length > 0) {
-      const sq = await quoteRoute(n, sweepProbes, tokenIn, tokenOut);
+      const sq = await quoteRoute(n, sweepProbes, tokenIn, tokenOut, app);
       sweepProbes.forEach((p, idx) => {
         const i = sweepOwner[idx];
         if (remaining === 0n) return;
@@ -447,7 +451,8 @@ async function maxSliceWithinDepth(
   candidates: MakerDepth[],
   upper: bigint[],
   tokenIn: Address,
-  tokenOut: Address
+  tokenOut: Address,
+  app: Address = n.router
 ): Promise<bigint[]> {
   const asSlice = (i: number, amountIn: bigint): Slice => ({
     maker: candidates[i].maker,
@@ -471,7 +476,7 @@ async function maxSliceWithinDepth(
     const best: (bigint | null)[] = candidates.map(() => null);
     if (probes.length === 0) return best;
 
-    const q = await quoteRoute(n, probes, tokenIn, tokenOut);
+    const q = await quoteRoute(n, probes, tokenIn, tokenOut, app);
     probes.forEach((p, idx) => {
       const i = owner[idx];
       const got = q.perMaker[idx]?.amountOut ?? 0n;
@@ -558,7 +563,12 @@ export async function quoteRoute(
   n: Network,
   slices: Slice[],
   tokenIn: Address,
-  tokenOut: Address
+  tokenOut: Address,
+  /** Which SwapVM router to quote through. Must be the app the strategies were
+   *  shipped to: an opcode-35 program quoted against 1inch's canonical router
+   *  hits an opcode its table does not have, and the encumbrance haircut is
+   *  exactly what the quote is meant to reflect. */
+  app: Address = n.router
 ) {
   if (slices.length === 0) return { amountOut: 0n, perMaker: [] as { maker: Address; amountOut: bigint }[] };
 
@@ -568,7 +578,7 @@ export async function quoteRoute(
       s.strategy
     );
     return {
-      address: n.router,
+      address: app,
       abi: swapVmAbi,
       functionName: "quote",
       args: [order, tokenIn, tokenOut, s.amountIn, TAKER_TRAITS],
@@ -606,7 +616,8 @@ export async function filterFillable(
   depths: MakerDepth[],
   tokenIn: Address,
   tokenOut: Address,
-  amountIn: bigint
+  amountIn: bigint,
+  app: Address = n.router
 ): Promise<{ fillable: MakerDepth[]; unfillable: Address[] }> {
   const solvent = depths.filter((d) => d.solvent);
   if (solvent.length === 0) return { fillable: [], unfillable: [] };
@@ -624,7 +635,7 @@ export async function filterFillable(
     depth: d.depth,
   }));
 
-  const q = await quoteRoute(n, probes, tokenIn, tokenOut);
+  const q = await quoteRoute(n, probes, tokenIn, tokenOut, app);
   const fillable: MakerDepth[] = [];
   const unfillable: Address[] = [];
   solvent.forEach((d, i) => {
