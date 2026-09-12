@@ -12,8 +12,12 @@ library EncumbranceArgsBuilder {
     using SafeCast for uint256;
     using Calldata for bytes;
 
-    uint256 internal constant MAX_INSTRUCTION_SIBLINGS = 7;
+    /// @notice Maximum siblings encodable in a single SwapVM instruction (uint8 argsLength limit = 255 bytes).
+    /// Fixed overhead = 32 (declaredTotalEncumbrance) + 2 (siblingCount) + 2 (maxUtilBps) + 2 (widenBps) = 38 bytes.
+    /// (255 - 38) / 32 = 6 siblings max.
+    uint256 internal constant MAX_INSTRUCTION_SIBLINGS = 6;
 
+    error EncumbranceParsingMissingDeclaredTotal();
     error EncumbranceParsingMissingSiblingCount();
     error EncumbranceParsingMissingSiblingHashes();
     error EncumbranceParsingMissingMaxUtilBps();
@@ -22,10 +26,12 @@ library EncumbranceArgsBuilder {
     error EncumbranceBuildingSiblingCountExceedsCapacity(uint256 siblingCount, uint256 maxAllowed);
 
     /// @notice Builds packed instruction calldata for OP_ENCUMBERED_CAP (opcode 35)
-    /// @param siblingHashes Hashes of sibling strategies to account for encumbrance (max 7)
+    /// @param declaredTotalEncumbrance Maker's declared total encumbrance across all strategies
+    /// @param siblingHashes Hashes of sibling strategies sampled on-chain for spot-check (max 6)
     /// @param maxUtilBps Maximum utilisation basis points (1e4 = 100%) before reverting
     /// @param widenBps Haircut basis points applied to amountOut at 100% utilisation
     function build(
+        uint256 declaredTotalEncumbrance,
         bytes32[] memory siblingHashes,
         uint16 maxUtilBps,
         uint16 widenBps
@@ -33,7 +39,10 @@ library EncumbranceArgsBuilder {
         if (siblingHashes.length > MAX_INSTRUCTION_SIBLINGS) {
             revert EncumbranceBuildingSiblingCountExceedsCapacity(siblingHashes.length, MAX_INSTRUCTION_SIBLINGS);
         }
-        bytes memory packed = abi.encodePacked(siblingHashes.length.toUint16());
+        bytes memory packed = abi.encodePacked(
+            declaredTotalEncumbrance,
+            siblingHashes.length.toUint16()
+        );
         for (uint256 i = 0; i < siblingHashes.length; i++) {
             packed = abi.encodePacked(packed, siblingHashes[i]);
         }
@@ -42,26 +51,29 @@ library EncumbranceArgsBuilder {
 
     /// @notice Parses packed instruction calldata for OP_ENCUMBERED_CAP
     /// @param args Calldata arguments:
-    ///   [0:2]           uint16  siblingCount
-    ///   [2 : 2+32n]     bytes32 siblingHashes[siblingCount]
-    ///   [2+32n : 4+32n] uint16  maxUtilBps
-    ///   [4+32n : 6+32n] uint16  widenBps
+    ///   [0:32]            uint256 declaredTotalEncumbrance
+    ///   [32:34]           uint16  siblingCount
+    ///   [34 : 34+32n]     bytes32 siblingHashes[siblingCount]
+    ///   [34+32n : 36+32n] uint16  maxUtilBps
+    ///   [36+32n : 38+32n] uint16  widenBps
     function parse(bytes calldata args) internal pure returns (
+        uint256 declaredTotalEncumbrance,
         uint256 siblingCount,
         bytes calldata siblingHashes,
         uint16 maxUtilBps,
         uint16 widenBps
     ) {
         unchecked {
-            siblingCount = uint16(bytes2(args.slice(0, 2, EncumbranceParsingMissingSiblingCount.selector)));
+            declaredTotalEncumbrance = uint256(bytes32(args.slice(0, 32, EncumbranceParsingMissingDeclaredTotal.selector)));
+            siblingCount = uint16(bytes2(args.slice(32, 34, EncumbranceParsingMissingSiblingCount.selector)));
             if (siblingCount > MAX_INSTRUCTION_SIBLINGS) {
                 revert EncumbranceParsingSiblingCountExceedsCapacity(siblingCount, MAX_INSTRUCTION_SIBLINGS);
             }
-            uint256 hashesEnd = 2 + 32 * siblingCount;
+            uint256 hashesEnd = 34 + 32 * siblingCount;
             uint256 maxUtilEnd = hashesEnd + 2;
             uint256 widenEnd = maxUtilEnd + 2;
 
-            siblingHashes = args.slice(2, hashesEnd, EncumbranceParsingMissingSiblingHashes.selector);
+            siblingHashes = args.slice(34, hashesEnd, EncumbranceParsingMissingSiblingHashes.selector);
             maxUtilBps = uint16(bytes2(args.slice(hashesEnd, maxUtilEnd, EncumbranceParsingMissingMaxUtilBps.selector)));
             widenBps = uint16(bytes2(args.slice(maxUtilEnd, widenEnd, EncumbranceParsingMissingWidenBps.selector)));
         }
@@ -80,6 +92,9 @@ abstract contract Encumbrance {
 
     /// @dev Reverts when maker has zero deliverable backing (balance == 0 or allowance == 0)
     error EncumbranceZeroBacking();
+
+    /// @dev Reverts when maker's declared total encumbrance is less than the sampled sibling obligations
+    error EncumbranceUnderdeclared(uint256 declaredTotal, uint256 sampledTotal);
 
     /// @dev Reverts when encumbrance utilisation exceeds the allowed maximum
     error EncumbranceExceeded(uint256 util, uint256 maxUtilBps);
@@ -107,16 +122,23 @@ abstract contract Encumbrance {
     ///   Encumbrance widens price by penalizing (increasing) amountIn.
     /// - In both modes, deliverable amountOut is strictly checked against free unencumbered backing.
     ///
+    /// SPOT-CHECK VERIFICATION & DECLARED TOTAL:
+    /// Makers declare their total encumbrance across all strategies in `declaredTotalEncumbrance`.
+    /// SwapVM samples up to 6 siblings on-chain as a spot-check. If declared total is less than
+    /// the sampled commitments, execution reverts (EncumbranceUnderdeclared).
+    /// Utilisation and solvency are computed directly against the declared total.
+    ///
     /// SELF-REFERENCE HANDLING: If the maker includes the current strategy's own orderHash
     /// in the siblingHashes array, it is skipped to prevent double-counting.
     ///
     /// SIBLING ENCODING BOUND: SwapVM's runLoop uses a uint8 instruction length, capping calldata args
-    /// at 255 bytes. With 6 bytes overhead, up to 7 siblings can be evaluated per instruction call.
+    /// at 255 bytes. With 38 bytes overhead (32 declaredTotal + 2 count + 2 maxUtil + 2 widen), up to 6 siblings can be sampled per instruction call.
     ///
     /// @param ctx VM Context
-    /// @param args Packed calldata containing sibling hashes, maxUtilBps, and widenBps
+    /// @param args Packed calldata containing declaredTotalEncumbrance, sibling hashes, maxUtilBps, and widenBps
     function _encumberedCap(Context memory ctx, bytes calldata args) internal view {
         (
+            uint256 declaredTotalEncumbrance,
             uint256 siblingCount,
             bytes calldata siblingHashes,
             uint16 maxUtilBps,
@@ -124,7 +146,7 @@ abstract contract Encumbrance {
         ) = EncumbranceArgsBuilder.parse(args);
 
         IAqua aqua = _aqua();
-        uint256 encumbered = 0;
+        uint256 sampledEncumbered = 0;
         for (uint256 i = 0; i < siblingCount; i++) {
             bytes32 siblingHash = bytes32(siblingHashes.slice(i * 32, (i + 1) * 32));
 
@@ -145,7 +167,12 @@ abstract contract Encumbrance {
                 continue;
             }
 
-            encumbered += bal;
+            sampledEncumbered += bal;
+        }
+
+        // On-chain spot-check: maker cannot declare less encumbrance than sampled sibling commitments
+        if (declaredTotalEncumbrance < sampledEncumbered) {
+            revert EncumbranceUnderdeclared(declaredTotalEncumbrance, sampledEncumbered);
         }
 
         uint256 balOut = IERC20(ctx.query.tokenOut).balanceOf(ctx.query.maker);
@@ -157,7 +184,7 @@ abstract contract Encumbrance {
         }
 
         // 512-bit intermediate multiplication avoids overflow even on arbitrarily massive commitments
-        uint256 util = Math.mulDiv(encumbered, 1e4, backing);
+        uint256 util = Math.mulDiv(declaredTotalEncumbrance, 1e4, backing);
 
         // Report true untruncated utilization in EncumbranceExceeded
         if (util >= maxUtilBps) {
@@ -180,7 +207,7 @@ abstract contract Encumbrance {
         }
 
         // Hard solvency floor: deliverable amountOut cannot exceed free backing
-        uint256 free = backing > encumbered ? backing - encumbered : 0;
+        uint256 free = backing > declaredTotalEncumbrance ? backing - declaredTotalEncumbrance : 0;
         if (ctx.swap.amountOut > free) {
             revert EncumbranceInsufficient(ctx.swap.amountOut, free);
         }

@@ -55,13 +55,14 @@ contract EncumbranceFillDemo is Test {
 
     function _shipStrategy(
         uint64 salt,
+        uint256 declaredTotalEncumbrance,
         bytes32[] memory siblingHashes,
         uint16 maxUtilBps,
         uint16 widenBps,
         uint256 usdcLiquidity,
         uint256 wethLiquidity
     ) internal returns (ISwapVM.Order memory order, bytes32 orderHash) {
-        bytes memory encArgs = EncumbranceArgsBuilder.build(siblingHashes, maxUtilBps, widenBps);
+        bytes memory encArgs = EncumbranceArgsBuilder.build(declaredTotalEncumbrance, siblingHashes, maxUtilBps, widenBps);
         bytes memory program = abi.encodePacked(
             hex"1408", uint64(salt), // Controls._salt (unique nonce)
             hex"1100",               // XYCSwap._xycSwapXD (Opcode 17)
@@ -155,6 +156,7 @@ contract EncumbranceFillDemo is Test {
         bytes32[] memory emptySiblings = new bytes32[](0);
         (ISwapVM.Order memory order1, bytes32 orderHash1) = _shipStrategy(
             1001,
+            0,
             emptySiblings,
             maxUtilBps,
             widenBps,
@@ -186,7 +188,7 @@ contract EncumbranceFillDemo is Test {
 
         emit log_named_uint("Taker Input (USDC)", amountIn1);
         emit log_named_uint("Taker Received Output (WETH)", amountOut1);
-        emit log_named_bytes32("Order Executed On-Chain", executedHash1);
+        emit log_named_bytes32("Order Hash", executedHash1);
         emit log_string("RESULT: Swap succeeded at 100% of full XYC quote on-chain!");
 
         assertEq(executedHash1, orderHash1, "Order hash matches");
@@ -213,6 +215,7 @@ contract EncumbranceFillDemo is Test {
 
         (ISwapVM.Order memory order2,) = _shipStrategy(
             1002,
+            8e18,
             siblings,
             maxUtilBps,
             widenBps,

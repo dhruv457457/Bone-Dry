@@ -44,13 +44,14 @@ contract EncumbranceTest is Test {
     function _createAndShipStrategy(
         address maker,
         uint64 salt,
+        uint256 declaredTotalEncumbrance,
         bytes32[] memory siblingHashes,
         uint16 maxUtilBps,
         uint16 widenBps,
         uint256 usdcLiquidity,
         uint256 wethLiquidity
     ) internal returns (ISwapVM.Order memory order, bytes32 orderHash) {
-        bytes memory encArgs = EncumbranceArgsBuilder.build(siblingHashes, maxUtilBps, widenBps);
+        bytes memory encArgs = EncumbranceArgsBuilder.build(declaredTotalEncumbrance, siblingHashes, maxUtilBps, widenBps);
         bytes memory program = abi.encodePacked(
             hex"1408", uint64(salt), // Controls._salt
             hex"1100",               // XYCSwap._xycSwapXD
@@ -148,6 +149,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             1,
+            0,
             siblings,
             10_000, // maxUtilBps = 100%
             2_000,  // widenBps = 20%
@@ -191,6 +193,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             2,
+            5e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -241,6 +244,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             3,
+            8e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -275,9 +279,11 @@ contract EncumbranceTest is Test {
         uint16 maxUtilBps = 7_500; // 75% cap
         uint16 widenBps = 2_000;
 
+        // Maker ships strategy declaring 0 encumbrance while having an active 8 WETH sibling
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             4,
+            0,
             siblings,
             maxUtilBps,
             widenBps,
@@ -287,8 +293,8 @@ contract EncumbranceTest is Test {
 
         uint256 amountIn = 1_000e6;
 
-        // While sibling is active, quote reverts with EncumbranceExceeded
-        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, 8000, 7500));
+        // While sibling is active, on-chain spot-check catches under-declaration (0 < 8 WETH) and reverts
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceUnderdeclared.selector, 0, 8e18));
         router.quote(order, address(USDC), address(WETH), amountIn, takerTraitsAndData);
 
         // Maker docks the sibling strategy
@@ -299,7 +305,7 @@ contract EncumbranceTest is Test {
         aqua.dock(address(router), sibHash, tokens);
 
         // After docking, sibling has tokensCount == 0xff, so instruction skips it!
-        // Encumbrance drops to 0, quote succeeds at full amount
+        // Sampled encumbrance drops to 0, spot-check (0 >= 0) passes, quote succeeds at full amount!
         uint256 expectedOut = (amountIn * 10e18) / (10_000e6 + amountIn);
         (, uint256 amountOut,) = router.quote(order, address(USDC), address(WETH), amountIn, takerTraitsAndData);
 
@@ -318,6 +324,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             5,
+            0,
             siblings,
             10_000,
             2_000,
@@ -358,6 +365,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             6,
+            9.5e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -406,6 +414,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             7,
+            4e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -469,7 +478,7 @@ contract EncumbranceTest is Test {
 
         // First predict order and orderHash
         bytes32[] memory emptySiblings = new bytes32[](0);
-        bytes memory encArgs = EncumbranceArgsBuilder.build(emptySiblings, 10_000, 2_000);
+        bytes memory encArgs = EncumbranceArgsBuilder.build(0, emptySiblings, 10_000, 2_000);
         bytes memory programWithoutSiblings = abi.encodePacked(
             hex"1408", uint64(999),
             hex"1100",
@@ -504,6 +513,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory selfOrder,) = _createAndShipStrategy(
             maker,
             999,
+            0,
             selfSiblings,
             10_000,
             2_000,
@@ -545,6 +555,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             202,
+            5e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -599,6 +610,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             602,
+            9.5e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -641,6 +653,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             702,
+            4e18,
             siblings,
             maxUtilBps,
             widenBps,
@@ -704,6 +717,7 @@ contract EncumbranceTest is Test {
         (ISwapVM.Order memory order,) = _createAndShipStrategy(
             maker,
             901,
+            hugeAmount,
             siblings,
             10_000,
             2_000,
@@ -726,49 +740,96 @@ contract EncumbranceTest is Test {
         );
     }
 
-    /// @notice Boundary Test: Attempting 8 siblings fails safely (build rejects, and parse rejects with EncumbranceParsingSiblingCountExceedsCapacity)
-    function test_Boundary_eightSiblingsFailsSafely() public {
-        bytes32[] memory eightSiblings = new bytes32[](8);
-        for (uint256 i = 0; i < 8; i++) {
-            eightSiblings[i] = bytes32(uint256(i + 1));
+    /// @notice Under-declaration Test: Maker declares less encumbrance than sampled sibling commitments -> caught and reverted
+    function test_UnderdeclaredEncumbranceCaughtBySpotCheck() public {
+        address maker = makeAddr("underdeclaringMaker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 5 WETH
+        bytes32 sibHash = _shipSibling(maker, 888, 10_000e6, 5e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        // Maker untruthfully declares only 2 WETH encumbrance (< 5 WETH sampled)
+        uint256 declaredTotal = 2e18;
+        uint256 sampledTotal = 5e18;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            889,
+            declaredTotal,
+            siblings,
+            10_000,
+            2_000,
+            10_000e6,
+            10e18
+        );
+
+        // Quote triggers the on-chain spot-check and reverts with EncumbranceUnderdeclared
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Encumbrance.EncumbranceUnderdeclared.selector,
+                declaredTotal,
+                sampledTotal
+            )
+        );
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            1_000e6,
+            takerTraitsAndData
+        );
+    }
+
+    /// @notice Boundary Test: Attempting 7 siblings fails safely (build rejects, and parse rejects with EncumbranceParsingSiblingCountExceedsCapacity)
+    function test_Boundary_sevenSiblingsFailsSafely() public {
+        bytes32[] memory sevenSiblings = new bytes32[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            sevenSiblings[i] = bytes32(uint256(i + 1));
         }
 
-        // Test A: EncumbranceArgsBuilder.build explicitly rejects 8 siblings
+        // Test A: EncumbranceArgsBuilder.build explicitly rejects 7 siblings
         vm.expectRevert(
             abi.encodeWithSelector(
                 EncumbranceArgsBuilder.EncumbranceBuildingSiblingCountExceedsCapacity.selector,
-                8,
-                7
+                7,
+                6
             )
         );
-        this.buildWrapper(eightSiblings, 10_000, 2_000);
+        this.buildWrapper(0, sevenSiblings, 10_000, 2_000);
 
-        // Test B: Handcrafting raw calldata with siblingCount = 8 fails safely in parse
-        bytes memory rawPacked = abi.encodePacked(uint16(8));
-        for (uint256 i = 0; i < 8; i++) {
-            rawPacked = abi.encodePacked(rawPacked, eightSiblings[i]);
+        // Test B: Handcrafting raw calldata with siblingCount = 7 fails safely in parse
+        bytes memory rawPacked = abi.encodePacked(uint256(0), uint16(7));
+        for (uint256 i = 0; i < 7; i++) {
+            rawPacked = abi.encodePacked(rawPacked, sevenSiblings[i]);
         }
         rawPacked = abi.encodePacked(rawPacked, uint16(10_000), uint16(2_000));
 
         vm.expectRevert(
             abi.encodeWithSelector(
                 EncumbranceArgsBuilder.EncumbranceParsingSiblingCountExceedsCapacity.selector,
-                8,
-                7
+                7,
+                6
             )
         );
         this.parseCalldata(rawPacked);
     }
 
     function buildWrapper(
+        uint256 declaredTotalEncumbrance,
         bytes32[] memory siblingHashes,
         uint16 maxUtilBps,
         uint16 widenBps
     ) external pure returns (bytes memory) {
-        return EncumbranceArgsBuilder.build(siblingHashes, maxUtilBps, widenBps);
+        return EncumbranceArgsBuilder.build(declaredTotalEncumbrance, siblingHashes, maxUtilBps, widenBps);
     }
 
     function parseCalldata(bytes calldata args) external pure returns (
+        uint256 declaredTotalEncumbrance,
         uint256 siblingCount,
         bytes calldata siblingHashes,
         uint16 maxUtilBps,
