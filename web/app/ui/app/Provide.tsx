@@ -53,7 +53,7 @@ export function Provide({
   // Encumbrance Strategy parameters
   const [maxUtilBps, setMaxUtilBps] = useState(8000); // 80% default
   const [widenBps, setWidenBps] = useState(500); // 500 bps = 5% default
-  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("depth");
+  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("dual");
   const [showFormulas, setShowFormulas] = useState(false);
   const [hoverUtil, setHoverUtil] = useState<number | null>(null);
 

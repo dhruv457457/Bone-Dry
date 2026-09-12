@@ -6,6 +6,11 @@ export const metadata = {
   description: "Swap against a pool that holds nothing, filled from 1inch Aqua maker wallets.",
 };
 
-export default function AppPage() {
-  return <Desk />;
+export default async function AppPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ chain?: string; tab?: string; address?: string }>;
+}) {
+  const params = await searchParams;
+  return <Desk initialTab={params.tab} initialChain={params.chain} initialAddress={params.address} />;
 }

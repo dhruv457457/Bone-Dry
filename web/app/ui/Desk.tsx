@@ -71,8 +71,19 @@ async function getJson<T>(url: string, timeout = TIMEOUT_MS): Promise<T> {
   }
 }
 
-export default function Desk() {
+export default function Desk({
+  initialTab,
+  initialChain,
+  initialAddress,
+}: {
+  initialTab?: string;
+  initialChain?: string;
+  initialAddress?: string;
+} = {}) {
   const [chainId, setChainId] = useState<NetworkId>(() => {
+    if (initialChain === "8453") return 8453;
+    if (initialChain === "84532") return 84532;
+    if (initialChain === "1") return 1;
     if (typeof window !== "undefined") {
       const c = new URLSearchParams(window.location.search).get("chain");
       if (c === "8453") return 8453;
@@ -123,9 +134,8 @@ export default function Desk() {
     return availablePairs.find((p) => p.id === pairId) ?? availablePairs[0] ?? defaultPairFor(chainId);
   }, [availablePairs, pairId, chainId]);
 
-  // Four jobs, four views. Everything below used to be one long scroll --
-  // swap, become a maker, check your own exposure, and browse anyone else's --
   const [tab, setTab] = useState<Tab>(() => {
+    if (initialTab && TABS.includes(initialTab as Tab)) return initialTab as Tab;
     if (typeof window !== "undefined") {
       const t = new URLSearchParams(window.location.search).get("tab");
       if (TABS.includes(t as Tab)) return t as Tab;
@@ -143,7 +153,7 @@ export default function Desk() {
     }
   }, []);
 
-  const [deepAddress, setDeepAddress] = useState<string | undefined>();
+  const [deepAddress, setDeepAddress] = useState<string | undefined>(initialAddress);
   const [flipped, setFlipped] = useState(false);
   const tokenIn = flipped ? currentPair.token1 : currentPair.token0;
   const tokenOut = flipped ? currentPair.token0 : currentPair.token1;
