@@ -6,8 +6,9 @@ import {BoneDryRouter} from "../src/vm/BoneDryRouter.sol";
 import {Encumbrance, EncumbranceArgsBuilder} from "../src/vm/Encumbrance.sol";
 import {MakerTraitsLib, MakerTraits} from "@1inch/swap-vm/libs/MakerTraits.sol";
 import {ISwapVM} from "@1inch/swap-vm/interfaces/ISwapVM.sol";
-import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
+import {IAqua} from "../src/interfaces/IAqua.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Chains} from "../script/Chains.sol";
 
 contract EncumbranceTest is Test {
@@ -17,6 +18,7 @@ contract EncumbranceTest is Test {
     IERC20 WETH;
 
     bytes takerTraitsAndData = hex"00000000000000000000000000000000000000000041";
+    bytes takerTraitsAndDataExactOut = hex"00000000000000000000000000000000000000000040";
 
     function setUp() public {
         vm.createSelectFork(vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org")));
@@ -522,6 +524,206 @@ contract EncumbranceTest is Test {
 
         emit log_named_uint("Self-referential quote amountOut", amountOut);
         assertEq(amountOut, expectedOut, "Self-referential hash must be skipped without inflating encumbrance");
+    }
+
+    /// @notice Case 2 (exactOut): One sibling at 50% backing -> taker pays penalty on amountIn (price widened)
+    function test_Case2_exactOut_oneSibling_penalty() public {
+        address maker = makeAddr("case2ExactOutMaker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 5 WETH (50% of 10 WETH backing)
+        bytes32 sibHash = _shipSibling(maker, 102, 10_000e6, 5e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 10_000; // 100%
+        uint16 widenBps = 2_000;   // 20%
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            202,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        // Taker requests exact output of 0.5 WETH
+        uint256 amountOutRequested = 0.5e18;
+        // Standard XYC exactOut: amountIn = ceilDiv(amountOut * balanceIn, balanceOut - amountOut)
+        uint256 rawIn = Math.ceilDiv(amountOutRequested * 10_000e6, 10e18 - amountOutRequested);
+
+        // util = 5000 (50%)
+        // penalty = ceilDiv(rawIn * widenBps * util, 1e8)
+        uint256 expectedPenalty = Math.mulDiv(rawIn, uint256(widenBps) * 5000, 1e8, Math.Rounding.Ceil);
+        uint256 expectedFinalIn = rawIn + expectedPenalty;
+
+        (uint256 amountInQuoted, uint256 amountOutQuoted,) = router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            amountOutRequested,
+            takerTraitsAndDataExactOut
+        );
+
+        emit log_named_uint("Raw XYC amountIn", rawIn);
+        emit log_named_uint("Expected penalty on amountIn (10%)", expectedPenalty);
+        emit log_named_uint("Final penalty amountIn", amountInQuoted);
+        emit log_named_uint("Exact output delivered", amountOutQuoted);
+
+        assertEq(amountOutQuoted, amountOutRequested, "ExactOut must preserve requested output tokens");
+        assertEq(amountInQuoted, expectedFinalIn, "ExactOut penalty should increase amountIn by widenBps * util / 1e8");
+        assertGt(amountInQuoted, rawIn, "Encumbered exactOut must demand more input tokens from taker");
+    }
+
+    /// @notice Case 6 (exactOut): amountOut requested > free -> reverts EncumbranceInsufficient
+    function test_Case6_exactOut_insufficientFree_reverts() public {
+        address maker = makeAddr("case6ExactOutMaker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 9.5 WETH. Backing = 10 WETH -> free = 0.5 WETH
+        bytes32 sibHash = _shipSibling(maker, 502, 10_000e6, 9.5e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 10_000; // 100%
+        uint16 widenBps = 1_000;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            602,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        // Taker asks for 0.6 WETH exact out, but free is only 0.5 WETH
+        uint256 requestedOut = 0.6e18;
+        uint256 free = 10e18 - 9.5e18; // 0.5e18
+
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceInsufficient.selector, requestedOut, free));
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            requestedOut,
+            takerTraitsAndDataExactOut
+        );
+    }
+
+    /// @notice Case 7 (exactOut): Quote succeeds, sibling filled / funds moved, exactOut swap then reverts
+    function test_Case7_exactOut_quoteSwapDivergence() public {
+        address maker = makeAddr("case7ExactOutMaker");
+        address taker = makeAddr("case7ExactOutTaker");
+
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 4 WETH (40% util)
+        bytes32 sibHash = _shipSibling(maker, 702, 10_000e6, 4e18);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        uint16 maxUtilBps = 5_000; // 50% cap
+        uint16 widenBps = 2_000;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            702,
+            siblings,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 requestedOut = 0.5e18;
+
+        // --- STEP 1: Quote on exactOut succeeds ---
+        (uint256 quotedIn, uint256 quotedOut,) = router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            requestedOut,
+            takerTraitsAndDataExactOut
+        );
+        emit log_named_uint("ExactOut Quote amountIn required", quotedIn);
+        assertEq(quotedOut, requestedOut, "ExactOut delivered requested amount");
+
+        // --- STEP 2: Maker moves 3 WETH out of wallet, balance drops to 7 WETH ---
+        vm.prank(maker);
+        WETH.transfer(address(0xDEAD), 3e18);
+
+        // Utilization rises to 4e18 * 1e4 / 7e18 = 5714 >= 5000 maxUtilBps
+        uint256 expectedNewUtil = (uint256(4e18) * 1e4) / uint256(7e18);
+
+        // --- STEP 3: Swap execution on exactOut reverts ---
+        deal(address(USDC), taker, quotedIn * 2);
+        vm.prank(taker);
+        USDC.approve(address(router), quotedIn * 2);
+
+        vm.prank(taker);
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, expectedNewUtil, maxUtilBps));
+        router.swap(
+            order,
+            address(USDC),
+            address(WETH),
+            requestedOut,
+            takerTraitsAndDataExactOut
+        );
+
+        emit log_string("ExactOut Swap reverted with EncumbranceExceeded on fill!");
+    }
+
+    /// @notice Issue 3: Arbitrarily large commitments (e.g. billions of tokens) do not overflow uint256 due to Math.mulDiv
+    function test_Issue3_largeCommitmentMathMulDivNoOverflow() public {
+        address maker = makeAddr("largeCommitMaker");
+        deal(address(WETH), maker, 10e18);
+        vm.prank(maker);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 1.4 billion tokens (e.g. 1.4e9 * 1e18 = 1.4e27)
+        // With uint248 max ~ 4.5e74, 1.4e27 fits in uint248
+        uint256 hugeAmount = 1_400_000_000e18;
+        bytes32 sibHash = _shipSibling(maker, 901, 10_000e6, hugeAmount);
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = sibHash;
+
+        (ISwapVM.Order memory order,) = _createAndShipStrategy(
+            maker,
+            901,
+            siblings,
+            10_000,
+            2_000,
+            10_000e6,
+            10e18
+        );
+
+        // util is Math.mulDiv(1.4e27, 1e4, 10e18) = 1.4e12 (1.4 trillion bps!)
+        // It should NOT panic with arithmetic overflow; it should cleanly revert with EncumbranceExceeded
+        uint256 expectedHugeUtil = Math.mulDiv(hugeAmount, 1e4, 10e18);
+        emit log_named_uint("Huge utilization bps without overflow", expectedHugeUtil);
+
+        vm.expectRevert(abi.encodeWithSelector(Encumbrance.EncumbranceExceeded.selector, expectedHugeUtil, 10_000));
+        router.quote(
+            order,
+            address(USDC),
+            address(WETH),
+            1_000e6,
+            takerTraitsAndData
+        );
     }
 }
 

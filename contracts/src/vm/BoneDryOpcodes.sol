@@ -10,12 +10,17 @@ import { Decay } from "@1inch/swap-vm/instructions/Decay.sol";
 import { Fee } from "@1inch/swap-vm/instructions/Fee.sol";
 import { Extruction } from "@1inch/swap-vm/instructions/Extruction.sol";
 import { PeggedSwap } from "@1inch/swap-vm/instructions/PeggedSwap.sol";
+import { IAqua } from "../interfaces/IAqua.sol";
 import { Encumbrance } from "./Encumbrance.sol";
 
 abstract contract BoneDryOpcodes is AquaOpcodes, Encumbrance {
     uint256 internal constant OP_ENCUMBERED_CAP = 35;
 
-    constructor(address aqua) AquaOpcodes(aqua) Encumbrance(aqua) {}
+    constructor(address aqua) AquaOpcodes(aqua) {}
+
+    function _aqua() internal view virtual override returns (IAqua) {
+        return IAqua(address(_AQUA));
+    }
 
     function _opcodes() internal pure virtual override returns (function(Context memory, bytes calldata) internal[] memory result) {
         function(Context memory, bytes calldata) internal[37] memory instructions = [

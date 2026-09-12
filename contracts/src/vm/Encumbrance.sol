@@ -5,7 +5,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { Calldata } from "@1inch/solidity-utils/contracts/libraries/Calldata.sol";
-import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
+import { IAqua } from "../interfaces/IAqua.sol";
 import { Context } from "@1inch/swap-vm/libs/VM.sol";
 
 library EncumbranceArgsBuilder {
@@ -64,6 +64,9 @@ abstract contract Encumbrance {
     /// @dev Marker used by Aqua to signify that a strategy has been docked
     uint8 private constant _AQUA_DOCKED = 0xff;
 
+    /// @dev Maximum siblings encodable in a single SwapVM instruction (uint8 argsLength limit = 255 bytes)
+    uint256 public constant MAX_INSTRUCTION_SIBLINGS = 7;
+
     /// @dev Reverts when maker has zero deliverable backing (balance == 0 or allowance == 0)
     error EncumbranceZeroBacking();
 
@@ -73,14 +76,11 @@ abstract contract Encumbrance {
     /// @dev Reverts when required output exceeds deliverable unencumbered backing
     error EncumbranceInsufficient(uint256 amountOut, uint256 free);
 
-    IAqua internal immutable _aqua;
-
-    constructor(address aqua) {
-        _aqua = IAqua(aqua);
-    }
+    /// @dev Provides access to IAqua, implemented by BoneDryOpcodes via AquaOpcodes._AQUA
+    function _aqua() internal view virtual returns (IAqua);
 
     /// @notice Encumbrance-aware quote curve and solvency floor instruction.
-    /// @dev Executes after pricing instructions set ctx.swap.amountOut.
+    /// @dev Executes after pricing instructions set ctx.swap.amountOut (exactIn) or ctx.swap.amountIn (exactOut).
     ///
     /// QUOTE/SWAP DIVERGENCE: In quote mode (isStaticContext=true), this instruction reads balances
     /// and allowances at the instant of evaluation. Between quote() and swap(), a sibling strategy
@@ -89,8 +89,18 @@ abstract contract Encumbrance {
     /// (EncumbranceExceeded or EncumbranceInsufficient). This dynamic divergence is intentional: the
     /// instruction protects takers from toxic or empty executions.
     ///
+    /// EXACT-IN VS EXACT-OUT DYNAMICS:
+    /// - exactIn (ctx.query.isExactIn == true): amountIn is fixed by taker; amountOut was computed by pricing.
+    ///   Encumbrance widens price by haircutting (decreasing) amountOut.
+    /// - exactOut (ctx.query.isExactIn == false): amountOut is fixed by taker; amountIn was computed by pricing.
+    ///   Encumbrance widens price by penalizing (increasing) amountIn.
+    /// - In both modes, deliverable amountOut is strictly checked against free unencumbered backing.
+    ///
     /// SELF-REFERENCE HANDLING: If the maker includes the current strategy's own orderHash
     /// in the siblingHashes array, it is skipped to prevent double-counting.
+    ///
+    /// SIBLING ENCODING BOUND: SwapVM's runLoop uses a uint8 instruction length, capping calldata args
+    /// at 255 bytes. With 6 bytes overhead, up to 7 siblings can be evaluated per instruction call.
     ///
     /// @param ctx VM Context
     /// @param args Packed calldata containing sibling hashes, maxUtilBps, and widenBps
@@ -102,6 +112,7 @@ abstract contract Encumbrance {
             uint16 widenBps
         ) = EncumbranceArgsBuilder.parse(args);
 
+        IAqua aqua = _aqua();
         uint256 encumbered = 0;
         for (uint256 i = 0; i < siblingCount; i++) {
             bytes32 siblingHash = bytes32(siblingHashes.slice(i * 32, (i + 1) * 32));
@@ -111,7 +122,7 @@ abstract contract Encumbrance {
                 continue;
             }
 
-            (uint248 bal, uint8 tokensCount) = _aqua.rawBalances(
+            (uint248 bal, uint8 tokensCount) = aqua.rawBalances(
                 ctx.query.maker,
                 address(this),
                 siblingHash,
@@ -127,26 +138,34 @@ abstract contract Encumbrance {
         }
 
         uint256 balOut = IERC20(ctx.query.tokenOut).balanceOf(ctx.query.maker);
-        uint256 allowOut = IERC20(ctx.query.tokenOut).allowance(ctx.query.maker, address(_aqua));
+        uint256 allowOut = IERC20(ctx.query.tokenOut).allowance(ctx.query.maker, address(aqua));
         uint256 backing = Math.min(balOut, allowOut);
 
         if (backing == 0) {
             revert EncumbranceZeroBacking();
         }
 
-        uint256 util = (encumbered * 1e4) / backing;
-        if (util > type(uint16).max) {
-            util = type(uint16).max;
-        }
+        // 512-bit intermediate multiplication avoids overflow even on arbitrarily massive commitments
+        uint256 util = Math.mulDiv(encumbered, 1e4, backing);
 
+        // Report true untruncated utilization in EncumbranceExceeded
         if (util >= maxUtilBps) {
             revert EncumbranceExceeded(util, maxUtilBps);
         }
 
-        // Apply quote haircut: widens price as sibling encumbrance rises
-        if (widenBps > 0 && util > 0 && ctx.swap.amountOut > 0) {
-            uint256 haircut = (ctx.swap.amountOut * widenBps * util) / (1e4 * 1e4);
-            ctx.swap.amountOut -= haircut;
+        // Apply price widening curve based on swap direction
+        if (widenBps > 0 && util > 0) {
+            if (ctx.query.isExactIn) {
+                if (ctx.swap.amountOut > 0) {
+                    uint256 haircut = Math.mulDiv(ctx.swap.amountOut, uint256(widenBps) * util, 1e8);
+                    ctx.swap.amountOut -= haircut;
+                }
+            } else {
+                if (ctx.swap.amountIn > 0) {
+                    uint256 penalty = Math.mulDiv(ctx.swap.amountIn, uint256(widenBps) * util, 1e8, Math.Rounding.Ceil);
+                    ctx.swap.amountIn += penalty;
+                }
+            }
         }
 
         // Hard solvency floor: deliverable amountOut cannot exceed free backing
