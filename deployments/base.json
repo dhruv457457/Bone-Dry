@@ -1,0 +1,59 @@
+{
+  "chainId": 8453,
+  "network": "base",
+  "note": "Base mainnet. Aqua and the canonical SwapVM router here are 1inch's own deployments, not ours. boneDryRouter is a redeployed SwapVM whose opcode table appends opcode 35 (Encumbrance) at index 35 and leaves every upstream index 0-34 where it was; it is built by subclassing AquaOpcodes rather than forking the repo. tap is a SECOND Bone Dry hook on this chain: Tap.router is immutable (Tap.sol:42), so the earlier hook at 0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088 is welded to 1inch's router and can never reach opcode 35. lens and wellhead are the existing deployments, reused -- Lens is independent of the router, and Wellhead only takes a PoolManager.",
+  "aqua": "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
+  "swapVmRouter": "0x111111338c5091E8440b67B168bAe16a668AC0De",
+  "boneDryRouter": "0x74195573Fa9bC965667e03319F2C58567d4B96BE",
+  "boneDryRouterTx": "0xd034eb62824a14d38a308c938b61017f977136553b1550d6c3c7c40d0b40f5ff",
+  "tap": "0xaC7bCA41EA8Fce76651684943Db2c38003c98088",
+  "tapTx": "0x71d4ae18d3388c66e203c06d1258047d216430c5604d328053372a118b87fee1",
+  "tapLegacy": "0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088",
+  "lens": "0xbC7C42DA3a234cAf8d44cbeB440610CDB8790Fd6",
+  "wellhead": "0xae0188F3b68804847a740C0F7016e1A4E0bB4E64",
+  "poolId": "0x33e4c0209743652872d87d791f77cd49b78fbe50c0cefb10186e5b372c0712f1",
+  "poolInitTx": "0x8a622b21350a81743529a4e6a674cd04f64434fcdaec4f9bc7863262e00b5496",
+  "poolManager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "deployer": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+  "verified": {
+    "boneDryRouterBytes": 19793,
+    "tapBytes": 6158,
+    "maxInstructionSiblings": 6,
+    "tapRouterBinding": "0x74195573Fa9bC965667e03319F2C58567d4B96BE",
+    "poolInitialized": true,
+    "checkedAt": "2026-09-12"
+  },
+  "encumbranceStrategy": {
+    "maker": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+    "strategyHash": "0xf5c6d66978bda17d766226b1a7278b4e524bf9d20100901988a1c867945a7ae7",
+    "strategyTx": "0x2c696a2f6b7cdcd11d597ffdc4994736d8b83bbea37df9d52c128d7ab96cf90b",
+    "siblingHashes": [
+      "0x4b476f3b2efe7896c254aa7f3e5a285c903f103658d45d58a338ba9f32653c8a",
+      "0x3f7bfe1603e96bece17802e9ab18a5a45f76fac118e96f4ad851ba5aac1f8c46"
+    ],
+    "declaredTotalEncumbrance": "24000000000000",
+    "maxUtilBps": 8000,
+    "widenBps": 500,
+    "tokens": [
+      "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "0x4200000000000000000000000000000000000006"
+    ],
+    "perStrategy": {
+      "usdc": "70000",
+      "weth": "12000000000000"
+    },
+    "verified": {
+      "virtualWethEach": "12000000000000",
+      "walletWeth": "38925271417871",
+      "walletUsdc": "227609",
+      "totalPromisedWeth": "36000000000000",
+      "totalPromisedUsdc": "210000",
+      "backed": true,
+      "utilBpsAtShip": 6165,
+      "checkedAt": "2026-09-12"
+    }
+  },
+  "encumbranceStrategyNote": "Live and genuinely backed. Three strategies promise 0.21 USDC and 0.000036 WETH in total against a wallet holding 0.2276 and 0.0000389 -- ship() transfers nothing, so an unbacked position here would have cost the same and been exactly the phantom liquidity this project measures. The ship script carries require() guards that abort rather than overpromise. Sibling encumbrance is 24/38.9 of backing, 6,165 bps: under the 8,000 refusal line with the widening curve already active, so the position is constrained right now rather than idle."
+}
