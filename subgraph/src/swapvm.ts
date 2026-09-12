@@ -1,8 +1,9 @@
 import { BigInt } from "@graphprotocol/graph-ts";
-import { Swapped } from "../generated/SwapVM/SwapVM";
-import { Fill, Strategy } from "../generated/schema";
+import { Swapped, EncumbranceApplied } from "../generated/SwapVM/SwapVM";
+import { Fill, Strategy, EncumbranceApplication, MakerTokenPosition } from "../generated/schema";
 import { protocol, maker } from "./aqua";
 
+const ZERO = BigInt.fromI32(0);
 const ONE = BigInt.fromI32(1);
 
 /**
@@ -49,4 +50,54 @@ export function handleSwapped(e: Swapped): void {
   p.fills = p.fills.plus(ONE);
   if (againstAqua) p.fillsAgainstAqua = p.fillsAgainstAqua.plus(ONE);
   p.save();
+}
+
+/**
+ * Indexes EncumbranceApplied events emitted by BoneDryRouter / SwapVM when an encumbrance
+ * haircut or utilization curve was applied during fill settlement.
+ */
+export function handleEncumbranceApplied(e: EncumbranceApplied): void {
+  let id = e.transaction.hash.concatI32(e.logIndex.toI32());
+  let app = new EncumbranceApplication(id);
+  app.maker = e.params.maker.toHexString();
+
+  let strategyId = e.address.toHexString() + "-" + e.params.orderHash.toHexString();
+  let s = Strategy.load(strategyId);
+  if (s != null) {
+    app.strategy = s.id;
+  }
+
+  app.token = e.params.token;
+  app.encumbered = e.params.encumbered;
+  app.backing = e.params.backing;
+  app.utilBps = e.params.utilBps.toI32();
+  app.isExactIn = e.params.isExactIn;
+  app.adjustedFrom = e.params.adjustedFrom;
+  app.adjustedTo = e.params.adjustedTo;
+  app.blockNumber = e.block.number;
+  app.timestamp = e.block.timestamp;
+  app.txHash = e.transaction.hash;
+  app.save();
+
+  // 4.4 Extend MakerTokenPosition
+  // Refreshes the last observed backing, computes utilBps, and updates lastUpdatedAt
+  let posId = e.params.maker.toHexString() + "-" + e.params.token.toHexString();
+  let pos = MakerTokenPosition.load(posId);
+  if (pos == null) {
+    pos = new MakerTokenPosition(posId);
+    pos.maker = e.params.maker.toHexString();
+    pos.token = e.params.token;
+    pos.totalCommitted = ZERO;
+    pos.activeStrategies = ZERO;
+    pos.updatedAt = e.block.timestamp;
+  }
+  pos.backing = e.params.backing;
+  pos.lastUpdatedAt = e.block.timestamp;
+  if (e.params.backing.gt(ZERO)) {
+    let util = pos.totalCommitted.times(BigInt.fromI32(10000)).div(e.params.backing);
+    pos.utilBps = util.toI32();
+  } else {
+    pos.utilBps = 10000;
+  }
+  pos.save();
 }

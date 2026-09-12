@@ -34,6 +34,7 @@ type Maker @entity(immutable: false) {
   strategies: [Strategy!]! @derivedFrom(field: "maker")
   positions: [MakerTokenPosition!]! @derivedFrom(field: "maker")
   refusals: [MakerRefusal!]! @derivedFrom(field: "maker")
+  applications: [EncumbranceApplication!]! @derivedFrom(field: "maker")
 }
 
 type Strategy @entity(immutable: false) {
@@ -49,8 +50,13 @@ type Strategy @entity(immutable: false) {
   dockedAt: BigInt
   "Docked carries no token list, so the strategy remembers its own"
   tokens: [Bytes!]!
+  usesEncumbrance: Boolean!
+  maxUtilBps: Int
+  widenBps: Int
+  declaredSiblings: [Bytes!]!
   commitments: [Commitment!]! @derivedFrom(field: "strategy")
   fills: [Fill!]! @derivedFrom(field: "strategy")
+  applications: [EncumbranceApplication!]! @derivedFrom(field: "strategy")
 }
 
 type Commitment @entity(immutable: false) {
@@ -77,6 +83,9 @@ type MakerTokenPosition @entity(immutable: false) {
   token: Bytes!
   totalCommitted: BigInt!
   activeStrategies: BigInt!
+  backing: BigInt!
+  utilBps: Int!
+  lastUpdatedAt: BigInt!
   updatedAt: BigInt!
 }
 
@@ -102,9 +111,30 @@ An on-chain record of an insolvent, failed, or flaked maker skip during fill exe
 Emitted by Tap.sol (MakerSkipped) whenever a maker cannot deliver their promised quote.
 """
 type MakerRefusal @entity(immutable: true) {
-  id: ID!                      # txHash-logIndex
+  id: ID!                      # txHash-maker-strategyHash
   maker: Maker!
+  strategy: Strategy
+  strategyHash: Bytes
+  token: Bytes
+  reason: Bytes!
+  reasonName: String!
   wanted: BigInt!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+type EncumbranceApplication @entity(immutable: true) {
+  id: Bytes!                   # txHash ++ logIndex
+  maker: Maker!
+  strategy: Strategy
+  token: Bytes!
+  encumbered: BigInt!
+  backing: BigInt!
+  utilBps: Int!
+  isExactIn: Boolean!
+  adjustedFrom: BigInt!
+  adjustedTo: BigInt!
   blockNumber: BigInt!
   timestamp: BigInt!
   txHash: Bytes!

@@ -50,6 +50,8 @@ contract Tap is IHooks {
     error CouldNotFillEntireSwap(uint256 requested, uint256 filled);
     error HookNotImplemented();
 
+    bytes4 public constant REASON_QUOTE_UNUSABLE = 0xFFFFFFFF;
+
     event Filled(address indexed maker, uint256 amountIn, uint256 amountOut);
     event MakerSkipped(
         address indexed maker,
@@ -242,7 +244,7 @@ contract Tap is IHooks {
             return;
         }
         if (expected == 0 || expected > depth[i]) {
-            emit MakerSkipped(orders[i].maker, keccak256(d.strategies[i]), c.tokenOut, slice, bytes4(0));
+            emit MakerSkipped(orders[i].maker, keccak256(d.strategies[i]), c.tokenOut, slice, REASON_QUOTE_UNUSABLE);
             return;
         }
 

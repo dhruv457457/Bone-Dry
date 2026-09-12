@@ -1,10 +1,32 @@
 [
-  {"type":"event","name":"Swapped","anonymous":false,"inputs":[
-    {"name":"orderHash","type":"bytes32","indexed":false},
-    {"name":"maker","type":"address","indexed":false},
-    {"name":"taker","type":"address","indexed":false},
-    {"name":"tokenIn","type":"address","indexed":false},
-    {"name":"tokenOut","type":"address","indexed":false},
-    {"name":"amountIn","type":"uint256","indexed":false},
-    {"name":"amountOut","type":"uint256","indexed":false}]}
+  {
+    "type": "event",
+    "name": "Swapped",
+    "anonymous": false,
+    "inputs": [
+      { "name": "orderHash", "type": "bytes32", "indexed": false },
+      { "name": "maker", "type": "address", "indexed": false },
+      { "name": "taker", "type": "address", "indexed": false },
+      { "name": "tokenIn", "type": "address", "indexed": false },
+      { "name": "tokenOut", "type": "address", "indexed": false },
+      { "name": "amountIn", "type": "uint256", "indexed": false },
+      { "name": "amountOut", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "EncumbranceApplied",
+    "anonymous": false,
+    "inputs": [
+      { "name": "maker", "type": "address", "indexed": true },
+      { "name": "orderHash", "type": "bytes32", "indexed": true },
+      { "name": "token", "type": "address", "indexed": true },
+      { "name": "encumbered", "type": "uint256", "indexed": false },
+      { "name": "backing", "type": "uint256", "indexed": false },
+      { "name": "utilBps", "type": "uint256", "indexed": false },
+      { "name": "isExactIn", "type": "bool", "indexed": false },
+      { "name": "adjustedFrom", "type": "uint256", "indexed": false },
+      { "name": "adjustedTo", "type": "uint256", "indexed": false }
+    ]
+  }
 ]

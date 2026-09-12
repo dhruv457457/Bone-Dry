@@ -54,9 +54,94 @@ function position(m: Address, token: Address, ts: BigInt): MakerTokenPosition {
     p.token = token;
     p.totalCommitted = ZERO;
     p.activeStrategies = ZERO;
+    p.backing = ZERO;
+    p.utilBps = 0;
+    p.lastUpdatedAt = ts;
   }
   p.updatedAt = ts;
   return p as MakerTokenPosition;
+}
+
+export class DecodedEncumbrance {
+  usesEncumbrance: boolean;
+  maxUtilBps: i32;
+  widenBps: i32;
+  declaredSiblings: Array<Bytes>;
+
+  constructor() {
+    this.usesEncumbrance = false;
+    this.maxUtilBps = 0;
+    this.widenBps = 0;
+    this.declaredSiblings = new Array<Bytes>();
+  }
+}
+
+export function extractProgram(strategy: Bytes): Bytes {
+  // If ABI-encoded Order:
+  // Offset 0x00..0x20 is offset to tuple (0x20 = 32)
+  // Length is at least 160 bytes (0xa0)
+  if (strategy.length >= 160) {
+    let isAbiEncoded = true;
+    for (let i = 0; i < 31; i++) {
+      if (strategy[i] != 0) {
+        isAbiEncoded = false;
+        break;
+      }
+    }
+    if (isAbiEncoded && strategy[31] == 0x20) {
+      // It is abi.encode(Order)
+      // traits is at offset 0x40 (64)
+      // orderDataIndexes has index3 at bytes 4..5 of traits
+      let programStartInData = (i32(strategy[64 + 4]) << 8) | i32(strategy[64 + 5]);
+
+      // data offset is at strategy[96..128]. For standard Order, offset from struct start (32) is 96, so 32+96 = 128 (0x80)
+      let dataOffset = 32 + ((i32(strategy[124]) << 24) | (i32(strategy[125]) << 16) | (i32(strategy[126]) << 8) | i32(strategy[127]));
+      if (dataOffset + 32 <= strategy.length) {
+        let dataLength = (i32(strategy[dataOffset + 28]) << 24) | (i32(strategy[dataOffset + 29]) << 16) | (i32(strategy[dataOffset + 30]) << 8) | i32(strategy[dataOffset + 31]);
+        let dataStart = dataOffset + 32;
+        let programStart = dataStart + programStartInData;
+        let programEnd = dataStart + dataLength;
+        if (programStart <= programEnd && programEnd <= strategy.length) {
+          return changetype<Bytes>(strategy.slice(programStart, programEnd));
+        }
+      }
+    }
+  }
+  return strategy;
+}
+
+export function decodeEncumbrance(program: Bytes): DecodedEncumbrance {
+  let result = new DecodedEncumbrance();
+  let pc = 0;
+  while (pc + 2 <= program.length) {
+    let opcode = program[pc];
+    let argsLen = i32(program[pc + 1]);
+    let argsStart = pc + 2;
+    let nextPC = argsStart + argsLen;
+    if (nextPC > program.length) {
+      break;
+    }
+    if (opcode == 35) {
+      result.usesEncumbrance = true;
+      if (argsLen >= 38) {
+        let siblingCount = (i32(program[argsStart + 32]) << 8) | i32(program[argsStart + 33]);
+        let hashesEnd = argsStart + 34 + (siblingCount * 32);
+        if (hashesEnd + 4 <= nextPC) {
+          let siblings = new Array<Bytes>();
+          for (let i = 0; i < siblingCount; i++) {
+            let sibStart = argsStart + 34 + (i * 32);
+            siblings.push(changetype<Bytes>(program.slice(sibStart, sibStart + 32)));
+          }
+          result.declaredSiblings = siblings;
+          result.maxUtilBps = (i32(program[hashesEnd]) << 8) | i32(program[hashesEnd + 1]);
+          result.widenBps = (i32(program[hashesEnd + 2]) << 8) | i32(program[hashesEnd + 3]);
+        }
+      }
+      return result;
+    }
+    pc = nextPC;
+  }
+  return result;
 }
 
 export function handleShipped(e: Shipped): void {
@@ -66,16 +151,6 @@ export function handleShipped(e: Shipped): void {
   m.activeStrategies = m.activeStrategies.plus(ONE);
   m.save();
 
-  // Shipped carries no amounts — the initial balances arrive as Pushed events
-  // from inside ship(). So there is nothing to double count here.
-  //
-  // A strategyHash is deterministic, so docking and shipping the same program
-  // again reuses this id. Overwriting it with `new Strategy` would blank
-  // `tokens` while the previous life's Commitment rows survived: handlePushed
-  // skips the token-list bookkeeping for a Commitment that already exists, so
-  // the list would stay empty, the next Docked would unwind nothing, and
-  // MakerTokenPosition.totalCommitted would drift permanently high. Reuse the
-  // row and clear the stale commitments instead.
   let id = sid(e.params.app, e.params.strategyHash);
   let s = Strategy.load(id);
   let reship = s != null;
@@ -88,7 +163,6 @@ export function handleShipped(e: Shipped): void {
       let c = Commitment.load(cid(e.params.app, e.params.strategyHash, token));
       if (c == null) continue;
       if (c.remaining.gt(ZERO)) {
-        // whatever the previous life still claimed was never pulled or docked
         let pos = position(e.params.maker, token, ts);
         pos.totalCommitted = pos.totalCommitted.gt(c.remaining)
           ? pos.totalCommitted.minus(c.remaining)
@@ -109,6 +183,14 @@ export function handleShipped(e: Shipped): void {
   s.shippedTx = e.transaction.hash;
   s.dockedAt = null;
   s.tokens = [];
+
+  let program = extractProgram(e.params.strategy);
+  let enc = decodeEncumbrance(program);
+  s.usesEncumbrance = enc.usesEncumbrance;
+  s.maxUtilBps = enc.maxUtilBps;
+  s.widenBps = enc.widenBps;
+  s.declaredSiblings = enc.declaredSiblings;
+
   s.save();
 
   let p = protocol();

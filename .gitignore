@@ -15,6 +15,7 @@ subgraph/generated/
 subgraph/build/
 subgraph/node_modules/
 subgraph/tests/.docker/
+subgraph/tests/.bin/
 subgraph/tests/.latest.json
 contracts/fixtures/route.json
 

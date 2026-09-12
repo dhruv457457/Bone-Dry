@@ -41,13 +41,33 @@ dataSources:
       apiVersion: 0.0.7
       language: wasm/assemblyscript
       file: ./src/swapvm.ts
-      entities: [Fill, Strategy, Maker, Protocol]
+      entities: [Fill, Strategy, Maker, Protocol, EncumbranceApplication, MakerTokenPosition]
       abis:
         - name: SwapVM
           file: ./abis/SwapVM.json
       eventHandlers:
         - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
           handler: handleSwapped
+        - event: EncumbranceApplied(indexed address,indexed bytes32,indexed address,uint256,uint256,uint256,bool,uint256,uint256)
+          handler: handleEncumbranceApplied
+templates:
+  - kind: ethereum/contract
+    name: Tap
+    network: base
+    source:
+      abi: Tap
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/tap.ts
+      entities: [MakerRefusal, Maker, Protocol]
+      abis:
+        - name: Tap
+          file: ./abis/Tap.json
+      eventHandlers:
+        - event: MakerSkipped(indexed address,indexed bytes32,indexed address,uint256,bytes4)
+          handler: handleMakerSkipped
 # A Tap data source belongs here once Bone Dry's hook is deployed to Base
 # mainnet -- every other data source above targets `network: base` because
 # that's what this manifest is. It does not exist there yet (see
