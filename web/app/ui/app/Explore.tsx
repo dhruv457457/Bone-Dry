@@ -8,6 +8,7 @@ import { units, short as shortAddr } from "@/lib/format";
 import { CopyButton } from "../CopyButton";
 import type { AppsResponse, CoverageResponse } from "../types";
 import type { Network } from "@/lib/networks";
+import { tokensForChain } from "@/lib/tokenList";
 
 const MAKER_COLS = "minmax(150px,1.2fr) 96px 58px 120px 132px 146px";
 const APP_COLS = "1fr 96px 60px 68px";
@@ -35,6 +36,15 @@ export function Explore({
   onRetry: () => void;
 }) {
   const [sort, setSort] = useState<Sort>("worst");
+
+  /** Address → symbol, for the tokens this chain's list knows. Built once per
+   *  network rather than per row; the coverage API returns decimals but no
+   *  symbol, because a maker may commit any ERC-20 at all. */
+  const symbolOf = useMemo(() => {
+    const known = new Map<string, string>();
+    for (const t of tokensForChain(net.id)) known.set(t.address.toLowerCase(), t.symbol);
+    return (addr: string) => known.get(addr.toLowerCase());
+  }, [net.id]);
 
   const rows = useMemo(() => {
     const list = [...(coverage?.rows ?? [])];
@@ -214,8 +224,20 @@ export function Explore({
                       <span>{shortAddr(m.maker)}</span>
                       <CopyButton value={m.maker} title="Copy maker address" />
                     </span>
-                    <span className={s.mono} style={{ fontSize: 11.5, color: "var(--ink2)", display: "inline-flex", alignItems: "center" }}>
-                      <span>{shortAddr(m.token)}</span>
+                    <span style={{ fontSize: 12, color: "var(--ink2)", display: "inline-flex", alignItems: "center", minWidth: 0 }}>
+                      {/* The column read as six raw hex addresses stacked on
+                          top of each other, which told a reader nothing about
+                          what was actually being over-promised. Symbols where
+                          the chain's token list knows one; the address stays
+                          for everything else, because inventing a name for an
+                          unlisted token would be worse than showing none. */}
+                      <span
+                        className={symbolOf(m.token) ? undefined : s.mono}
+                        style={{ fontWeight: symbolOf(m.token) ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis" }}
+                        title={m.token}
+                      >
+                        {symbolOf(m.token) ?? shortAddr(m.token)}
+                      </span>
                       <CopyButton value={m.token} title="Copy token address" />
                     </span>
                     <span className={`${s.num} ${s.right}`} style={{ color: "var(--ink3)", paddingRight: 14 }}>

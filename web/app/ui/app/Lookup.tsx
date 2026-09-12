@@ -149,8 +149,16 @@ function Result({ data, netName }: { data: ExposureResponse; netName: string }) 
   // Coverage across tokens of different decimals cannot be summed into one
   // number, so the headline is the count of tokens that are actually covered —
   // a figure that means the same thing whatever the units underneath.
-  const covered = data.fullyCoveredCount;
-  const total = data.totalPositions;
+  //
+  // Counted over tokens this wallet has actually promised something on. The
+  // API's `covered` flag is `backed >= totalCommitted`, which is vacuously true
+  // at zero commitment, so a wallet with one real promise and one untouched
+  // token was reading "2/2 covered" — inflating the denominator with a row that
+  // says nothing.
+  const promised = data.positions.filter((p) => BigInt(p.claimed) > 0n);
+  const idle = data.positions.length - promised.length;
+  const covered = promised.filter((p) => p.covered).length;
+  const total = promised.length;
   const pct = total === 0 ? 100 : Math.round((covered / total) * 100);
   const color = covColor(pct);
 
@@ -163,17 +171,24 @@ function Result({ data, netName }: { data: ExposureResponse; netName: string }) 
             <CopyButton value={data.maker} title="Copy maker address" />
           </p>
           <h2 className={s.display} style={{ fontSize: 24, color }}>
-            {covered === total
+            {total === 0
+              ? "This wallet has strategies open, but promises nothing right now."
+              : covered === total
               ? "Every promise this wallet has out is covered."
               : `Promises more than it holds, on ${total - covered} of ${total} tokens.`}
           </h2>
+          {idle > 0 && total > 0 ? (
+            <p className={s.mono} style={{ margin: "6px 0 0", fontSize: 11, color: "var(--ink3)" }}>
+              {idle} further token{idle > 1 ? "s" : ""} carried with nothing promised — not counted
+            </p>
+          ) : null}
         </div>
         <div style={{ textAlign: "right" }}>
           <p className={s.lookupFig} style={{ color }}>
-            {covered}/{total}
+            {total === 0 ? "—" : `${covered}/${total}`}
           </p>
           <p className={s.labelSm} style={{ margin: "4px 0 0" }}>
-            tokens fully covered
+            {total === 0 ? "nothing promised" : "tokens fully covered"}
           </p>
         </div>
       </div>
@@ -181,12 +196,23 @@ function Result({ data, netName }: { data: ExposureResponse; netName: string }) 
       {data.positions.map((p) => {
         const claimed = BigInt(p.claimed);
         const held = BigInt(p.held);
-        const cov = claimed === 0n ? 100 : Number((held * 10000n) / claimed) / 100;
+        // A wallet promising nothing is not "100% covered" — it is uncommitted,
+        // and a full bar beside `claimed 0 / held 0` reads as data when it is
+        // the absence of it. The empty state above already says this in words
+        // ("Coverage is undefined, not 100%"); this row used to contradict it
+        // sixty lines later.
+        const cov = claimed === 0n ? null : Number((held * 10000n) / claimed) / 100;
         return (
           <div style={{ padding: "14px 22px", borderBottom: "1px solid var(--hair)" }} key={p.token}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, gap: 10 }}>
               <span style={{ fontSize: 14.5 }}>{p.symbol}</span>
-              <Bar pct={Math.min(100, cov)} width={90} labelWidth={44} />
+              {cov === null ? (
+                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
+                  nothing promised
+                </span>
+              ) : (
+                <Bar pct={Math.min(100, cov)} width={90} labelWidth={44} />
+              )}
             </div>
             <div className={s.mono} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--ink3)" }}>
               <span>claimed {units(p.claimed, p.decimals, 2)}</span>

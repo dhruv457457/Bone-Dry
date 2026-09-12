@@ -29,7 +29,23 @@ export function units(raw: string | bigint, decimals: number, maxFrac = 4): stri
   const abs = neg ? -v : v;
   const base = 10n ** BigInt(decimals);
   const whole = abs / base;
-  const frac = (abs % base).toString().padStart(decimals, "0").slice(0, maxFrac).replace(/0+$/, "");
+  const fracDigits = (abs % base).toString().padStart(decimals, "0");
+  let frac = fracDigits.slice(0, maxFrac).replace(/0+$/, "");
+
+  // Our own live Base position promises 0.000036 WETH. At the 2dp most callers
+  // ask for, that truncated to the string "0" — so the maker book, the lookup
+  // and the exposure card all rendered a real on-chain commitment as nothing.
+  // A tool whose entire claim is that promises should be checkable cannot round
+  // a promise away to zero; that is the one direction it must never err in.
+  // When the requested precision would erase a non-zero amount, widen it until
+  // two significant digits survive.
+  if (whole === 0n && frac === "" && abs > 0n) {
+    const firstSig = fracDigits.search(/[1-9]/);
+    if (firstSig >= 0) {
+      frac = fracDigits.slice(0, Math.min(decimals, firstSig + 2)).replace(/0+$/, "");
+    }
+  }
+
   const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return `${neg ? "-" : ""}${grouped}${frac ? "." + frac : ""}`;
 }
