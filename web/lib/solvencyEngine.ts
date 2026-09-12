@@ -22,6 +22,14 @@ export interface SolvencyEngineResult {
   clampedCount: number;
   ghostCount: number;
   unfillableCount: number;
+  /** What the route API considered, counted in STRATEGIES. A maker can hold
+   *  several, so this is larger than slices.length, which counts wallets. The
+   *  receipt quotes this; the inspector quotes wallets; showing both without
+   *  saying which is which is how one screen ends up with two totals. */
+  strategiesConsidered: number;
+  /** Wallets that landed in both makersSkipped and makersUnfillable and were
+   *  counted once, as skipped. The remaining gap between the two totals. */
+  dedupedOverlap: number;
   shieldedVolume: bigint;
   savingsUsdFormatted?: string;
 }
@@ -60,6 +68,8 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
       clampedCount: 0,
       ghostCount: 0,
       unfillableCount: 0,
+      strategiesConsidered: 0,
+      dedupedOverlap: 0,
       shieldedVolume: 0n,
     };
   }
@@ -130,9 +140,17 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
   }
 
   let unfillableCount = 0;
+  let dedupedOverlap = 0;
   for (const unfillable of rawUnfillable) {
     const addr = (extractAddress(unfillable) || unfillable) as Address;
-    if (!addr || skippedSet.has(addr.toLowerCase())) continue;
+    if (!addr) continue;
+    // A wallet can be reported both skipped and unfillable. Count it once, as
+    // skipped, and remember how many -- that count is the difference between
+    // the receipt's strategy total and the wallet total shown here.
+    if (skippedSet.has(addr.toLowerCase())) {
+      dedupedOverlap++;
+      continue;
+    }
     unfillableCount++;
     slices.push({
       maker: addr,
@@ -150,6 +168,8 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
     totalFilled,
     unfilled,
     improvementBps,
+    strategiesConsidered: Number(route.makersConsidered ?? 0),
+    dedupedOverlap,
     solventCount,
     clampedCount,
     ghostCount,

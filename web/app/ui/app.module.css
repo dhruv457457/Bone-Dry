@@ -885,10 +885,14 @@
 .sheetRow:hover { background: var(--sunk); }
 
 /* ── footer ───────────────────────────────────────────────────────────── */
-.footer { border-top: 1px solid var(--rule); padding: 20px 26px; }
+/* The footer's rule spans the window, so its padding is vertical only and the
+   row inside it rides the same --shell as every other band. It was the fourth
+   hard-coded 1300px and the one the token missed, which left the footer sitting
+   260px narrower than the content above it. */
+.footer { border-top: 1px solid var(--rule); padding: 20px 0; }
 .footerInner {
-  max-width: 1300px;
-  margin: 0 auto;
+  width: var(--shell);
+  margin-inline: auto;
   display: flex;
   justify-content: space-between;
   gap: 18px;

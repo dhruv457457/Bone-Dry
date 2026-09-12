@@ -174,8 +174,21 @@ export function RouteInspector({
             </button>
           )}
         </div>
+        {/* Two totals used to sit on this screen without either saying what it
+            counted: the receipt's 55 (strategies) and this list's 53 (wallets).
+            A maker can hold several strategies, and a wallet reported both
+            skipped and unfillable is counted once here. Both numbers were right;
+            neither was labelled. */}
         <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
           {filteredSlices.length} of {solvency.slices.length} wallets
+          {solvency.strategiesConsidered > 0 && (
+            <>
+              {" · "}
+              {solvency.strategiesConsidered} strategies considered
+              {solvency.dedupedOverlap > 0 &&
+                ` · ${solvency.dedupedOverlap} counted once as skipped`}
+            </>
+          )}
         </span>
       </div>
 

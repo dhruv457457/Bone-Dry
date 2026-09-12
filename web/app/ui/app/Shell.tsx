@@ -10,6 +10,15 @@ import { NETWORKS, type Network, type NetworkId } from "@/lib/networks";
 export type Tab = "swap" | "provide" | "portfolio" | "explore" | "lookup";
 export const TABS: Tab[] = ["swap", "provide", "portfolio", "explore", "lookup"];
 
+/** Why each network is here, in two words. Keyed by chain id so the switcher can
+ *  stay derived from NETWORKS: a network without an entry still renders, it just
+ *  gets a generic label instead of vanishing from the header. */
+const CHAIN_PURPOSE: Record<number, string> = {
+  84532: "TRY IT",
+  8453: "LIVE EVIDENCE",
+  1: "AT SCALE",
+};
+
 /**
  * Header, tab bar, and the finding rail.
  *
@@ -60,22 +69,30 @@ export function Header({
               <span className={s.labelSm}>reading chain</span>
             </span>
           ) : null}
+          {/* Derived from NETWORKS rather than a hardcoded list. There are three
+              of these today, and a switcher that silently omits one is a
+              switcher that makes a whole network unreachable — add a fourth
+              network and it would simply never appear, with no error to say
+              why. This was briefly hardcoded to carry the purpose labels; the
+              labels live in the lookup below instead, so both hold. */}
           <div className={s.chainSeg}>
-            {[
-              { id: 84532 as NetworkId, purpose: "TRY IT", name: "Base Sepolia" },
-              { id: 8453 as NetworkId, purpose: "LIVE EVIDENCE", name: "Base" },
-              { id: 1 as NetworkId, purpose: "AT SCALE", name: "Ethereum · read-only" },
-            ].map((c) => (
-              <button
-                key={c.id}
-                onClick={() => onChain(c.id)}
-                className={`${s.chainBtn} ${c.id === chainId ? s.chainBtnOn : ""}`}
-                title={NETWORKS[c.id]?.purpose}
-              >
-                <span className={s.chainPurpose}>{c.purpose}</span>
-                <span className={s.chainLabel}>{c.name}</span>
-              </button>
-            ))}
+            {(Object.keys(NETWORKS) as unknown as NetworkId[])
+              .map(Number)
+              .map((c) => c as NetworkId)
+              .map((c) => (
+                <button
+                  key={c}
+                  onClick={() => onChain(c)}
+                  className={`${s.chainBtn} ${c === chainId ? s.chainBtnOn : ""}`}
+                  title={NETWORKS[c].purpose}
+                >
+                  <span className={s.chainPurpose}>{CHAIN_PURPOSE[c] ?? "NETWORK"}</span>
+                  <span className={s.chainLabel}>
+                    {NETWORKS[c].label}
+                    {NETWORKS[c].hook === "" ? " · read-only" : ""}
+                  </span>
+                </button>
+              ))}
           </div>
           {wallet}
         </div>
@@ -221,8 +238,6 @@ export function FindingLine({
   );
 }
 
-/** @deprecated Use FindingCard for Swap/Explore and FindingLine for Provide/Portfolio */
-export const FindingRail = FindingCard;
 
 export function WrongChain({ netName, onFix }: { netName: string; onFix: () => void }) {
   return (
