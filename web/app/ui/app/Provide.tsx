@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useSendTransaction } from "wagmi";
-import { keccak256, erc20Abi, type Address, type Hex } from "viem";
+import { useSendTransaction, useSwitchChain, useWriteContract } from "wagmi";
+import { keccak256, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import s from "../app.module.css";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
@@ -54,11 +54,14 @@ export function Provide({
   // Encumbrance Strategy parameters
   const [maxUtilBps, setMaxUtilBps] = useState(8000); // 80% default
   const [widenBps, setWidenBps] = useState(500); // 500 bps = 5% default
-  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("dual");
-  const [showFormulas, setShowFormulas] = useState(false);
+  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("curve");
   const [hoverUtil, setHoverUtil] = useState<number | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
+  const { switchChain } = useSwitchChain();
+  const { writeContractAsync } = useWriteContract();
+  const [approving, setApproving] = useState(false);
+  const [onChainLoading, setOnChainLoading] = useState(false);
 
   // Oracle pricing is only deployed on Base Sepolia for WETH/USDC (same condition route.ts:82-92 enforces)
   const isWethUsdc = useMemo(() => {
@@ -124,29 +127,27 @@ export function Provide({
   const [exposure, setExposure] = useState<ExposureResponse | null>(null);
   const [exposureLoading, setExposureLoading] = useState(false);
 
-  useEffect(() => {
+  const fetchExposure = useCallback(async () => {
     if (!address) {
       setExposure(null);
       return;
     }
-    let active = true;
     setExposureLoading(true);
-    fetch(`/api/exposure?chain=${net.id}&maker=${address}`)
-      .then((r) => r.json())
-      .then((json: ExposureResponse) => {
-        if (active) setExposure(json);
-      })
-      .catch(() => {
-        if (active) setExposure(null);
-      })
-      .finally(() => {
-        if (active) setExposureLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
+    try {
+      const res = await fetch(`/api/exposure?chain=${net.id}&maker=${address}`);
+      if (!res.ok) throw new Error("exposure fetch failed");
+      const json: ExposureResponse = await res.json();
+      setExposure(json);
+    } catch {
+      setExposure(null);
+    } finally {
+      setExposureLoading(false);
+    }
   }, [net.id, address]);
+
+  useEffect(() => {
+    fetchExposure();
+  }, [fetchExposure]);
 
   // Live on-chain balances and allowance for tokenIn and tokenOut
   const [onChainData, setOnChainData] = useState<{
@@ -159,15 +160,15 @@ export function Provide({
     allowanceOut: null,
   });
 
-  useEffect(() => {
+  const reloadBalances = useCallback(async () => {
     if (!address) {
       setOnChainData({ heldIn: null, balanceOut: null, allowanceOut: null });
       return;
     }
-    let active = true;
-    const client = publicClientFor(net);
-    client
-      .multicall({
+    setOnChainLoading(true);
+    try {
+      const client = publicClientFor(net);
+      const res = await client.multicall({
         contracts: [
           {
             address: tokenIn.address as Address,
@@ -189,23 +190,43 @@ export function Provide({
           },
         ],
         allowFailure: true,
-      })
-      .then((res) => {
-        if (!active) return;
-        const bIn = res[0].status === "success" ? (res[0].result as bigint) : null;
-        const bOut = res[1].status === "success" ? (res[1].result as bigint) : null;
-        const aOut = res[2].status === "success" ? (res[2].result as bigint) : null;
-        setOnChainData({ heldIn: bIn, balanceOut: bOut, allowanceOut: aOut });
-      })
-      .catch(() => {
-        if (!active) return;
-        setOnChainData({ heldIn: null, balanceOut: null, allowanceOut: null });
       });
-
-    return () => {
-      active = false;
-    };
+      const bIn = res[0].status === "success" ? (res[0].result as bigint) : null;
+      const bOut = res[1].status === "success" ? (res[1].result as bigint) : null;
+      const aOut = res[2].status === "success" ? (res[2].result as bigint) : null;
+      setOnChainData({ heldIn: bIn, balanceOut: bOut, allowanceOut: aOut });
+    } catch {
+      setOnChainData({ heldIn: null, balanceOut: null, allowanceOut: null });
+    } finally {
+      setOnChainLoading(false);
+    }
   }, [net, address, tokenIn.address, tokenOut.address]);
+
+  useEffect(() => {
+    reloadBalances();
+  }, [reloadBalances]);
+
+  const handleApproveAqua = async () => {
+    if (!address || !writeContractAsync) return;
+    setApproving(true);
+    setError(null);
+    try {
+      const hash = await writeContractAsync({
+        address: tokenOut.address as Address,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [net.aqua as Address, maxUint256],
+      });
+      const client = publicClientFor(net);
+      await client.waitForTransactionReceipt({ hash });
+      await reloadBalances();
+      await fetchExposure();
+    } catch (e) {
+      setError(describe(e));
+    } finally {
+      setApproving(false);
+    }
+  };
 
   // Wallet position for tokenIn (used to show held balance on "Offer tokenIn")
   const tokenInPos = useMemo(() => {
@@ -317,7 +338,25 @@ export function Provide({
     return Math.min(100, Math.max(0, pct));
   }, [backingOut, newTotalPromisedOut]);
 
-  const disabled = !address || wrongChain || amountInvalid || busy;
+  const isBackingLoading = Boolean(address) && (exposureLoading || onChainLoading);
+
+  const zeroAllowance = Boolean(
+    address && !isBackingLoading && allowanceOut !== null && allowanceOut === 0n
+  );
+  const zeroBacking = Boolean(
+    address && !isBackingLoading && backingOut !== null && backingOut === 0n
+  );
+  const allowanceBounded =
+    balanceOut !== null && allowanceOut !== null && allowanceOut < balanceOut;
+
+  const disabled =
+    !address ||
+    wrongChain ||
+    amountInvalid ||
+    busy ||
+    approving ||
+    zeroBacking ||
+    zeroAllowance;
 
   // Current utilization of maker wallet for tokenOut (0 to 100)
   // Uncapped, because the contract's is.
@@ -333,9 +372,6 @@ export function Provide({
       ? Number((alreadyPromisedOut * 10000n) / backingOut) / 100
       : 0;
   const utilPlotPct = Math.min(100, currentUtilPct);
-
-  const allowanceBounded =
-    balanceOut !== null && allowanceOut !== null && allowanceOut < balanceOut;
 
   const handleShip = async () => {
     if (disabled || !address) return;
@@ -387,6 +423,8 @@ export function Provide({
       const strategyHash = keccak256(built.strategy);
       setShippedHash(strategyHash);
       onShipped();
+      await reloadBalances();
+      await fetchExposure();
     } catch (e) {
       if (forChain === net.id) {
         setError(describe(e));
@@ -399,13 +437,37 @@ export function Provide({
   };
 
   // SVG Curve coordinate calculations for Solvency Haircut Curve
-  const SVG_WIDTH = 640;
-  const SVG_HEIGHT = 200;
-  const BASE_AXIS_Y = 165;
+  // Full card width at >=1280px, height 260 per PLAN-PROVIDE.md Phase 3
+  const SVG_WIDTH = 720;
+  const SVG_HEIGHT = 260;
+  const BASE_AXIS_Y = 220;
   const TOP_AXIS_Y = 35;
   const START_X = 40;
-  const END_X = 600;
+  const END_X = 680;
   const USABLE_WIDTH = END_X - START_X;
+  const Y_TRAVEL = BASE_AXIS_Y - TOP_AXIS_Y; // 185px
+
+  /**
+   * The y axis is scaled to the largest haircut this curve can actually reach,
+   * not to a notional 100%.
+   *
+   * The haircut is `widenBps * util`, so at the cliff it is
+   * `widenBps * maxUtilRatio` — 4% at the 80%/500bps defaults. Plotting that
+   * against a full-height 0-100% axis spent 7 of 185 pixels and drew the whole
+   * curve as a horizontal line: mathematically right, and useless. The chart was
+   * reported as "no proper curves", which was a fair reading of a flat one.
+   *
+   * Scaling to `maxHaircutFrac` puts the cliff point on the bottom axis, so the
+   * slope is visible at every setting and moving either slider visibly changes
+   * it. The axis is labelled in bps below so the shape cannot be mistaken for a
+   * bigger number than it is.
+   */
+  const maxHaircutFrac = ((maxUtilBps / 10000) * widenBps) / 10000;
+  const yForHaircut = useCallback(
+    (haircutFrac: number) =>
+      TOP_AXIS_Y + (maxHaircutFrac > 0 ? haircutFrac / maxHaircutFrac : 0) * Y_TRAVEL,
+    [maxHaircutFrac, TOP_AXIS_Y, Y_TRAVEL]
+  );
 
   const maxUtilRatio = maxUtilBps / 10000;
   const cliffX = START_X + maxUtilRatio * USABLE_WIDTH;
@@ -414,22 +476,31 @@ export function Provide({
   const currentHaircutBps = Math.round((currentUtilPct / 100) * widenBps);
   const currentQuoteVal = Math.max(0, 1 - (currentUtilPct / 100) * (widenBps / 10000));
 
+  // The second refusal threshold (§0.5): EncumbranceInsufficient(amountOut, free)
+  // free = backing > declaredTotalEncumbrance ? backing - declaredTotalEncumbrance : 0
+  // amountOut > free  <=>  utilRatio > 1 - (amountOut / backing)
+  const orderSizeRatio = useMemo(() => {
+    if (!backingOut || backingOut === 0n || rawClaimOut === 0n) return null;
+    return Number((rawClaimOut * 10000n) / backingOut) / 10000;
+  }, [backingOut, rawClaimOut]);
+
+  const freeCliffRatio = useMemo(() => {
+    if (orderSizeRatio === null) return null;
+    return Math.max(0, 1 - orderSizeRatio);
+  }, [orderSizeRatio]);
+
+  const insufficientX = useMemo(() => {
+    if (freeCliffRatio === null) return null;
+    return START_X + Math.min(1, freeCliffRatio) * USABLE_WIDTH;
+  }, [freeCliffRatio, START_X, USABLE_WIDTH]);
+
   /* The curve the contract actually draws.
    *
    *   Encumbrance.sol:216
    *   haircut = mulDiv(amountOut, widenBps * util, 1e8)
    *
    * util is in bps, so the haircut fraction is widenBps * utilRatio / 1e4 --
-   * linear in utilisation, with slope widenBps. This previously drew
-   * pow(progress, 1.35) against progress normalised to maxUtilRatio, which was
-   * wrong twice over: an invented convex shape, and a full widenBps haircut at
-   * the cliff when the real figure there is widenBps * maxUtilRatio. At 80% and
-   * 500 bps that is 400 bps, not 500. The metrics row above the chart was
-   * already computing it linearly, so the picture disagreed with its own
-   * caption as well as with the chain.
-   *
-   * A straight line is less decorative than a swoosh. It is what the contract
-   * does, and the cliff is where the drama actually is. */
+   * linear in utilisation, with slope widenBps. */
   const solvencyCurvePoints = useMemo(() => {
     const pts: { x: number; y: number; u: number }[] = [];
     const steps = 50;
@@ -437,11 +508,11 @@ export function Provide({
       const u = (i / steps) * maxUtilRatio;
       const x = START_X + u * USABLE_WIDTH;
       const haircutFrac = (u * widenBps) / 10000;
-      const y = TOP_AXIS_Y + haircutFrac * 130;
+      const y = yForHaircut(haircutFrac);
       pts.push({ x, y, u: u * 100 });
     }
     return pts;
-  }, [maxUtilRatio, widenBps]);
+  }, [maxUtilRatio, widenBps, yForHaircut, USABLE_WIDTH]);
 
   const solvencyCurveD = useMemo(() => {
     if (solvencyCurvePoints.length === 0) return "";
@@ -455,26 +526,38 @@ export function Provide({
     return `${solvencyCurveD} L ${cliffX.toFixed(1)},${BASE_AXIS_Y} L ${START_X},${BASE_AXIS_Y} Z`;
   }, [solvencyCurveD, cliffX]);
 
-  // Solvency hover calculation
+  // Solvency hover calculation with dual refusal boundaries (§0.5)
   const hoverSolvencyData = useMemo(() => {
     if (hoverUtil === null) return null;
     const uPct = hoverUtil;
-    const isRefused = uPct >= maxUtilBps / 100;
-    // Same linear law as the curve and as Encumbrance.sol:216.
+    const uRatio = uPct / 100;
+    const isCliffRefused = uRatio >= maxUtilRatio;
+    const isSizeRefused = freeCliffRatio !== null && uRatio >= freeCliffRatio;
+    const isRefused = isCliffRefused || isSizeRefused;
+
+    let refusalReason: string | null = null;
+    if (isCliffRefused) {
+      refusalReason = `EncumbranceExceeded (util ${uPct.toFixed(1)}% ≥ ${(maxUtilBps / 100).toFixed(0)}%)`;
+    } else if (isSizeRefused) {
+      refusalReason = `EncumbranceInsufficient (order size > free capacity)`;
+    }
+
     const utilRatio = Math.min(1, uPct / 100);
     const haircutBpsEst = isRefused ? null : Math.round(utilRatio * widenBps);
     const quoteOut = isRefused ? "0.0000 (Refused)" : (1 - (haircutBpsEst ?? 0) / 10000).toFixed(4);
     const x = START_X + (uPct / 100) * USABLE_WIDTH;
-    const y = isRefused ? BASE_AXIS_Y : TOP_AXIS_Y + ((utilRatio * widenBps) / 10000) * 130;
-    return { uPct, isRefused, haircutBpsEst, quoteOut, x, y };
-  }, [hoverUtil, maxUtilBps, widenBps]);
+    const y = isRefused ? BASE_AXIS_Y : yForHaircut((utilRatio * widenBps) / 10000);
+    return { uPct, isRefused, refusalReason, haircutBpsEst, quoteOut, x, y };
+  }, [hoverUtil, maxUtilRatio, freeCliffRatio, widenBps, maxUtilBps, yForHaircut, USABLE_WIDTH]);
 
   return (
     <div>
-      <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
+      <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 className={`${s.display} ${s.h1}`}>Encumbered strategy builder</h1>
-          <p style={{ margin: 0, color: "var(--ink2)", maxWidth: "60ch", fontSize: 15 }}>
+          <h1 className={`${s.display} ${s.h1}`} style={{ fontSize: 32, marginBottom: 3, lineHeight: 1.15 }}>
+            Encumbered strategy builder
+          </h1>
+          <p style={{ margin: 0, color: "var(--ink2)", maxWidth: "60ch", fontSize: 13.5 }}>
             Aqua lets you promise the same tokens twice. Bone Dry enforces on-chain solvency limits that refuse before they fail.
           </p>
         </div>
@@ -483,7 +566,7 @@ export function Provide({
             type="button"
             className={s.ticker}
             onClick={onPickPair}
-            style={{ cursor: "pointer", padding: "5px 14px 5px 8px" }}
+            style={{ cursor: "pointer", padding: "4px 12px 4px 8px" }}
             title="Change trading pair"
           >
             <div style={{ display: "flex", alignItems: "center", marginRight: 2 }}>
@@ -500,14 +583,14 @@ export function Provide({
 
       <div className={`${s.cols} ${s.colsBuild}`}>
         {/* ── Control Column (Left: All Inputs & Publish Action) ─────────────────────────────── */}
-        <div className={s.colNarrow}>
-          {/* 1. Live Exposure Card */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-              <span className={s.label}>Your Live Exposure ({tokenOut.symbol})</span>
+        <div className={s.colNarrow} style={{ gap: 10 }}>
+          {/* 1. Your Backing Card */}
+          <section className={`${s.card} ${s.cardPad}`} style={{ padding: "11px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+              <span className={s.label}>Your Backing ({tokenOut.symbol})</span>
               {address ? (
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
-                  {shortAddr(address)}
+                <span className={s.mono} style={{ fontSize: 11, color: isBackingLoading ? "var(--ink2)" : "var(--ink3)" }}>
+                  {isBackingLoading ? "syncing on-chain…" : shortAddr(address)}
                 </span>
               ) : (
                 <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
@@ -516,63 +599,161 @@ export function Provide({
               )}
             </div>
 
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Wallet Backing</span>
-                <span className={s.mono} style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>
-                  {backingOut === null ? "—" : units(backingOut, tokenOut.decimals, 4)} {tokenOut.symbol}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
-                <span style={{ fontSize: 12, color: "var(--ink3)" }}>Wallet Balance</span>
-                <span className={s.mono} style={{ fontSize: 12, color: "var(--ink2)" }}>
-                  {balanceOut === null ? "—" : units(balanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 2 }}>
-                <span style={{ fontSize: 12, color: "var(--ink3)" }}>Aqua Allowance</span>
-                <span className={s.mono} style={{ fontSize: 12, color: allowanceBounded ? "var(--short)" : "var(--ink2)" }}>
-                  {allowanceOut === null ? "—" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
-                </span>
-              </div>
-
-              {allowanceBounded && (
-                <div
-                  style={{
-                    marginTop: 6,
-                    padding: "5px 8px",
-                    background: "rgba(194, 78, 25, 0.08)",
-                    border: "1px solid rgba(194, 78, 25, 0.25)",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    color: "var(--short)",
-                  }}
-                >
-                  ⚠ Allowance &lt; balance: Aqua approval ({allowanceOut === null ? "0" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}) limits deliverable backing.
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Wallet Backing</div>
+                <div className={s.mono} style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)" }}>
+                  {isBackingLoading ? "…" : backingOut === null ? "—" : units(backingOut, tokenOut.decimals, 4)} {tokenOut.symbol}
                 </div>
-              )}
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 8 }}>
-                <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Total Promised (Live Siblings)</span>
-                <span className={s.mono} style={{ fontSize: 14, color: alreadyPromisedOut > 0n ? "var(--ink)" : "var(--ink3)" }}>
-                  {units(alreadyPromisedOut, tokenOut.decimals, 4)} {tokenOut.symbol}
-                </span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
-                <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Free Capacity</span>
-                <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>
-                  {capacityOut === null ? "—" : units(capacityOut, tokenOut.decimals, 4)} {tokenOut.symbol}
-                </span>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Current Utilization</div>
+                <div className={s.mono} style={{ fontSize: 13.5, fontWeight: 600, color: currentUtilPct >= (maxUtilBps / 100) ? "var(--short)" : "var(--ink)" }}>
+                  {isBackingLoading ? "…" : `${currentUtilPct.toFixed(1)}%`}
+                </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
-                <span style={{ fontSize: 13.5, color: "var(--ink2)" }}>Current Utilization</span>
-                <span className={s.mono} style={{ fontSize: 14, fontWeight: 600, color: currentUtilPct >= (maxUtilBps / 100) ? "var(--short)" : "var(--ink)" }}>
-                  {currentUtilPct.toFixed(1)}%
-                </span>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Wallet Balance</div>
+                <div className={s.mono} style={{ fontSize: 12, color: "var(--ink2)" }}>
+                  {isBackingLoading ? "…" : balanceOut === null ? "—" : units(balanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Aqua Allowance</div>
+                <div className={s.mono} style={{ fontSize: 12, color: allowanceBounded ? "var(--short)" : "var(--ink2)" }}>
+                  {isBackingLoading ? "…" : allowanceOut === null ? "—" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Total Promised (Siblings)</div>
+                <div className={s.mono} style={{ fontSize: 12, color: alreadyPromisedOut > 0n ? "var(--ink)" : "var(--ink3)" }}>
+                  {isBackingLoading ? "…" : `${units(alreadyPromisedOut, tokenOut.decimals, 4)} ${tokenOut.symbol}`}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--ink3)" }}>Free Capacity</div>
+                <div className={s.mono} style={{ fontSize: 12, color: "var(--ink)" }}>
+                  {isBackingLoading ? "…" : capacityOut === null ? "—" : units(capacityOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                </div>
               </div>
             </div>
 
-            <div className={s.bar} style={{ height: 6, width: "100%", marginBottom: 12 }}>
+            {wrongChain && (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: "5px 8px",
+                  background: "rgba(194, 78, 25, 0.08)",
+                  border: "1px solid rgba(194, 78, 25, 0.25)",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ color: "var(--short)" }}>
+                  ⚠ Wallet is on wrong network. Switch to {net.label}.
+                </span>
+                {switchChain && (
+                  <button
+                    type="button"
+                    onClick={() => switchChain({ chainId: net.id })}
+                    style={{
+                      padding: "2px 6px",
+                      fontSize: 10,
+                      background: "transparent",
+                      color: "var(--short)",
+                      border: "1px solid var(--short)",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Switch
+                  </button>
+                )}
+              </div>
+            )}
+
+            {zeroAllowance && (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: "5px 8px",
+                  background: "rgba(194, 78, 25, 0.08)",
+                  border: "1px solid rgba(194, 78, 25, 0.25)",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ color: "var(--short)" }}>
+                  ⚠ Zero Aqua allowance: Approve Aqua to move {tokenOut.symbol}.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleApproveAqua}
+                  disabled={approving}
+                  style={{
+                    padding: "2px 6px",
+                    fontSize: 10,
+                    background: "transparent",
+                    color: "var(--short)",
+                    border: "1px solid var(--short)",
+                    borderRadius: 3,
+                    cursor: approving ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {approving ? "Approving…" : "Approve"}
+                </button>
+              </div>
+            )}
+
+            {allowanceBounded && !zeroAllowance && (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: "4px 8px",
+                  background: "rgba(194, 78, 25, 0.08)",
+                  border: "1px solid rgba(194, 78, 25, 0.25)",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ color: "var(--short)" }}>
+                  ⚠ Allowance &lt; balance: Aqua approval ({allowanceOut === null ? "0" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}) limits deliverable backing.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleApproveAqua}
+                  disabled={approving}
+                  style={{
+                    padding: "2px 6px",
+                    fontSize: 10,
+                    background: "transparent",
+                    color: "var(--short)",
+                    border: "1px solid var(--short)",
+                    borderRadius: 3,
+                    cursor: approving ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {approving ? "Approving…" : "Increase"}
+                </button>
+              </div>
+            )}
+
+            <div className={s.bar} style={{ height: 5, width: "100%", marginBottom: 8 }}>
               <span
                 className={s.barFill}
                 style={{
@@ -582,20 +763,22 @@ export function Provide({
               />
             </div>
 
-            <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)", lineHeight: 1.4 }}>
-              Encumbrance backing is evaluated on <strong>{tokenOut.symbol}</strong> as min(balance, allowance).
+            <p style={{ margin: 0, fontSize: 11, color: "var(--ink3)", lineHeight: 1.3 }}>
+              {address
+                ? `Encumbrance backing is evaluated on ${tokenOut.symbol} as min(balance, allowance).`
+                : `Encumbrance backing is evaluated on ${tokenOut.symbol} as min(balance, allowance). Connect a wallet to view live balances.`}
             </p>
           </section>
 
-          {/* 2. Sizing, Pricing & Claims */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <span className={s.label} style={{ marginBottom: 12, display: "block" }}>
-              Pricing &amp; Sizing Claims
+          {/* 2. The Promise Card */}
+          <section className={`${s.card} ${s.cardPad}`} style={{ padding: "11px 14px" }}>
+            <span className={s.label} style={{ marginBottom: 8, display: "block" }}>
+              The Promise ({tokenIn.symbol} → {tokenOut.symbol})
             </span>
 
             {/* Pricing Model Segmented Toggle */}
             {oracleAvailable ? (
-              <div style={{ marginBottom: 14 }}>
+              <div style={{ marginBottom: 10 }}>
                 <div className={s.seg} style={{ width: "100%" }}>
                   <button
                     type="button"
@@ -616,294 +799,310 @@ export function Provide({
                 </div>
               </div>
             ) : (
-              <div style={{ marginBottom: 14, fontSize: 11.5, color: "var(--ink3)" }}>
+              <div style={{ marginBottom: 8, fontSize: 11, color: "var(--ink3)", lineHeight: 1.3 }}>
                 Pricing model: <strong>Constant Product (xy=k)</strong>. Oracle pricing via BeaconStrategy is only deployed on Base Sepolia for WETH/USDC.
               </div>
             )}
 
-            <div className={s.inset} style={{ marginBottom: 12 }}>
-              <div className={s.fieldHead}>
-                <span className={s.label}>Offer {tokenIn.symbol}</span>
-                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                  held {heldIn === null ? "—" : units(heldIn, tokenIn.decimals, 2)}
-                </span>
-              </div>
-              <div className={s.amountRow}>
-                <input
-                  className={s.amountIn}
-                  value={claimIn}
-                  inputMode="decimal"
-                  onChange={(e) => {
-                    setClaimIn(e.target.value);
-                    setRangePreset("custom");
-                  }}
-                  placeholder="0.0"
-                />
-                <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>
-                  {tokenIn.symbol}
-                </span>
-              </div>
-            </div>
-
-            <div className={s.inset} style={{ marginBottom: 12 }}>
-              <div className={s.fieldHead}>
-                <span className={s.label}>Ask {tokenOut.symbol}</span>
-              </div>
-              <div className={s.amountRow}>
-                <input
-                  className={s.amountIn}
-                  value={claimOut}
-                  inputMode="decimal"
-                  onChange={(e) => {
-                    setClaimOut(e.target.value);
-                    setRangePreset("custom");
-                  }}
-                  placeholder="0.0"
-                />
-                <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>
-                  {tokenOut.symbol}
-                </span>
-              </div>
-            </div>
-
-            <div className={s.inset} style={{ marginBottom: 14 }}>
-              <div className={s.fieldHead}>
-                <span className={s.label}>Maker Fee</span>
-                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                  {pricing === "oracle" ? "fixed spread" : "bps"}
-                </span>
-              </div>
-              <div className={s.amountRow}>
-                {pricing === "oracle" ? (
-                  <span className={s.mono} style={{ fontSize: 14, color: beaconSpreadError ? "var(--short)" : "var(--ink3)", padding: "4px 0" }}>
-                    {beaconSpreadError
-                      ? "— (could not read spread)"
-                      : beaconSpreadBps === null
-                        ? "…"
-                        : `${beaconSpreadBps} bps (${(beaconSpreadBps / 100).toFixed(2)}%)`}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 2 }}>
+              <div className={s.inset} style={{ padding: "6px 8px", minWidth: 0 }}>
+                <div className={s.fieldHead} style={{ marginBottom: 3, gap: 4 }}>
+                  <span className={s.label} style={{ fontSize: 10 }}>Offer {tokenIn.symbol}</span>
+                  <span className={s.mono} style={{ fontSize: 9, color: "var(--ink3)" }}>
+                    {heldIn === null ? "—" : units(heldIn, tokenIn.decimals, 1)}
                   </span>
-                ) : (
-                  <>
-                    <input
-                      className={s.amountIn}
-                      value={feeBps}
-                      inputMode="numeric"
-                      onChange={(e) => setFeeBps(e.target.value)}
-                      placeholder="0"
-                    />
-                    <span className={s.mono} style={{ fontSize: 14, color: "var(--ink)" }}>bps</span>
-                  </>
-                )}
+                </div>
+                <div className={s.amountRow} style={{ gap: 4 }}>
+                  <input
+                    className={s.amountIn}
+                    style={{ fontSize: 16, minWidth: 0 }}
+                    value={claimIn}
+                    inputMode="decimal"
+                    onChange={(e) => {
+                      setClaimIn(e.target.value);
+                      setRangePreset("custom");
+                    }}
+                    placeholder="0.0"
+                  />
+                  <span className={s.mono} style={{ fontSize: 11, color: "var(--ink)", flexShrink: 0 }}>
+                    {tokenIn.symbol}
+                  </span>
+                </div>
               </div>
-            </div>
 
-            {/* Sizing Range Presets Shortcut */}
-            <div style={{ marginBottom: 4 }}>
-              <span className={s.label} style={{ fontSize: 10, display: "block", marginBottom: 6 }}>
-                Range Preset Shortcut:
-              </span>
-              <div className={s.ranges}>
-                {(["10", "20", "full", "custom"] as RangePreset[]).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    role="tab"
-                    aria-selected={rangePreset === p}
-                    onClick={() => handleSelectPreset(p)}
-                    className={`${s.range} ${rangePreset === p ? s.rangeOn : ""}`}
-                  >
-                    {p === "10" ? "±10%" : p === "20" ? "±20%" : p === "full" ? "Full" : "Custom"}
-                  </button>
-                ))}
+              <div className={s.inset} style={{ padding: "6px 8px", minWidth: 0 }}>
+                <div className={s.fieldHead} style={{ marginBottom: 3, gap: 4 }}>
+                  <span className={s.label} style={{ fontSize: 10 }}>Ask {tokenOut.symbol}</span>
+                </div>
+                <div className={s.amountRow} style={{ gap: 4 }}>
+                  <input
+                    className={s.amountIn}
+                    style={{ fontSize: 16, minWidth: 0 }}
+                    value={claimOut}
+                    inputMode="decimal"
+                    onChange={(e) => {
+                      setClaimOut(e.target.value);
+                      setRangePreset("custom");
+                    }}
+                    placeholder="0.0"
+                  />
+                  <span className={s.mono} style={{ fontSize: 11, color: "var(--ink)", flexShrink: 0 }}>
+                    {tokenOut.symbol}
+                  </span>
+                </div>
+              </div>
+
+              <div className={s.inset} style={{ padding: "6px 8px", minWidth: 0 }}>
+                <div className={s.fieldHead} style={{ marginBottom: 3, gap: 4 }}>
+                  <span className={s.label} style={{ fontSize: 10 }}>Fee</span>
+                  <span className={s.mono} style={{ fontSize: 9, color: "var(--ink3)" }}>
+                    {pricing === "oracle" ? "spread" : "bps"}
+                  </span>
+                </div>
+                <div className={s.amountRow} style={{ gap: 4 }}>
+                  {pricing === "oracle" ? (
+                    <span className={s.mono} style={{ fontSize: 12, color: beaconSpreadError ? "var(--short)" : "var(--ink3)", padding: "2px 0", whiteSpace: "nowrap" }}>
+                      {beaconSpreadError
+                        ? "—"
+                        : beaconSpreadBps === null
+                          ? "…"
+                          : `${beaconSpreadBps} bps`}
+                    </span>
+                  ) : (
+                    <>
+                      <input
+                        className={s.amountIn}
+                        style={{ fontSize: 16, minWidth: 0 }}
+                        value={feeBps}
+                        inputMode="numeric"
+                        onChange={(e) => setFeeBps(e.target.value)}
+                        placeholder="0"
+                      />
+                      <span className={s.mono} style={{ fontSize: 11, color: "var(--ink)", flexShrink: 0 }}>bps</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </section>
 
-          {/* 3. Encumbrance Parameters (The Core Contract Specs) */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <span className={s.label} style={{ marginBottom: 12, display: "block" }}>
-              Encumbrance Parameters
+          {/* 3. The Limits & Publish */}
+          <section className={`${s.card} ${s.cardPad}`} style={{ padding: "11px 14px" }}>
+            <span className={s.label} style={{ marginBottom: 10, display: "block" }}>
+              The Limits
             </span>
 
-            {/* Refusal Ceiling */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Refusal Ceiling</span>
-                <span className={s.mono} style={{ fontSize: 13, color: "var(--ink)" }}>
-                  {(maxUtilBps / 100).toFixed(0)}% ({maxUtilBps} bps)
-                </span>
-              </div>
-              <input
-                type="range"
-                min="3000"
-                max="9500"
-                step="500"
-                value={maxUtilBps}
-                onChange={(e) => setMaxUtilBps(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 8 }}
-              />
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {[5000, 7500, 8000, 9000].map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setMaxUtilBps(v)}
-                    className={`${s.range} ${maxUtilBps === v ? s.rangeOn : ""}`}
-                    style={{ fontSize: 11, padding: "2px 8px" }}
-                  >
-                    {v / 100}%
-                  </button>
-                ))}
-              </div>
-              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink3)" }}>
-                &ldquo;Refuse fills on-chain once more than <strong>{(maxUtilBps / 100).toFixed(0)}%</strong> of my wallet is promised across sibling strategies.&rdquo;
-              </p>
-            </div>
-
-            {/* Spread Widening */}
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Spread Widening</span>
-                <span className={s.mono} style={{ fontSize: 13, color: "var(--ink)" }}>
-                  {(widenBps / 100).toFixed(2)}% ({widenBps} bps)
-                </span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="1500"
-                step="50"
-                value={widenBps}
-                onChange={(e) => setWidenBps(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 8 }}
-              />
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {[100, 250, 500, 1000].map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={() => setWidenBps(w)}
-                    className={`${s.range} ${widenBps === w ? s.rangeOn : ""}`}
-                    style={{ fontSize: 11, padding: "2px 8px" }}
-                  >
-                    {w} BPS
-                  </button>
-                ))}
-              </div>
-              <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--ink3)" }}>
-                &ldquo;Quote up to <strong>{(widenBps / 100).toFixed(2)}%</strong> wider as wallet utilization approaches the refusal ceiling.&rdquo;
-              </p>
-            </div>
-          </section>
-
-          {/* 4. Live Sibling Constraints */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-              <span className={s.label}>Live Sibling Constraints</span>
-              <span className={s.mono} style={{ fontSize: 10, color: "var(--ink3)" }}>
-                {liveSiblings.length} found in index
-              </span>
-            </div>
-
-            {liveSiblings.length === 0 ? (
-              <div style={{ padding: "8px 10px", background: "var(--sunk)", borderRadius: 6, fontSize: 12, color: "var(--ink2)" }}>
-                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
-                  ● FIRST STRATEGY FOR MAKER
-                </span>
-                No prior live strategies on this token. Your strategy will be fully backed with 0 initial encumbrance.
-              </div>
-            ) : siblingLimitExceeded ? (
-              <div style={{ padding: "8px 10px", background: "rgba(194, 78, 25, 0.08)", borderRadius: 6, fontSize: 12, color: "var(--short)" }}>
-                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
-                  ⚠ UNDER-CONSTRAINED ({liveSiblings.length} &gt; 6 siblings)
-                </span>
-                SwapVM instruction limit restricts sibling proofs to 6. Only the first 6 will be verified on-chain.
-              </div>
-            ) : (
-              <div style={{ padding: "8px 10px", background: "var(--sunk)", borderRadius: 6, fontSize: 12, color: "var(--ink2)" }}>
-                <span className={s.mono} style={{ fontWeight: 600, fontSize: 10.5, display: "block", marginBottom: 2 }}>
-                  ✓ COMPLETE ({liveSiblings.length}/6 slots)
-                </span>
-                All {liveSiblings.length} sibling commitment{liveSiblings.length > 1 ? "s" : ""} will be atomically verified by the Encumbrance Strategy contract.
-              </div>
-            )}
-
-            {/* Sibling items */}
-            {liveSiblings.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 130, overflowY: "auto", marginTop: 8 }}>
-                {liveSiblings.slice(0, 6).map((strat, idx) => {
-                  const matchingSide = strat.sides.find((sd) => sd.token.toLowerCase() === tokenOut.address.toLowerCase()) || strat.sides[0];
-                  return (
-                    <div
-                      key={strat.strategyHash}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "5px 8px",
-                        background: "var(--surface)",
-                        border: "1px solid var(--rule)",
-                        borderRadius: 6,
-                        fontSize: 11,
-                      }}
+            {/* Sliders Grid: Refusal Ceiling & Spread Widening */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+              {/* Refusal Ceiling */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)" }}>Refusal Ceiling</span>
+                  <span className={s.mono} style={{ fontSize: 11.5, color: "var(--ink)" }}>
+                    {(maxUtilBps / 100).toFixed(0)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="3000"
+                  max="9500"
+                  step="500"
+                  value={maxUtilBps}
+                  onChange={(e) => setMaxUtilBps(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 4 }}
+                />
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[5000, 7500, 8000, 9000].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setMaxUtilBps(v)}
+                      className={`${s.range} ${maxUtilBps === v ? s.rangeOn : ""}`}
+                      style={{ fontSize: 10, padding: "1px 5px" }}
                     >
-                      <span className={s.mono} style={{ color: "var(--ink2)" }}>
-                        #{idx + 1} {shortAddr(strat.strategyHash)}
-                      </span>
-                      <span className={s.mono} style={{ color: "var(--ink)" }}>
-                        {matchingSide ? `${units(matchingSide.claimed, matchingSide.decimals, 2)} ${matchingSide.symbol}` : "0"}
-                      </span>
-                    </div>
-                  );
-                })}
+                      {v / 100}%
+                    </button>
+                  ))}
+                </div>
+                <p style={{ margin: "4px 0 0", fontSize: 10.5, color: "var(--ink3)", lineHeight: 1.25 }}>
+                  Refuse fills when &gt;<strong>{(maxUtilBps / 100).toFixed(0)}%</strong> promised.
+                </p>
               </div>
-            )}
-            <p className={s.mono} style={{ margin: "8px 0 0", fontSize: 10, color: "var(--ink3)" }}>
-              SwapVM instruction cap: 255 bytes (leaving (255 - 38)/32 = 6 sibling slots).
-            </p>
-          </section>
 
-          {/* 5. The Big Action Button (Publish On-Chain) */}
-          <section className={`${s.card} ${s.cardPad}`}>
-            <button
-              className={`${s.btnBlock} ${!covered && address ? s.btnBlockShort : ""}`}
-              onClick={handleShip}
-              disabled={disabled}
-            >
-              {busy
-                ? "Shipping on-chain…"
-                : !address
-                ? "Connect wallet to ship"
-                : wrongChain
-                ? "Switch network to ship"
-                : amountInvalid
-                ? "Enter claim amounts above"
-                : covered
-                ? "Publish Encumbered Strategy"
-                : "Publish anyway — over-promised"}
-            </button>
+              {/* Spread Widening */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)" }}>Spread Widening</span>
+                  <span className={s.mono} style={{ fontSize: 11.5, color: "var(--ink)" }}>
+                    {widenBps} bps
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1500"
+                  step="50"
+                  value={widenBps}
+                  onChange={(e) => setWidenBps(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "var(--ink)", cursor: "pointer", marginBottom: 4 }}
+                />
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[100, 250, 500, 1000].map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      onClick={() => setWidenBps(w)}
+                      className={`${s.range} ${widenBps === w ? s.rangeOn : ""}`}
+                      style={{ fontSize: 10, padding: "1px 5px" }}
+                    >
+                      {w}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ margin: "4px 0 0", fontSize: 10.5, color: "var(--ink3)", lineHeight: 1.25 }}>
+                  Widen up to <strong>{(widenBps / 100).toFixed(2)}%</strong> near ceiling.
+                </p>
+              </div>
+            </div>
 
-            {shippedHash && (
-              <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--ink2)", display: "inline-flex", alignItems: "center" }}>
-                <span>Shipped: </span>
-                <span className={s.mono} style={{ fontSize: 11.5, margin: "0 4px" }}>
-                  {shortAddr(shippedHash)}
+            {/* Live Sibling Constraints */}
+            <div style={{ borderTop: "1px solid var(--rule)", paddingTop: 8, marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)" }}>Sibling Constraints</span>
+                <span className={s.mono} style={{ fontSize: 9.5, color: "var(--ink3)" }}>
+                  {liveSiblings.length} on {tokenOut.symbol} · max 6
                 </span>
-                <CopyButton value={shippedHash} size={11} />
-              </p>
-            )}
+              </div>
 
-            {error && (
-              <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 11, color: "var(--short)" }}>
-                {error}
-              </p>
-            )}
+              {liveSiblings.length === 0 ? (
+                <div style={{ padding: "5px 8px", background: "var(--sunk)", borderRadius: 5, fontSize: 11, color: "var(--ink2)" }}>
+                  <span className={s.mono} style={{ fontWeight: 600, fontSize: 9.5, display: "block", marginBottom: 1 }}>
+                    ● FIRST STRATEGY FOR MAKER
+                  </span>
+                  No prior live strategies on this token. Fully backed with 0 initial encumbrance.
+                </div>
+              ) : siblingLimitExceeded ? (
+                <div style={{ padding: "5px 8px", background: "rgba(194, 78, 25, 0.08)", borderRadius: 5, fontSize: 11, color: "var(--short)" }}>
+                  <span className={s.mono} style={{ fontWeight: 600, fontSize: 9.5, display: "block", marginBottom: 1 }}>
+                    ⚠ UNDER-CONSTRAINED ({liveSiblings.length} &gt; 6 siblings)
+                  </span>
+                  SwapVM limit restricts sibling proofs to 6. Only first 6 verified on-chain.
+                </div>
+              ) : (
+                <div style={{ padding: "5px 8px", background: "var(--sunk)", borderRadius: 5, fontSize: 11, color: "var(--ink2)" }}>
+                  <span className={s.mono} style={{ fontWeight: 600, fontSize: 9.5, display: "block", marginBottom: 1 }}>
+                    ✓ COMPLETE ({liveSiblings.length}/6 slots)
+                  </span>
+                  All {liveSiblings.length} sibling commitment{liveSiblings.length > 1 ? "s" : ""} verified on-chain.
+                </div>
+              )}
 
-            <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--ink3)", textAlign: "center" }}>
-              {net.testnet
-                ? `${net.label} — contracts are verified and live on-chain.`
-                : `Live on ${net.label}. One signature; indexed within two seconds.`}
-            </p>
+              {/* Sibling items */}
+              {liveSiblings.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 75, overflowY: "auto", marginTop: 5 }}>
+                  {liveSiblings.slice(0, 6).map((strat, idx) => {
+                    const matchingSide = strat.sides.find((sd) => sd.token.toLowerCase() === tokenOut.address.toLowerCase()) || strat.sides[0];
+                    return (
+                      <div
+                        key={strat.strategyHash}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "3px 6px",
+                          background: "var(--surface)",
+                          border: "1px solid var(--rule)",
+                          borderRadius: 4,
+                          fontSize: 10,
+                        }}
+                      >
+                        <span className={s.mono} style={{ color: "var(--ink2)" }}>
+                          #{idx + 1} {shortAddr(strat.strategyHash)}
+                        </span>
+                        <span className={s.mono} style={{ color: "var(--ink)" }}>
+                          {matchingSide ? `${units(matchingSide.claimed, matchingSide.decimals, 2)} ${matchingSide.symbol}` : "0"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Action Section */}
+            <div
+              style={{
+                position: "sticky",
+                bottom: 8,
+                background: "var(--surface)",
+                paddingTop: 8,
+                marginTop: 8,
+                borderTop: "1px solid var(--rule)",
+                zIndex: 5,
+              }}
+            >
+              <button
+                className={`${s.btnBlock} ${!covered && address ? s.btnBlockShort : ""}`}
+                onClick={() => {
+                  if (wrongChain && switchChain) {
+                    switchChain({ chainId: net.id });
+                    return;
+                  }
+                  if (zeroAllowance) {
+                    handleApproveAqua();
+                    return;
+                  }
+                  handleShip();
+                }}
+                disabled={
+                  busy ||
+                  approving ||
+                  (!wrongChain && !zeroAllowance && (amountInvalid || zeroBacking || !address))
+                }
+              >
+                {busy
+                  ? "Shipping on-chain…"
+                  : approving
+                  ? "Approving Aqua…"
+                  : !address
+                  ? "Connect wallet to ship"
+                  : wrongChain
+                  ? `Switch network to ${net.label}`
+                  : zeroAllowance
+                  ? `Approve ${tokenOut.symbol} before publishing`
+                  : zeroBacking
+                  ? `0 ${tokenOut.symbol} backing — deposit or fund wallet`
+                  : amountInvalid
+                  ? "Enter claim amounts above"
+                  : siblingLimitExceeded
+                  ? (covered ? "Publish strategy (first 6 siblings proved)" : "Publish anyway — over-promised")
+                  : covered
+                  ? "Publish Encumbered Strategy"
+                  : "Publish anyway — over-promised"}
+              </button>
+
+              {shippedHash && (
+                <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--ink2)", display: "inline-flex", alignItems: "center" }}>
+                  <span>Shipped: </span>
+                  <span className={s.mono} style={{ fontSize: 11.5, margin: "0 4px" }}>
+                    {shortAddr(shippedHash)}
+                  </span>
+                  <CopyButton value={shippedHash} size={11} />
+                </p>
+              )}
+
+              {error && (
+                <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 11, color: "var(--short)" }}>
+                  {error}
+                </p>
+              )}
+
+              <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--ink3)", textAlign: "center" }}>
+                {net.testnet
+                  ? `${net.label} — contracts are verified and live on-chain.`
+                  : `Live on ${net.label}. One signature; indexed within two seconds.`}
+              </p>
+            </div>
           </section>
         </div>
 
@@ -913,52 +1112,104 @@ export function Provide({
           <section className={`${s.card} ${s.cardClip}`} style={{ marginBottom: 24 }}>
             <div
               className={s.cardHead}
-              style={{ padding: "18px 22px", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}
+              style={{ padding: "16px 22px", flexDirection: "column", alignItems: "stretch", gap: 14 }}
             >
-              <div style={{ minWidth: 0 }}>
-                <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
-                  {graphMode === "depth"
-                    ? "Continuous AMM Liquidity & Depth Curve"
-                    : graphMode === "curve"
-                    ? "Solvency Haircut & On-Chain Refusal Curve"
-                    : "Dual View: AMM Liquidity & Solvency Response"}
-                </h2>
-                <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
-                  {graphMode === "depth"
-                    ? "Continuous bonding curve across price ticks with active range highlight and spot reference."
-                    : graphMode === "curve"
-                    ? "Progressive haircut slope with hard on-chain refusal cliff at the encumbrance ceiling."
-                    : "Continuous AMM bonding depth alongside the on-chain refusal and haircut response."}
-                </p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
+                    {graphMode === "depth"
+                      ? "Illustrative Liquidity Shape"
+                      : graphMode === "curve"
+                      ? "Solvency Haircut & On-Chain Refusal Curve"
+                      : "Dual View: Liquidity Shape & Solvency Response"}
+                  </h2>
+                  <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
+                    {graphMode === "depth"
+                      ? "Illustrative liquidity schematic across price ticks with active range highlight and spot reference."
+                      : graphMode === "curve"
+                      ? "Progressive haircut slope with dual on-chain refusal boundaries: order floor & utilization cliff."
+                      : "Illustrative bonding depth alongside the on-chain refusal and haircut response."}
+                  </p>
+                </div>
+
+                {/* 3-Way Graph Mode Toggle */}
+                <div className={s.seg}>
+                  <button
+                    type="button"
+                    onClick={() => setGraphMode("depth")}
+                    className={`${s.segBtn} ${graphMode === "depth" ? s.segBtnOn : ""}`}
+                    title="View illustrative liquidity depth curve"
+                  >
+                    ✦ Liquidity Shape
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGraphMode("curve")}
+                    className={`${s.segBtn} ${graphMode === "curve" ? s.segBtnOn : ""}`}
+                    title="View solvency haircut and dual refusal boundaries"
+                  >
+                    🛡 Solvency Curve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGraphMode("dual")}
+                    className={`${s.segBtn} ${graphMode === "dual" ? s.segBtnOn : ""}`}
+                    title="View both charts simultaneously"
+                  >
+                    ◫ Dual View
+                  </button>
+                </div>
               </div>
 
-              {/* 3-Way Graph Mode Toggle */}
-              <div className={s.seg}>
-                <button
-                  type="button"
-                  onClick={() => setGraphMode("depth")}
-                  className={`${s.segBtn} ${graphMode === "depth" ? s.segBtnOn : ""}`}
-                  title="View continuous AMM liquidity depth curve"
+              {/* Compact Metric Row in Card Head */}
+              {(graphMode === "curve" || graphMode === "dual") && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "8px 18px",
+                    padding: "8px 12px",
+                    background: "var(--sunk)",
+                    borderRadius: 6,
+                    border: "1px solid var(--rule)",
+                    fontSize: 12,
+                  }}
                 >
-                  ✦ AMM Curve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGraphMode("curve")}
-                  className={`${s.segBtn} ${graphMode === "curve" ? s.segBtnOn : ""}`}
-                  title="View solvency haircut and refusal cliff"
-                >
-                  🛡 Solvency Curve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGraphMode("dual")}
-                  className={`${s.segBtn} ${graphMode === "dual" ? s.segBtnOn : ""}`}
-                  title="View both charts simultaneously"
-                >
-                  ◫ Dual View
-                </button>
-              </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span className={s.label} style={{ fontSize: 10 }}>Current Util</span>
+                    <span className={s.mono} style={{ fontWeight: 600, color: currentUtilPct >= (maxUtilBps / 100) ? "var(--short)" : "var(--ink)" }}>
+                      {currentUtilPct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span className={s.label} style={{ fontSize: 10 }}>Haircut</span>
+                    <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
+                      -{currentHaircutBps} bps
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span className={s.label} style={{ fontSize: 10 }}>1.000 Quotes As</span>
+                    <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
+                      {currentQuoteVal.toFixed(4)} {tokenIn.symbol}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span className={s.label} style={{ fontSize: 10 }}>Refusal Ceiling</span>
+                    <span className={s.mono} style={{ fontWeight: 600, color: "var(--short)" }}>
+                      {(maxUtilBps / 100).toFixed(0)}% ({maxUtilBps} bps)
+                    </span>
+                  </div>
+                  {freeCliffRatio !== null && freeCliffRatio < maxUtilRatio && (
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                      <span className={s.label} style={{ fontSize: 10, color: "#d97706" }}>Order Size Floor</span>
+                      <span className={s.mono} style={{ fontWeight: 600, color: "#d97706" }}>
+                        {(freeCliffRatio * 100).toFixed(1)}% (amountOut &gt; free)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Graph 1: Continuous AMM Liquidity Depth Curve */}
@@ -966,7 +1217,7 @@ export function Provide({
               <div style={{ padding: "20px 22px", borderBottom: graphMode === "dual" ? "1px solid var(--rule)" : "none" }}>
                 {graphMode === "dual" && (
                   <span className={s.label} style={{ fontSize: 11, marginBottom: 12, display: "block", letterSpacing: ".12em" }}>
-                    01 · Continuous AMM Liquidity Curve
+                    01 · Illustrative Liquidity Shape
                   </span>
                 )}
                 <DepthChart
@@ -982,7 +1233,7 @@ export function Provide({
               </div>
             )}
 
-            {/* Graph 2: Solvency Response Curve with Real Progressive Slope & Cliff */}
+            {/* Graph 2: Solvency Response Curve with Dual On-Chain Refusal Boundaries */}
             {(graphMode === "curve" || graphMode === "dual") && (
               <div style={{ padding: "20px 22px" }}>
                 {graphMode === "dual" && (
@@ -991,41 +1242,6 @@ export function Provide({
                   </span>
                 )}
 
-                {/* Metric Strip */}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                    gap: 12,
-                    marginBottom: 18,
-                  }}
-                >
-                  <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                    <span className={s.label} style={{ fontSize: 9.5 }}>Current Maker Util</span>
-                    <p className={s.mono} style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>
-                      {currentUtilPct.toFixed(1)}%
-                    </p>
-                  </div>
-                  <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                    <span className={s.label} style={{ fontSize: 9.5 }}>Effective Haircut</span>
-                    <p className={s.mono} style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>
-                      -{currentHaircutBps} bps
-                    </p>
-                  </div>
-                  <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                    <span className={s.label} style={{ fontSize: 9.5 }}>1.000 {tokenIn.symbol} Quotes As</span>
-                    <p className={s.mono} style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>
-                      {currentQuoteVal.toFixed(4)} {tokenIn.symbol}
-                    </p>
-                  </div>
-                  <div style={{ padding: "10px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                    <span className={s.label} style={{ fontSize: 9.5 }}>Refusal Threshold</span>
-                    <p className={s.mono} style={{ margin: "2px 0 0", fontSize: 18, fontWeight: 600, color: "var(--short)" }}>
-                      {(maxUtilBps / 100).toFixed(0)}% ({maxUtilBps} bps)
-                    </p>
-                  </div>
-                </div>
-
                 {/* The SVG Solvency Response Chart */}
                 <div style={{ position: "relative", width: "100%", userSelect: "none" }}>
                   <svg
@@ -1033,7 +1249,7 @@ export function Provide({
                     preserveAspectRatio="none"
                     role="img"
                     aria-label="Solvency & Haircut Response Curve"
-                    style={{ width: "100%", height: 200, display: "block", overflow: "visible", cursor: "crosshair" }}
+                    style={{ width: "100%", height: 260, display: "block", overflow: "visible", cursor: "crosshair" }}
                     onMouseMove={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
                       const clientX = e.clientX - rect.left;
@@ -1050,32 +1266,75 @@ export function Provide({
                         <stop offset="100%" stopColor="#dc2626" stopOpacity={0.25} />
                       </linearGradient>
 
+                      {/* Pattern for Refusal Cliff (util >= maxUtilBps) */}
                       <pattern id="refusalHatch" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(194, 78, 25, 0.28)" strokeWidth="1.5" />
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(194, 78, 25, 0.32)" strokeWidth="1.5" />
+                      </pattern>
+
+                      {/* Pattern for Second Ceiling (amountOut > free capacity) */}
+                      <pattern id="insufficientHatch" width="8" height="8" patternTransform="rotate(-45 0 0)" patternUnits="userSpaceOnUse">
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(217, 119, 6, 0.35)" strokeWidth="1.5" />
                       </pattern>
                     </defs>
 
-                    {/* Horizontal Grid */}
-                    {[0, 1, 2, 3].map((i) => {
-                      const yPos = TOP_AXIS_Y + i * 42;
+                    {/* Horizontal grid, labelled in bps.
+                        The axis is scaled to the cliff haircut, so without these
+                        labels a full-height slope could be read as a far larger
+                        haircut than widenBps ever applies. */}
+                    {[0, 1, 2, 3, 4].map((i) => {
+                      const yPos = TOP_AXIS_Y + i * (Y_TRAVEL / 4);
+                      const bpsAtLine = Math.round(maxHaircutFrac * 10000 * (i / 4));
                       return (
-                        <line
-                          key={i}
-                          x1={START_X}
-                          x2={END_X}
-                          y1={yPos}
-                          y2={yPos}
-                          stroke="var(--rule)"
-                          strokeWidth={1}
-                          strokeDasharray="2 4"
-                        />
+                        <g key={i}>
+                          <line
+                            x1={START_X}
+                            x2={END_X}
+                            y1={yPos}
+                            y2={yPos}
+                            stroke="var(--rule)"
+                            strokeWidth={1}
+                            strokeDasharray="2 4"
+                          />
+                          <text
+                            x={START_X - 6}
+                            y={yPos + 3}
+                            textAnchor="end"
+                            fill="var(--ink3)"
+                            fontSize={9}
+                            fontFamily="var(--mono)"
+                          >
+                            {i === 0 ? "0" : `-${bpsAtLine}`}
+                          </text>
+                        </g>
                       );
                     })}
+                    <text
+                      x={START_X}
+                      y={TOP_AXIS_Y - 14}
+                      textAnchor="start"
+                      fill="var(--ink3)"
+                      fontSize={8.5}
+                      fontFamily="var(--mono)"
+                      letterSpacing=".06em"
+                    >
+                      HAIRCUT (BPS)
+                    </text>
 
                     {/* Safe zone area fill under the progressive curve */}
                     <path d={solvencyAreaD} fill="url(#solvencyAreaGrad)" />
 
-                    {/* Rejection / Refusal zone fill (past maxUtilBps) */}
+                    {/* Second Ceiling Zone: amountOut > free capacity (§0.5) */}
+                    {insufficientX !== null && insufficientX < cliffX && (
+                      <rect
+                        x={insufficientX}
+                        y={TOP_AXIS_Y - 10}
+                        width={cliffX - insufficientX}
+                        height={BASE_AXIS_Y - (TOP_AXIS_Y - 10)}
+                        fill="url(#insufficientHatch)"
+                      />
+                    )}
+
+                    {/* Refusal Cliff Zone: util >= maxUtilBps */}
                     <rect
                       x={cliffX}
                       y={TOP_AXIS_Y - 10}
@@ -1094,10 +1353,23 @@ export function Provide({
                       strokeLinejoin="round"
                     />
 
-                    {/* Vertical Cliff Drop at maxUtilBps */}
+                    {/* Boundary 2 Vertical Line: amountOut > free (EncumbranceInsufficient) */}
+                    {insufficientX !== null && insufficientX < cliffX && (
+                      <line
+                        x1={insufficientX}
+                        y1={TOP_AXIS_Y - 10}
+                        x2={insufficientX}
+                        y2={BASE_AXIS_Y}
+                        stroke="#d97706"
+                        strokeWidth={2}
+                        strokeDasharray="4 3"
+                      />
+                    )}
+
+                    {/* Boundary 1 Vertical Line: Cliff Drop at maxUtilBps (EncumbranceExceeded) */}
                     <line
                       x1={cliffX}
-                      y1={TOP_AXIS_Y + (widenBps / 10000) * 130}
+                      y1={yForHaircut(maxHaircutFrac)}
                       x2={cliffX}
                       y2={BASE_AXIS_Y}
                       stroke="var(--short)"
@@ -1132,22 +1404,49 @@ export function Provide({
                         />
                         <circle
                           cx={currentUtilX}
-                          cy={currentUtilX <= cliffX ? TOP_AXIS_Y + ((utilPlotPct / 100) * widenBps / 10000) * 130 : BASE_AXIS_Y}
+                          cy={
+                            currentUtilX <= cliffX && (insufficientX === null || currentUtilX <= insufficientX)
+                              ? yForHaircut((utilPlotPct / 100) * widenBps / 10000)
+                              : BASE_AXIS_Y
+                          }
                           r={6}
-                          fill="var(--ink)"
+                          fill={
+                            currentUtilX > cliffX
+                              ? "var(--short)"
+                              : insufficientX !== null && currentUtilX > insufficientX
+                              ? "#d97706"
+                              : "var(--ink)"
+                          }
                           stroke="var(--paper)"
                           strokeWidth={2.5}
                         />
                       </g>
                     )}
 
-                    {/* Refusal badge pill */}
-                    <g transform={`translate(${Math.min(520, cliffX - 10)}, 18)`}>
-                      <rect x={-8} y={-10} width={100} height={18} rx={3} fill="var(--short)" />
-                      <text x={42} y={3} textAnchor="middle" fill="white" fontSize={8.5} fontFamily="var(--mono)" fontWeight={700}>
-                        REFUSES ON-CHAIN
-                      </text>
-                    </g>
+                    {/* Refusal Badges */}
+                    {insufficientX !== null && insufficientX < cliffX ? (
+                      <>
+                        <g transform={`translate(${Math.min(END_X - 160, Math.max(START_X, insufficientX - 8))}, 18)`}>
+                          <rect x={0} y={-10} width={138} height={18} rx={3} fill="#d97706" />
+                          <text x={69} y={3} textAnchor="middle" fill="white" fontSize={8} fontFamily="var(--mono)" fontWeight={700}>
+                            REFUSES: amountOut &gt; free
+                          </text>
+                        </g>
+                        <g transform={`translate(${Math.min(END_X - 110, Math.max(START_X + 140, cliffX + 6))}, 18)`}>
+                          <rect x={0} y={-10} width={100} height={18} rx={3} fill="var(--short)" />
+                          <text x={50} y={3} textAnchor="middle" fill="white" fontSize={8} fontFamily="var(--mono)" fontWeight={700}>
+                            CLIFF: util ≥ max
+                          </text>
+                        </g>
+                      </>
+                    ) : (
+                      <g transform={`translate(${Math.min(END_X - 120, cliffX - 10)}, 18)`}>
+                        <rect x={-8} y={-10} width={116} height={18} rx={3} fill="var(--short)" />
+                        <text x={50} y={3} textAnchor="middle" fill="white" fontSize={8.5} fontFamily="var(--mono)" fontWeight={700}>
+                          REFUSAL CLIFF ({(maxUtilBps / 100).toFixed(0)}%)
+                        </text>
+                      </g>
+                    )}
 
                     {/* Axis Ticks */}
                     {[0, 25, 50, 75, 100].map((u) => {
@@ -1212,121 +1511,134 @@ export function Provide({
                       <div style={{ color: hoverSolvencyData.isRefused ? "#f87171" : "#34d399" }}>
                         <strong>Output:</strong> {hoverSolvencyData.quoteOut}
                       </div>
+                      {hoverSolvencyData.refusalReason && (
+                        <div style={{ fontSize: 9.5, color: "#fca5a5", marginTop: 2, maxWidth: 220 }}>
+                          {hoverSolvencyData.refusalReason}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, flexWrap: "wrap", gap: 10 }}>
                   <span className={s.mono} style={{ fontSize: 11, color: "var(--ink2)" }}>
-                    ● <strong>Continuous Curve</strong>: Linear spread widening up to -{widenBps} bps as wallet is committed
+                    ● <strong>Haircut Law</strong>: Linear widening (-{widenBps} bps max)
                   </span>
+                  {insufficientX !== null && insufficientX < cliffX && (
+                    <span className={s.mono} style={{ fontSize: 11, color: "#d97706" }}>
+                      --- <strong>Amber Zone</strong>: Refused if amountOut &gt; free capacity
+                    </span>
+                  )}
                   <span className={s.mono} style={{ fontSize: 11, color: "var(--short)" }}>
-                    --- <strong>Red Cliff</strong>: Hard refusal cutoff at {(maxUtilBps / 100).toFixed(0)}% (saves gas &amp; prevents reverts)
+                    --- <strong>Red Cliff</strong>: Refused at {(maxUtilBps / 100).toFixed(0)}% util (EncumbranceExceeded)
                   </span>
                 </div>
-              </div>
-            )}
-          </section>
-
-          {/* Mathematical Formulations ("Show the maths", §7.1) */}
-          <section className={`${s.card} ${s.cardPad}`} style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div>
-                <span className={s.label}>Exact On-Chain Arithmetic</span>
-                <h3 className={`${s.display} ${s.h2}`} style={{ margin: "2px 0 0", fontSize: 20 }}>
-                  How the Encumbrance Strategy computes quotes
-                </h3>
-              </div>
-              <button
-                type="button"
-                className={`${s.btn} ${s.btnXs}`}
-                onClick={() => setShowFormulas((f) => !f)}
-              >
-                {showFormulas ? "Hide formulas" : "Show formulas"}
-              </button>
-            </div>
-
-            <p style={{ margin: "0 0 14px", fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.5 }}>
-              Unlike conventional AMM pools that assume deposited liquidity is immutable, Bone Dry evaluates maker commitments against live wallet balances and sibling allocations:
-            </p>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: 12,
-              }}
-            >
-              <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>01 · Encumbrance</span>
-                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  encumbered = Σ rawBalances(maker, sibling_i)
-                </p>
-                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
-                  Total active commitments across all registered sibling strategies.
-                </p>
-              </div>
-
-              <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>02 · Refusal Cliff</span>
-                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--short)" }}>
-                  if (utilBps &gt; maxUtilBps) revert/refuse
-                </p>
-                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
-                  Hard refusal threshold at {(maxUtilBps / 100).toFixed(0)}%. Rejects quotes without failing trades.
-                </p>
-              </div>
-
-              <div style={{ padding: "12px 14px", background: "var(--sunk)", borderRadius: 8, border: "1px solid var(--rule)" }}>
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>03 · Spread Widening</span>
-                <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                  haircutBps = (utilBps × widenBps) / 10000
-                </p>
-                <p style={{ margin: 0, fontSize: 12, color: "var(--ink3)" }}>
-                  Linear widening up to {widenBps} bps as utilization approaches the ceiling.
-                </p>
-              </div>
-            </div>
-
-            {showFormulas && (
-              <div
-                style={{
-                  marginTop: 16,
-                  padding: "14px 16px",
-                  background: "var(--surface)",
-                  border: "1px solid var(--rule)",
-                  borderRadius: 8,
-                }}
-              >
-                <span className={s.label} style={{ marginBottom: 6, display: "block" }}>
-                  Contract Implementation (§7.1)
-                </span>
-                <pre
-                  className={s.mono}
+                {/* Solvency Formulas Disclosure (§0.4 verbatim contract lines) */}
+                <details
                   style={{
-                    margin: 0,
-                    fontSize: 11.5,
-                    lineHeight: 1.6,
-                    color: "var(--ink)",
-                    overflowX: "auto",
+                    marginTop: 16,
+                    borderTop: "1px solid var(--rule)",
+                    paddingTop: 12,
                   }}
                 >
-{`// EncumbranceStrategy.sol §7.1
-uint256 free = rawBalance > encumbered ? rawBalance - encumbered : 0;
-uint256 utilBps = rawBalance > 0 ? (encumbered * 10_000) / rawBalance : 10_000;
+                  <summary
+                    style={{
+                      cursor: "pointer",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      color: "var(--ink2)",
+                      userSelect: "none",
+                    }}
+                  >
+                    ▸ Exact On-Chain Solvency Formulas (Encumbrance.sol:194–233)
+                  </summary>
 
-if (utilBps > maxUtilBps) {
-    return (0, RefusalReason.EncumbranceExceeded);
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                      gap: 10,
+                      marginTop: 12,
+                    }}
+                  >
+                    <div style={{ padding: "10px 12px", background: "var(--sunk)", borderRadius: 6, border: "1px solid var(--rule)" }}>
+                      <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>01 · Backing &amp; Utilization</span>
+                      <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
+                        backing = min(balOut, allowOut)
+                      </p>
+                      <p className={s.mono} style={{ margin: 0, fontSize: 11, color: "var(--ink2)" }}>
+                        util = (declaredTotal * 1e4) / backing
+                      </p>
+                    </div>
+
+                    <div style={{ padding: "10px 12px", background: "var(--sunk)", borderRadius: 6, border: "1px solid var(--rule)" }}>
+                      <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>02 · Refusal Cliff &amp; Floor</span>
+                      <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 12, fontWeight: 600, color: "var(--short)" }}>
+                        if (util &gt;= maxUtilBps) revert
+                      </p>
+                      <p className={s.mono} style={{ margin: 0, fontSize: 11, color: "#d97706" }}>
+                        if (amountOut &gt; free) revert
+                      </p>
+                    </div>
+
+                    <div style={{ padding: "10px 12px", background: "var(--sunk)", borderRadius: 6, border: "1px solid var(--rule)" }}>
+                      <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>03 · Spread Widening</span>
+                      <p className={s.mono} style={{ margin: "4px 0 2px", fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
+                        haircut = (amountOut * widenBps * util) / 1e8
+                      </p>
+                      <p className={s.mono} style={{ margin: 0, fontSize: 11, color: "var(--ink2)" }}>
+                        amountOut -= haircut (exact-in)
+                      </p>
+                    </div>
+                  </div>
+
+                  <pre
+                    className={s.mono}
+                    style={{
+                      marginTop: 12,
+                      padding: "12px 14px",
+                      background: "var(--sunk)",
+                      border: "1px solid var(--rule)",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      color: "var(--ink)",
+                      overflowX: "auto",
+                    }}
+                  >
+{`// Encumbrance.sol:194-208, 216-218, 230-233
+uint256 balOut   = IERC20(ctx.query.tokenOut).balanceOf(ctx.query.maker);
+uint256 allowOut = IERC20(ctx.query.tokenOut).allowance(ctx.query.maker, address(aqua));
+uint256 backing  = Math.min(balOut, allowOut);
+
+if (backing == 0) revert EncumbranceZeroBacking();
+
+// 512-bit intermediate multiplication avoids overflow even on arbitrarily massive commitments
+uint256 util = Math.mulDiv(declaredTotalEncumbrance, 1e4, backing);
+
+// Report true untruncated utilization in EncumbranceExceeded
+if (util >= maxUtilBps) {
+    revert EncumbranceExceeded(util, maxUtilBps);
 }
 
-uint256 haircutBps = (utilBps * widenBps) / 10_000;
-uint256 finalQuote = baseQuote - (baseQuote * haircutBps) / 10_000;`}
-                </pre>
+if (widenBps > 0 && util > 0 && ctx.query.isExactIn && ctx.swap.amountOut > 0) {
+    uint256 haircut = Math.mulDiv(ctx.swap.amountOut, uint256(widenBps) * util, 1e8);
+    ctx.swap.amountOut -= haircut;
+}
+
+// Hard solvency floor: deliverable amountOut cannot exceed free backing
+uint256 free = backing > declaredTotalEncumbrance ? backing - declaredTotalEncumbrance : 0;
+if (ctx.swap.amountOut > free) {
+    revert EncumbranceInsufficient(ctx.swap.amountOut, free);
+}`}
+                  </pre>
+                </details>
               </div>
             )}
           </section>
 
-          {/* 6. Reference Deployments Card */}
+          {/* Verified Deployments Card (Dynamic per active network, §0.9) */}
           <section className={`${s.card} ${s.cardPad}`}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
               <div>
@@ -1335,26 +1647,41 @@ uint256 finalQuote = baseQuote - (baseQuote * haircutBps) / 10_000;`}
                   Verified Deployments
                 </h3>
               </div>
-              <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
-                Base Sepolia
+              <span className={s.mono} style={{ fontSize: 11, color: "var(--ink)" }}>
+                {net.label}
               </span>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                <span style={{ color: "var(--ink2)" }}>BoneDryRouter</span>
-                <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
-                  0x75E8...1146
-                  <CopyButton value="0x75E8971831675A3eF0CAbc4fd441dA7aeB481146" size={12} />
-                </span>
+                <span style={{ color: "var(--ink2)" }}>BoneDryRouter (Opcode 35)</span>
+                {net.boneDryRouter ? (
+                  <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
+                    {shortAddr(net.boneDryRouter)}
+                    <CopyButton value={net.boneDryRouter} size={12} />
+                  </span>
+                ) : (
+                  <span className={s.mono} style={{ fontSize: 12, color: "var(--ink3)" }}>
+                    — (Not deployed on {net.label})
+                  </span>
+                )}
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                <span style={{ color: "var(--ink2)" }}>EncumbranceStrategy</span>
+                <span style={{ color: "var(--ink2)" }}>Aqua Settlement</span>
                 <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
-                  0x7b2e...67e3
-                  <CopyButton value="0x7b2e1f478807218c335ebfe6a8b0250e61ab533d2a30902b9e298bfcfda467e3" size={12} />
+                  {shortAddr(net.aqua)}
+                  <CopyButton value={net.aqua} size={12} />
                 </span>
               </div>
+              {net.wellhead && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                  <span style={{ color: "var(--ink2)" }}>Wellhead Pool</span>
+                  <span className={s.mono} style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
+                    {shortAddr(net.wellhead)}
+                    <CopyButton value={net.wellhead} size={12} />
+                  </span>
+                </div>
+              )}
             </div>
           </section>
         </div>

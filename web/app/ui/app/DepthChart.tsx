@@ -68,13 +68,7 @@ export function DepthChart({
     };
   }, [chainId, targetToken.address, onSpotPrice]);
 
-  const spot =
-    priceData?.spotUsd ??
-    (targetToken.symbol.toUpperCase() === "WETH"
-      ? 2538.33
-      : targetToken.symbol.toUpperCase() === "USDC"
-      ? 1.0
-      : null);
+  const spot = priceData?.spotUsd ?? null;
 
   const { lowerBound, upperBound } = useMemo(() => {
     if (!spot) return { lowerBound: null, upperBound: null };
@@ -205,7 +199,7 @@ export function DepthChart({
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span className={s.chartBadge}>
-            {pricing === "oracle" ? "Fixed price · oracle mid minus spread" : "Continuous AMM · bonding depth curve"}
+            {pricing === "oracle" ? "Fixed price · oracle mid minus spread" : "Illustrative shape · concentrated liquidity schematic"}
           </span>
         </div>
       </div>
@@ -226,9 +220,11 @@ export function DepthChart({
             </button>
           ))}
         </div>
-        <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)", marginLeft: "auto" }}>
-          Invariant: {preset === "full" ? "x · y = k (uniform)" : `Concentrated range [${lowerBound ? $(lowerBound) : "—"} → ${upperBound ? $(upperBound) : "—"}]`}
-        </span>
+        {lowerBound !== null && upperBound !== null && preset !== "full" && (
+          <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)", marginLeft: "auto" }}>
+            Target window [{$(lowerBound)} → {$(upperBound)}]
+          </span>
+        )}
       </div>
 
       {spot === null ? (
