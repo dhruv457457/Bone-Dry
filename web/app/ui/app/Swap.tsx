@@ -106,6 +106,37 @@ export function Swap({
   const [bookPage, setBookPage] = useState(0);
 
   const hasAmount = Number(input.replace(/,/g, "")) > 0;
+
+  /**
+   * How far below the oracle this quote actually lands.
+   *
+   * The API has computed `oracleDeviationBps` per slice all along and nothing
+   * displayed it. That mattered once the router started picking between books:
+   * a 100 USDC quote filled from three tiny XYC positions returned 0.030% of
+   * oracle value -- $99.97 destroyed -- while the receipt read "100% backed
+   * fill" and "Fully solvent fill". Both were true. A maker being able to
+   * deliver says nothing about whether what they deliver is worth taking, and
+   * this app measures the first and was silent on the second.
+   *
+   * Worst slice, not the average: one leg pricing far off is the thing to
+   * surface, and averaging it against good legs hides exactly the case worth
+   * seeing.
+   */
+  const worstDeviationBps = useMemo(() => {
+    if (!route?.slices?.length) return null;
+    let worst: number | null = null;
+    for (const sl of route.slices) {
+      if (sl.oracleDeviationBps == null) continue;
+      const d = Number(sl.oracleDeviationBps);
+      if (worst === null || d < worst) worst = d;
+    }
+    return worst;
+  }, [route]);
+
+  /** −100 bps is a 1% haircut against oracle: worth saying. −500 bps is worth
+   *  shouting about, and is where the button stops looking like a plain yes. */
+  const priceWarn = worstDeviationBps !== null && worstDeviationBps <= -100;
+  const priceSevere = worstDeviationBps !== null && worstDeviationBps <= -500;
   const quoted = route && !route.error && route.amountOut !== "0";
   const improvement = Number(route?.improvementBps ?? "0");
 
@@ -331,6 +362,28 @@ export function Swap({
                 Only {units(route!.amountOut, tokenOut.decimals, 6)} {tokenOut.symbol} deliverable across {route!.makersUsed} solvent wallet{route!.makersUsed === 1 ? "" : "s"} — the rest of the book cannot pay.
               </div>
             ) : null}
+
+            {quoted && priceWarn ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  background: priceSevere ? "rgba(194, 78, 25, 0.10)" : "var(--sunk)",
+                  border: `1px solid ${priceSevere ? "rgba(194, 78, 25, 0.30)" : "var(--rule)"}`,
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                  color: priceSevere ? "var(--short)" : "var(--ink2)",
+                }}
+              >
+                <strong>
+                  {(Math.abs(worstDeviationBps!) / 100).toFixed(priceSevere ? 1 : 2)}% below the Chainlink price
+                </strong>
+                {priceSevere
+                  ? " — this book is solvent but shallow, so the curve prices you out at this size. Try a smaller amount."
+                  : " — solvency is not price; check the rate before signing."}
+              </div>
+            ) : null}
           </div>
 
           {quoted && improvement > 0 && route!.slices.length > 1 ? (
@@ -389,16 +442,11 @@ export function Swap({
             </p>
           ) : null}
         </section>
-
-        {/* ── route receipt ────────────────────────────────────────────── */}
-      </div>
-
-      {/* ── the maker book & route inspector ───────────────────────────── */}
-      <div className={s.colWide}>
-        {/* The receipt sat in the left column, 400px from the breakdown, saying
-            the same four counts under a different heading. It belongs beside the
-            rows it describes -- the book it routed through, and the pool that
-            holds nothing, directly above the makers that filled it. */}
+        {/* Back in the left column, where it belongs: it describes the quote
+            beside it, and it is metadata, not the result. It was moved right to
+            stop it duplicating the breakdown -- but the duplication was the counts
+            tree, which is deleted, and moving the whole card put a 405px utility
+            panel above the 271px result it supports. */}
         <section className={`${s.card} ${s.cardPad}`}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <span className={s.label}>Route receipt</span>
@@ -560,6 +608,12 @@ hookData: ${route.hookData}`}
             </div>
           )}
         </section>
+
+        {/* ── route receipt ────────────────────────────────────────────── */}
+      </div>
+
+      {/* ── the maker book & route inspector ───────────────────────────── */}
+      <div className={s.colWide}>
         <RouteInspector
           route={route}
           tokenIn={tokenIn}
