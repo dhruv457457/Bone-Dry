@@ -38,6 +38,10 @@ export type Network = {
   router: Address;
   /** Opcode-35 encumbrance-aware router. Only deployed on Base and Base Sepolia. */
   boneDryRouter?: Address;
+  /** The v4 hook bound to `boneDryRouter`. `Tap.router` is immutable, so reaching
+   *  opcode 35 means routing through this hook and its own pool — the `hook`
+   *  field above is welded to 1inch's canonical router and cannot. */
+  boneDryHook?: Address;
   poolManager: Address;
   usdc: Address;
   weth: Address;
@@ -85,6 +89,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     aqua: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a",
     router: "0x111111338c5091E8440b67B168bAe16a668AC0De",
     boneDryRouter: "0x74195573Fa9bC965667e03319F2C58567d4B96BE",
+    boneDryHook: "0xaC7bCA41EA8Fce76651684943Db2c38003c98088",
     poolManager: "0x498581fF718922c3f8e6A244956aF099B2652b2b",
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     weth: WETH_PREDEPLOY,
@@ -124,6 +129,13 @@ export const NETWORKS: Record<NetworkId, Network> = {
     aqua: "0x7a062f824FAbdf2360354Ad52B3752065150Da61",
     router: "0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7",
     boneDryRouter: "0x75E8971831675A3eF0CAbc4fd441dA7aeB481146",
+    // No boneDryHook here. The hook at 0xD5Bca5F5 looks like the obvious
+    // candidate and is not: read on chain, its immutable `router` is
+    // 0xD0a0A947… — the plain v1.0.2 router — so it cannot reach opcode 35.
+    // Base Sepolia therefore has an opcode-35 *router* and no hook that can
+    // call it; a second Tap bound to boneDryRouter has to be deployed before
+    // any encumbered fill can be demonstrated on testnet. Base mainnet does
+    // have one, at 0xaC7bCA41….
     poolManager: "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
     usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     weth: WETH_PREDEPLOY,
@@ -218,6 +230,38 @@ export const NETWORKS: Record<NetworkId, Network> = {
     },
   },
 };
+
+/** One Aqua "app" — a SwapVM router — and the v4 hook that can reach it.
+ *
+ *  Aqua keys balances `[maker][app][strategyHash][token]` and `pull()` reads
+ *  `msg.sender` as the app, so a strategy shipped to one router can only ever be
+ *  filled by that router. A v4 pool binds one hook and `Tap.router` is
+ *  immutable, so each entry here is a separate, unmergeable book. Routing picks
+ *  one; it can never span two. */
+export type AquaApp = {
+  app: Address;
+  /** Absent when no hook on this chain can call this router — the book is then
+   *  readable and quotable but not fillable. */
+  hook: Address | "";
+  label: string;
+  /** Whether this router implements opcode 35. */
+  encumbranceAware: boolean;
+};
+
+export function appsOf(n: Network): AquaApp[] {
+  const out: AquaApp[] = [
+    { app: n.router, hook: n.hook, label: "evidence", encumbranceAware: false },
+  ];
+  if (n.boneDryRouter) {
+    out.push({
+      app: n.boneDryRouter,
+      hook: n.boneDryHook ?? "",
+      label: "bone dry",
+      encumbranceAware: true,
+    });
+  }
+  return out;
+}
 
 export const DEFAULT_NETWORK: NetworkId = 8453;
 

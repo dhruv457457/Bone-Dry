@@ -14,7 +14,15 @@ import type { MakerDepth, Position } from "./aqua";
  * merely old still answers with real data, just data a background job will
  * refresh within its own schedule. Only "never populated" degrades.
  */
-export async function depthFromIndex(n: Network, token: Address): Promise<MakerDepth[] | null> {
+export async function depthFromIndex(
+  n: Network,
+  token: Address,
+  /** Which Aqua app these rows belong to. The Postgres index is populated from
+   *  n.router today, so a caller asking for another app must not be handed these
+   *  rows labelled as theirs. */
+  app: Address = n.router
+): Promise<MakerDepth[] | null> {
+  if (app.toLowerCase() !== n.router.toLowerCase()) return null;
   const db = sql();
   if (!db) return null;
 

@@ -36,9 +36,12 @@ export async function indexStrategies(
   toBlock?: bigint;
     pageSize?: bigint;
     maxPages?: number;
+    /** Which Aqua app (SwapVM router) to scan. Defaults to n.router. */
+    app?: Address;
   }
 ): Promise<Strategy[]> {
   const client = clientFor(n);
+  const app = opts?.app ?? n.router;
   const latest = opts?.toBlock ?? (await client.getBlockNumber());
   const page = opts?.pageSize ?? (n.id === 8453 ? 1_500n : n.id === 1 ? 9_000n : 9_999n);
   // This used to stop at 2 pages on Ethereum, on the theory that Ethereum's
@@ -85,7 +88,11 @@ export async function indexStrategies(
 
     for (const l of ship) {
       const a = l.args as { maker: Address; app: Address; strategyHash: Hex; strategy: Hex };
-      if (a.app.toLowerCase() !== n.router.toLowerCase()) continue; // other apps are not ours to route
+      // Filtered to the app being scanned. Aqua keys balances by app and
+      // pull() reads msg.sender, so a strategy shipped to another router can
+      // never be filled through this one -- they are separate books, not a
+      // superset. Defaults to n.router so existing callers are unchanged.
+      if (a.app.toLowerCase() !== app.toLowerCase()) continue;
       shipped.push({
         maker: a.maker,
         strategyHash: a.strategyHash,
@@ -187,13 +194,14 @@ export function cachedStrategies(n: Network): Promise<{ strategies: Strategy[]; 
 export async function measureDepth(
   n: Network,
   strategies: Strategy[],
-  token: Address
+  token: Address,
+  app: Address = n.router
 ): Promise<MakerDepth[]> {
   const client = clientFor(n);
   if (strategies.length === 0) return [];
 
   const calls = strategies.flatMap((s) => [
-    { address: n.aqua, abi: aquaAbi, functionName: "rawBalances", args: [s.maker, n.router, s.strategyHash, token] } as const,
+    { address: n.aqua, abi: aquaAbi, functionName: "rawBalances", args: [s.maker, app, s.strategyHash, token] } as const,
     { address: token, abi: erc20Abi, functionName: "balanceOf", args: [s.maker] } as const,
     { address: token, abi: erc20Abi, functionName: "allowance", args: [s.maker, n.aqua] } as const,
   ]);
