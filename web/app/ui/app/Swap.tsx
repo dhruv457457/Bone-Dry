@@ -5,6 +5,7 @@ import type { Address } from "viem";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
 import { FindingCard } from "./Shell";
+import { RouteInspector } from "../RouteInspector";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr } from "@/lib/format";
@@ -428,7 +429,7 @@ export function Swap({
                   {
                     label: "├─ Skipped — could not pay",
                     value: `${skippedCount}`,
-                    color: skippedCount ? "var(--short)" : "var(--ink3)",
+                    color: skippedCount ? "var(--ink2)" : "var(--ink3)",
                   },
                   {
                     label: "└─ Wrong pair / no depth",
@@ -470,8 +471,15 @@ hookData: ${route.hookData}`}
         </section>
       </div>
 
-      {/* ── the maker book ─────────────────────────────────────────────── */}
-      <section className={`${s.colWide} ${s.card} ${s.cardClip}`}>
+      {/* ── the maker book & route inspector ───────────────────────────── */}
+      <div className={s.colWide}>
+        <RouteInspector
+          route={route}
+          tokenIn={tokenIn}
+          tokenOut={tokenOut}
+          net={net}
+        />
+        <section className={`${s.card} ${s.cardClip}`}>
         <div
           className={s.cardHead}
           style={{ padding: "18px 22px", alignItems: "flex-end" }}
@@ -582,7 +590,7 @@ hookData: ${route.hookData}`}
                             {shortAddr(m.maker)}
                             <CopyButton value={m.maker} />
                           </span>
-                          <span className={`${s.pill} ${used ? s.pillRouted : m.solvent ? "" : s.pillShort}`}>
+                          <span className={`${s.pill} ${used ? s.pillRouted : tag === "skipped" ? s.pillSkipped : m.solvent ? "" : s.pillShort}`}>
                             {tag}
                           </span>
                         </span>
@@ -665,7 +673,8 @@ hookData: ${route.hookData}`}
             </div>
           </>
         )}
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

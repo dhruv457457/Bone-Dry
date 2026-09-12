@@ -1,22 +1,25 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { useSolvencyRoute } from "@/hooks/useSolvencyRoute";
 import type { RouteResponse } from "./types";
-import type { Network } from "@/lib/networks";
-import s from "./desk.module.css";
+import s from "./app.module.css";
+import { Table, Trow } from "./app/bits";
 import { CopyButton } from "./CopyButton";
-
-function short(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
+import { short as shortAddr } from "@/lib/format";
 
 function formatAmount(raw: bigint, decimals: number): string {
   if (raw === 0n) return "0.00";
   const str = raw.toString().padStart(decimals + 1, "0");
   const whole = str.slice(0, -decimals) || "0";
-  const frac = str.slice(-decimals).slice(0, 4);
+  const frac = str.slice(-decimals).slice(0, 6);
   return `${whole}.${frac}`;
 }
+
+type SliceFilter = "all" | "filled" | "skipped" | "unfillable";
+
+const ROUTE_COLS = "minmax(160px, 1.2fr) 120px 85px 120px 140px minmax(220px, 1.8fr)";
+const PAGE_SIZE = 12;
 
 export function RouteInspector({
   route,
@@ -27,61 +30,92 @@ export function RouteInspector({
   route: RouteResponse | null;
   tokenIn: { symbol: string; decimals: number };
   tokenOut: { symbol: string; decimals: number };
-  net: Network;
+  net: { explorer?: string; label: string };
 }) {
   const solvency = useSolvencyRoute(route);
+  const [filter, setFilter] = useState<SliceFilter>("all");
+  const [page, setPage] = useState(0);
+
+  const filteredSlices = useMemo(() => {
+    if (!solvency.slices) return [];
+    return solvency.slices.filter((s) => {
+      if (filter === "filled") return s.status === "SOLVENT" || s.status === "CLAMPED";
+      if (filter === "skipped") return s.status === "SKIPPED_GHOST";
+      if (filter === "unfillable") return s.status === "UNFILLABLE";
+      return true;
+    });
+  }, [solvency.slices, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSlices.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, totalPages - 1);
+  const pageSlices = filteredSlices.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE);
 
   if (!route || solvency.slices.length === 0) {
     return null;
   }
 
+  const filledCount = solvency.solventCount + solvency.clampedCount;
+
   return (
-    <section className={s.book} style={{ marginTop: "24px" }}>
-      <div className={s.sectionHead}>
-        <div>
-          <h2 className={s.sectionTitle}>
-            Route &amp; Solvency Breakdown &mdash;{" "}
-            <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>
-              {solvency.isMultiMaker ? "Multi-Maker Waterfall" : "Single Maker Fill"}
-            </span>
+    <section className={`${s.card} ${s.cardClip}`} style={{ marginBottom: 24 }}>
+      <div
+        className={s.cardHead}
+        style={{ padding: "18px 22px", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
+            Route &amp; Solvency Breakdown
           </h2>
-          <p className="label" style={{ marginTop: "4px" }}>
+          <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
             {solvency.summaryText}
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {solvency.improvementBps > 0 && (
             <span
-              className={s.shapeBadge}
+              className={s.mono}
               style={{
-                color: "#1b663e",
-                background: "rgba(27, 102, 62, 0.08)",
-                borderColor: "rgba(27, 102, 62, 0.3)",
+                fontSize: 11,
+                letterSpacing: ".06em",
+                color: "var(--ink)",
+                background: "var(--sunk)",
+                border: "1px solid var(--rule)",
+                padding: "5px 10px",
+                whiteSpace: "nowrap",
+                fontWeight: 600,
               }}
             >
               +{solvency.improvementBps} BPS BEAT
             </span>
           )}
-          {solvency.hasGhosts && (
+          {solvency.ghostCount > 0 && (
             <span
-              className={s.shapeBadge}
+              className={s.mono}
               style={{
-                color: "#a6300e",
-                background: "rgba(166, 48, 14, 0.08)",
-                borderColor: "rgba(166, 48, 14, 0.3)",
+                fontSize: 11,
+                letterSpacing: ".06em",
+                color: "var(--ink2)",
+                background: "var(--sunk)",
+                border: "1px solid var(--rule)",
+                padding: "5px 10px",
+                whiteSpace: "nowrap",
               }}
             >
-              {solvency.ghostCount} GHOSTS SKIPPED
+              {solvency.ghostCount} SKIPPED (SAVE)
             </span>
           )}
-          {solvency.hasClamped && (
+          {solvency.clampedCount > 0 && (
             <span
-              className={s.shapeBadge}
+              className={s.mono}
               style={{
-                color: "#5c5550",
-                background: "rgba(92, 85, 80, 0.08)",
-                borderColor: "rgba(92, 85, 80, 0.3)",
+                fontSize: 11,
+                letterSpacing: ".06em",
+                color: "var(--ink2)",
+                background: "var(--sunk)",
+                border: "1px solid var(--rule)",
+                padding: "5px 10px",
+                whiteSpace: "nowrap",
               }}
             >
               {solvency.clampedCount} CLAMPED TO DEPTH
@@ -90,104 +124,188 @@ export function RouteInspector({
         </div>
       </div>
 
-      <div className={s.tableWrap}>
-        <table className={s.table}>
-          <thead>
-            <tr>
-              <th>Maker Wallet</th>
-              <th>Status</th>
-              <th>Fill Share</th>
-              <th>Routed {tokenIn.symbol}</th>
-              <th>Deliverable {tokenOut.symbol}</th>
-              <th>Audit Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {solvency.slices.map((slice, idx) => {
-              const isGhost = slice.status === "SKIPPED_GHOST";
-              const isClamped = slice.status === "CLAMPED";
-              const isSolvent = slice.status === "SOLVENT";
-
-              const explorerUrl = `${net.explorer}/address/${slice.maker}`;
-
-              return (
-                <tr
-                  key={`${slice.maker}-${idx}`}
-                  style={{
-                    opacity: isGhost ? 0.65 : 1,
-                    background: isGhost ? "rgba(166, 48, 14, 0.03)" : undefined,
-                  }}
-                >
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <a
-                        href={explorerUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="num"
-                        style={{ textDecoration: "underline", color: "inherit" }}
-                      >
-                        {short(slice.maker)}
-                      </a>
-                      <CopyButton value={slice.maker} title="Copy maker address" />
-                    </div>
-                  </td>
-                  <td>
-                    {isSolvent && (
-                      <span
-                        className={s.badge}
-                        style={{
-                          color: "#1b663e",
-                          background: "rgba(27, 102, 62, 0.1)",
-                          borderColor: "#1b663e",
-                        }}
-                      >
-                        Solvent
-                      </span>
-                    )}
-                    {isClamped && (
-                      <span
-                        className={s.badge}
-                        style={{
-                          color: "#8a5800",
-                          background: "rgba(138, 88, 0, 0.1)",
-                          borderColor: "#8a5800",
-                        }}
-                      >
-                        Clamped
-                      </span>
-                    )}
-                    {isGhost && (
-                      <span
-                        className={s.badge}
-                        style={{
-                          color: "#a6300e",
-                          background: "rgba(166, 48, 14, 0.12)",
-                          borderColor: "#a6300e",
-                        }}
-                      >
-                        Ghost Skipped
-                      </span>
-                    )}
-                  </td>
-                  <td className="num">
-                    {isGhost ? "--" : `${slice.percentageOfFill.toFixed(1)}%`}
-                  </td>
-                  <td className="num">
-                    {isGhost ? "--" : formatAmount(slice.amountIn, tokenIn.decimals)}
-                  </td>
-                  <td className="num" style={{ fontWeight: 600 }}>
-                    {isGhost ? "--" : formatAmount(slice.amountOut, tokenOut.decimals)}
-                  </td>
-                  <td className={`label ${s.dim}`} style={{ fontSize: "11px" }}>
-                    {slice.reason}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div
+        style={{
+          padding: "10px 22px",
+          borderBottom: "1px solid var(--rule)",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div className={s.seg}>
+          <button
+            onClick={() => {
+              setFilter("all");
+              setPage(0);
+            }}
+            className={`${s.segBtn} ${filter === "all" ? s.segBtnOn : ""}`}
+          >
+            All ({solvency.slices.length})
+          </button>
+          <button
+            onClick={() => {
+              setFilter("filled");
+              setPage(0);
+            }}
+            className={`${s.segBtn} ${filter === "filled" ? s.segBtnOn : ""}`}
+          >
+            Filled ({filledCount})
+          </button>
+          <button
+            onClick={() => {
+              setFilter("skipped");
+              setPage(0);
+            }}
+            className={`${s.segBtn} ${filter === "skipped" ? s.segBtnOn : ""}`}
+          >
+            Skipped Saves ({solvency.ghostCount})
+          </button>
+          {solvency.unfillableCount > 0 && (
+            <button
+              onClick={() => {
+                setFilter("unfillable");
+                setPage(0);
+              }}
+              className={`${s.segBtn} ${filter === "unfillable" ? s.segBtnOn : ""}`}
+            >
+              Unfillable ({solvency.unfillableCount})
+            </button>
+          )}
+        </div>
+        <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+          {filteredSlices.length} of {solvency.slices.length} wallets
+        </span>
       </div>
+
+      <Table
+        cols={ROUTE_COLS}
+        min={820}
+        head={
+          <>
+            <span>Maker</span>
+            <span>Status</span>
+            <span className={s.right} style={{ paddingRight: 14 }}>Share</span>
+            <span className={s.right} style={{ paddingRight: 14 }}>Pay ({tokenIn.symbol})</span>
+            <span className={s.right} style={{ paddingRight: 18 }}>Receive ({tokenOut.symbol})</span>
+            <span style={{ paddingLeft: 6 }}>Audit / Refusal Reason</span>
+          </>
+        }
+      >
+        {pageSlices.length === 0 ? (
+          <p style={{ margin: 0, padding: "18px 22px", fontSize: 14, color: "var(--ink3)" }}>
+            No makers match this filter.
+          </p>
+        ) : (
+          pageSlices.map((slice, idx) => {
+            const isGhost = slice.status === "SKIPPED_GHOST";
+            const isClamped = slice.status === "CLAMPED";
+            const isSolvent = slice.status === "SOLVENT";
+            const isUnfillable = slice.status === "UNFILLABLE";
+            const isFilled = isSolvent || isClamped;
+
+            const explorerUrl = net.explorer ? `${net.explorer}/address/${slice.maker}` : undefined;
+
+            return (
+              <Trow
+                key={`${slice.maker}-${idx}`}
+                cols={ROUTE_COLS}
+                tone={isFilled ? "used" : undefined}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {explorerUrl ? (
+                    <a
+                      href={explorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={s.mono}
+                      style={{ fontSize: 12.5, textDecoration: "underline", color: "inherit" }}
+                    >
+                      {shortAddr(slice.maker)}
+                    </a>
+                  ) : (
+                    <span className={s.mono} style={{ fontSize: 12.5 }}>
+                      {shortAddr(slice.maker)}
+                    </span>
+                  )}
+                  <CopyButton value={slice.maker} size={11} />
+                </div>
+
+                <div>
+                  {isSolvent && (
+                    <span className={`${s.pill} ${s.pillRouted}`}>
+                      Solvent
+                    </span>
+                  )}
+                  {isClamped && (
+                    <span className={s.pill} style={{ background: "var(--sunk)", color: "var(--ink)" }}>
+                      Clamped
+                    </span>
+                  )}
+                  {isGhost && (
+                    <span className={s.pill} style={{ background: "var(--sunk)", color: "var(--ink2)" }}>
+                      Skipped (Save)
+                    </span>
+                  )}
+                  {isUnfillable && (
+                    <span className={s.pill} style={{ background: "var(--sunk)", color: "var(--ink3)" }}>
+                      Unfillable
+                    </span>
+                  )}
+                </div>
+
+                <span className={`${s.mono} ${s.right}`} style={{ fontSize: 11.5, color: isFilled ? "var(--ink)" : "var(--ink3)", paddingRight: 14 }}>
+                  {isFilled ? `${slice.percentageOfFill.toFixed(1)}%` : "—"}
+                </span>
+
+                <span className={`${s.mono} ${s.right}`} style={{ fontSize: 11.5, color: isFilled ? "var(--ink)" : "var(--ink3)", paddingRight: 14 }}>
+                  {isFilled ? formatAmount(slice.amountIn, tokenIn.decimals) : "0.00"}
+                </span>
+
+                <span className={`${s.mono} ${s.right}`} style={{ fontSize: 11.5, fontWeight: isFilled ? 600 : 400, color: isFilled ? "var(--ink)" : "var(--ink3)", paddingRight: 18 }}>
+                  {isFilled ? formatAmount(slice.amountOut, tokenOut.decimals) : "0.00"}
+                </span>
+
+                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: 6 }}>
+                  {slice.reason}
+                </span>
+              </Trow>
+            );
+          })
+        )}
+      </Table>
+
+      {totalPages > 1 && (
+        <div
+          style={{
+            padding: "10px 22px",
+            borderTop: "1px solid var(--rule)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <button
+            className={`${s.btn} ${s.btnXs}`}
+            disabled={clampedPage === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            ‹ Prev
+          </button>
+          <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+            page {clampedPage + 1} of {totalPages}
+          </span>
+          <button
+            className={`${s.btn} ${s.btnXs}`}
+            disabled={clampedPage >= totalPages - 1}
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+          >
+            Next ›
+          </button>
+        </div>
+      )}
     </section>
   );
 }

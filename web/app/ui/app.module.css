@@ -659,6 +659,7 @@
 }
 .pillShort { color: var(--short); border-color: rgba(194, 78, 25, 0.35); }
 .pillRouted { color: var(--ink3); border-color: rgba(110, 105, 94, 0.35); }
+.pillSkipped { color: var(--ink2); border-color: var(--line); background: var(--sunk); }
 
 .legend {
   padding: 11px 22px;

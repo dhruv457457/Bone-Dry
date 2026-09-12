@@ -21,6 +21,7 @@ export interface SolvencyEngineResult {
   solventCount: number;
   clampedCount: number;
   ghostCount: number;
+  unfillableCount: number;
   shieldedVolume: bigint;
   savingsUsdFormatted?: string;
 }
@@ -58,6 +59,7 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
       solventCount: 0,
       clampedCount: 0,
       ghostCount: 0,
+      unfillableCount: 0,
       shieldedVolume: 0n,
     };
   }
@@ -123,13 +125,15 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
       depth: 0n,
       percentageOfFill: 0,
       status: "SKIPPED_GHOST",
-      reason: "0 deliverable depth — skipped atomically to avoid tx revert",
+      reason: "EncumbranceZeroBacking: 0 deliverable depth — skipped atomically to avoid tx revert",
     });
   }
 
+  let unfillableCount = 0;
   for (const unfillable of rawUnfillable) {
     const addr = (extractAddress(unfillable) || unfillable) as Address;
     if (!addr || skippedSet.has(addr.toLowerCase())) continue;
+    unfillableCount++;
     slices.push({
       maker: addr,
       amountIn: 0n,
@@ -137,7 +141,7 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
       depth: 0n,
       percentageOfFill: 0,
       status: "UNFILLABLE",
-      reason: "Quote reverted or invalid — skipped safely",
+      reason: "QuoteUnusable: quote reverted or rejected — skipped safely",
     });
   }
 
@@ -149,6 +153,7 @@ export function buildSolvencyWaterfall(route: any): SolvencyEngineResult {
     solventCount,
     clampedCount,
     ghostCount,
+    unfillableCount,
     shieldedVolume,
   };
 }
