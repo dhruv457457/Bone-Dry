@@ -1,0 +1,70 @@
+specVersion: 1.0.0
+description: Aquifer -- a reference index for 1inch Aqua shared liquidity on Ethereum Mainnet
+repository: https://github.com/dhruv457457/Bone-Dry
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: Aqua
+    network: mainnet
+    source:
+      address: "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a"
+      abi: Aqua
+      startBlock: 25567141
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/aqua.ts
+      entities: [Protocol, Maker, Strategy, Commitment, MakerTokenPosition]
+      abis:
+        - name: Aqua
+          file: ./abis/Aqua.json
+      eventHandlers:
+        - event: Shipped(address,address,bytes32,bytes)
+          handler: handleShipped
+        - event: Docked(address,address,bytes32)
+          handler: handleDocked
+        - event: Pulled(address,address,bytes32,address,uint256)
+          handler: handlePulled
+        - event: Pushed(address,address,bytes32,address,uint256)
+          handler: handlePushed
+  - kind: ethereum
+    name: SwapVM
+    network: mainnet
+    source:
+      address: "0x111111338c5091E8440b67B168bAe16a668AC0De"
+      abi: SwapVM
+      startBlock: 25567141
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/swapvm.ts
+      entities: [Fill, Strategy, Maker, Protocol, EncumbranceApplication, MakerTokenPosition]
+      abis:
+        - name: SwapVM
+          file: ./abis/SwapVM.json
+      eventHandlers:
+        - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
+          handler: handleSwapped
+        - event: EncumbranceApplied(indexed address,indexed bytes32,indexed address,uint256,uint256,uint256,bool,uint256,uint256)
+          handler: handleEncumbranceApplied
+templates:
+  - kind: ethereum/contract
+    name: Tap
+    network: mainnet
+    source:
+      abi: Tap
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/tap.ts
+      entities: [MakerRefusal, Maker, Protocol]
+      abis:
+        - name: Tap
+          file: ./abis/Tap.json
+      eventHandlers:
+        - event: MakerSkipped(indexed address,indexed bytes32,indexed address,uint256,bytes4)
+          handler: handleMakerSkipped
