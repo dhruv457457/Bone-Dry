@@ -1,393 +1,506 @@
+<div align="center">
+
 # Bone Dry
 
-**Zero TVL. Full depth.**
+**A promise that can't bounce.**
 
-A Uniswap v4 pool that holds nothing. The depth is real — it is still sitting in
-makers' wallets on [1inch Aqua](https://github.com/1inch/aqua), and it only
-surfaces at the instant of a fill.
+An Aqua position that prices itself off its own wallet's existing obligations —
+and refuses, on-chain, before it can write a cheque that bounces.
 
-Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation
-(Stack Contribution), The Graph (Composable & Standardized).
+[![1inch Aqua](https://img.shields.io/badge/1inch-Aqua-1b314f?style=flat-square)](https://github.com/1inch/aqua)
+[![SwapVM opcode 35](https://img.shields.io/badge/SwapVM-opcode%2035-2a6ebb?style=flat-square)](https://github.com/1inch/swap-vm/tree/release/1.0.2)
+[![Uniswap v4](https://img.shields.io/badge/Uniswap-v4%20hook-ff007a?style=flat-square)](https://github.com/Uniswap/v4-core)
+[![The Graph](https://img.shields.io/badge/The%20Graph-Aquifer-6747ed?style=flat-square)](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3)
+[![tests](https://img.shields.io/badge/tests-54%20fork%20%2B%2015%20matchstick-2ecc71?style=flat-square)](#security-and-testing)
 
-## Status
+Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation, The Graph.
 
-| Milestone | State |
+</div>
+
+---
+
+On [1inch Aqua](https://github.com/1inch/aqua), a market maker never deposits
+anything. The money stays in their own wallet — they just **promise** it. That is
+genuinely new, and it is the entire reason Aqua is interesting.
+
+It also means nothing stops a maker promising the same money twice. Or 257 times.
+
+## Table of contents
+
+- [The problem, in one paragraph](#the-problem-in-one-paragraph)
+- [We measured it](#we-measured-it)
+- [How it works](#how-it-works)
+  - [One fill, end to end](#one-fill-end-to-end)
+  - [What a fill costs](#what-a-fill-costs)
+- [Architecture](#architecture)
+- [The instruction](#the-instruction)
+  - [The curve](#the-curve)
+  - [Why the sibling list comes from the maker](#why-the-sibling-list-comes-from-the-maker)
+- [Three tracks](#three-tracks)
+  - [1inch — Build an Aqua App](#1inch--build-an-aqua-app)
+  - [Uniswap Foundation](#uniswap-foundation)
+  - [The Graph](#the-graph)
+- [What is live, and what is not](#what-is-live-and-what-is-not)
+- [Tech stack](#tech-stack)
+- [Repository structure](#repository-structure)
+- [Getting started](#getting-started)
+- [Deployed addresses](#deployed-addresses)
+- [Security and testing](#security-and-testing)
+- [Known limits](#known-limits)
+
+---
+
+## The problem, in one paragraph
+
+`Aqua.ship()` writes a number into a mapping. No transfer, no lock, no check:
+
+```solidity
+function ship(address app, bytes calldata strategy, address[] calldata tokens, uint256[] calldata amounts)
+    external returns (bytes32 strategyHash)
+{
+    strategyHash = keccak256(strategy);
+    emit Shipped(msg.sender, app, strategyHash, strategy);
+    for (uint256 i = 0; i < tokens.length; i++) {
+        Balance storage balance = _balances[msg.sender][app][strategyHash][tokens[i]];
+        require(balance.tokensCount == 0, StrategiesMustBeImmutable(app, strategyHash));
+        balance.store(amounts[i].toUint248(), tokensCount);   // ← a number. that is all.
+    }
+}
+```
+
+A maker with 100 USDC can ship five strategies each promising 100 USDC, and every
+one of them is individually valid — each is ≤ 100. They share one balance, so only
+the first taker to arrive gets paid. Everyone else's transaction reverts on the
+last line, when `safeTransferFrom` finds an empty wallet.
+
+It is writing cheques with nothing checking the balance.
+
+**Everyone else in this field built a better price. We built a promise that can't
+bounce.**
+
+## We measured it
+
+Ethereum mainnet, our own index:
+
+| Token | Advertised | Actually deliverable | Phantom |
+|---|---:|---:|---:|
+| WETH | 102,593 | **4** | 100% |
+| USDC | 5,253,030 | 131,572 | 97.5% |
+| USDT | 733,111 | 290,988 | 60.3% |
+| DAI | 288,313 | 228,976 | 20.6% |
+
+860 maker/token pairs are backed by more than one strategy. **600 of them promise
+more than the wallet holds. 419 have zero backing at all.** The largest single
+wallet carries **257 strategies on one token**.
+
+Per maker: `committed = Σ virtual across their live strategies`,
+`backing = min(wallet balance, allowance)`, `deliverable = min(committed, backing)`.
+
+> **Read this before quoting the numbers.** Some advertised figures are absurd on
+> purpose — one strategy promises 1.4 billion WBTC, which exceeds every bitcoin
+> that will ever exist. Those are junk commitments, and Aqua accepts them without
+> complaint. That is evidence *for* the argument, not a flaw in the measurement,
+> but do not read it as real depth. DAI at 20.6% matters too: a metric reading
+> 100% everywhere would mean the measurement was broken, not the market.
+
+## How it works
+
+A maker ships a strategy whose program contains **opcode 35**. At fill time, before
+any settlement, the instruction reads how much of that wallet is already promised
+to the maker's *other* strategies, and prices accordingly:
+
+- lightly encumbered → quote is unchanged
+- heavily encumbered → quote **widens**
+- past a line the maker chose → it **refuses**
+
+Not a filter we run on your behalf. A property of the position itself, true for any
+taker through any app, whether Bone Dry is involved or not.
+
+### One fill, end to end
+
+```mermaid
+flowchart LR
+  T["Taker"] -->|"swap()"| PM["Uniswap v4<br/>PoolManager"]
+  PM -->|"beforeSwap<br/>RETURNS_DELTA"| TAP["Tap.sol<br/>zero-liquidity hook"]
+  TAP -->|"quote() then swap()"| R["BoneDryRouter<br/>SwapVM + opcode 35"]
+  R -->|"rawBalances<br/>(siblings)"| AQ[("Aqua")]
+  R -->|"balanceOf / allowance"| ERC["tokenOut"]
+  R -->|"pull()"| AQ
+  AQ -->|"safeTransferFrom"| W["Maker wallet"]
+  W -->|"tokens"| T
+  TAP -.->|"refusal caught<br/>MakerSkipped(reason)"| LOG["logs → subgraph"]
+```
+
+1. The taker swaps against a Uniswap v4 pool that holds **zero liquidity**.
+2. `Tap.sol` takes the whole swap in `beforeSwap` via `BEFORE_SWAP_RETURNS_DELTA_FLAG`.
+3. It quotes each candidate maker through `BoneDryRouter`.
+4. Opcode 35 sums the maker's sibling commitments, reads real backing, and either
+   adjusts the quote or reverts.
+5. Survivors are filled by `Aqua.pull()`, which moves tokens **straight from the
+   maker's wallet** — the hook never takes custody.
+6. A maker who refused is caught by the hook and logged with the revert selector.
+   This matters: **a reverted transaction emits nothing**, so without the hook
+   catching it, refusals would be invisible to any indexer.
+
+### What a fill costs
+
+Measured on a Base mainnet fork (`forge test --gas-report`):
+
+| Operation | Gas |
+|---|---:|
+| End-to-end demo: two fills, one refusal | 1,037,462 |
+| Single unencumbered fill (Case 1) | 422,579 |
+| Fill with one sibling + haircut (Case 2) | 518,883 |
+| `EncumbranceApplied` event | ~3,035 |
+| Reading one sibling's `rawBalances` | ~2,600 cold |
+| **`dock()` — a maker revoking everything** | **4,452** |
+
+That last row is the important one. See [Known limits](#known-limits).
+
+## Architecture
+
+```mermaid
+flowchart TB
+  subgraph chain["On chain"]
+    AQ["Aqua<br/>(1inch, unmodified)"]
+    BDR["BoneDryRouter<br/>AquaOpcodes + opcode 35"]
+    TAP["Tap.sol<br/>Uniswap v4 hook"]
+    LENS["Lens.sol"]
+  end
+  subgraph index["Indexing"]
+    SG["Aquifer subgraph<br/>(Base)"]
+    PG[("Postgres<br/>cross-chain")]
+  end
+  subgraph app["Next.js"]
+    API["/api/*"]
+    UI["Swap · Provide · Explore"]
+  end
+  AQ -->|"Shipped / Pushed / Pulled / Docked"| SG
+  BDR -->|"EncumbranceApplied"| SG
+  TAP -->|"MakerSkipped(reason)"| SG
+  SG --> API
+  PG --> API
+  API --> UI
+  UI -.->|"live reads at quote time"| chain
+```
+
+**The rule the app follows:** anything that decides whether a transaction will
+succeed is read live from chain at quote time. Anything historical or aggregate
+comes from an index. Mixing those up is how a UI says "solvent" and the
+transaction then reverts.
+
+## The instruction
+
+`contracts/src/vm/Encumbrance.sol`, appended to the opcode table at index 35.
+
+**We do not fork 1inch's swap-vm repo.** `AquaOpcodes._opcodes()` is declared
+`internal pure virtual`, so `BoneDryOpcodes` subclasses and overrides it, appending
+opcode 35 and leaving every upstream index 0–34 exactly where it was. Upstream
+stays updatable, previously-encoded programs still run, and the track's
+*"redeployments of a modified SwapVM contract is allowed"* is satisfied without a
+fork. The router comes to **19,793 bytes**, inside EIP-170's 24,576 with no stock
+instruction stripped.
+
+```
+encumbered = Σ rawBalances(maker, app, siblingHash_i, tokenOut)   // other promises
+backing    = min(balanceOf(maker), allowance(maker, AQUA))        // what's really there
+util       = encumbered / backing
+free       = backing − encumbered
+```
+
+Argument encoding, packed into the program:
+
+```
+[0:2]                    uint16   siblingCount
+[2 : 2+32n]              bytes32  siblingHashes[siblingCount]
+[..+32]                  uint256  declaredTotalEncumbrance
+[..+2]                   uint16   maxUtilBps      // refuse at or above this
+[..+2]                   uint16   widenBps        // haircut at 100% utilisation
+```
+
+Docked siblings are skipped — Aqua marks them with `tokensCount == 0xff`, so a
+docked strategy encumbers nothing and the quote widens back automatically.
+
+### The curve
+
+```
+quote
+  │────────────────╮
+  │                 ╰──────╮
+  │                         ╰────╮
+  │                               ╰──╮
+  │                                   ╳  ← refuses at maxUtilBps
+  └──────────────────────────────────────── utilisation
+  0%                                    100%
+```
+
+- **exactIn** → `amountOut` is haircut by `amountOut × widenBps × util / 1e8`
+- **exactOut** → `amountIn` is raised by the same proportion, rounded up
+
+Both paths then hit the same hard floor: `amountOut > free` reverts
+`EncumbranceInsufficient`. The haircut is what makes this a position with a curve
+rather than a binary guard; the floor is what sits underneath it.
+
+### Why the sibling list comes from the maker
+
+Aqua's balance mapping is not enumerable. There is no on-chain way to ask *"what
+else has this maker shipped?"* — so the strategy carries the hashes in its program.
+
+A dishonest maker can declare a short list and dodge the constraint. **This is not
+a hole we missed; it is the seam the rest of the project exists to close.**
+
+| Layer | Job |
 |---|---|
-| Ungated Aqua strategy fillable by any EOA on Base mainnet fork | proven by test |
-| `Tap` — Uniswap v4 hook, zero-liquidity pool that fills | 11 tests green, fuzzed 1 USDC to 100M |
-| `Lens` — solvency filter, skips makers who cannot deliver | done |
-| Multi-maker pro-rata routing | +4848 bps on a 20k swap |
-| Router API — indexes makers, ranks by real depth, emits hookData | live |
-| `Aquifer` — the subgraph | deployed and synced on Base |
-| Coverage view — the number Aqua cannot compute | live, cross-checked on-chain |
-| `Wellhead` — the router a wallet calls | live, wallet connect + swap |
-| Multi-pair support (USDC/WETH and WETH/MOCK) | live, reuses existing Tap hook |
-| Maker strategy shipping (`/api/strategy`, `ShipStrategy`) | live on Base Sepolia |
-| Oracle-deviation check (Chainlink feeds + `Beacon.sol`) | live in book, per-slice bps in route |
-| Cross-app standardized schema proof (`/api/apps`) | live query across independent apps |
-| Token icons with generative fallback | live across dashboard |
-| Frontend trading desk (Swap, Provide, Portfolio, Explore) | live |
-| `BeaconStrategy` — Extruction-priced strategy (opcode `0x20`) | deployed on Base Sepolia, real ship + real fill on-chain |
-| Subgraph MCP — cross-protocol token discovery (`/app/lookup`) | live, second independent Graph product composed alongside Token API |
+| Opcode 35 | enforces the constraint on-chain, at fill time |
+| Aquifer subgraph | the only thing that knows *every* live strategy — computes `siblingListComplete` and `missingSiblings` |
+| `Tap.sol` | refuses to route to strategies whose list is short *(designed, not yet built)* |
 
-Subgraph: `https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3`
+On-chain enforcement and off-chain completeness are two different jobs, and neither
+can do the other's.
 
-## Where to look
+## Three tracks
 
-For judges verifying our code and contract integrations:
+### 1inch — Build an Aqua App
 
-| Judging Concern | Exact File & Line | What happens there |
-|---|---|---|
-| **Uniswap v4 Hook** | [`contracts/src/Tap.sol:83`](contracts/src/Tap.sol#L83) (`beforeSwap`) | Fully overrides the swap (`BEFORE_SWAP_RETURNS_DELTA_FLAG`), reads maker solvency via Lens, pulls tokens straight from maker wallets via Aqua, and settles with PoolManager without touching pool liquidity (0 TVL before and after). |
-| **Hook Address Mining** | [`contracts/script/Deploy.s.sol:60`](contracts/script/Deploy.s.sol#L60) (`_mine`) | Brute-forces CREATE2 salt to match Uniswap v4's `BEFORE_SWAP_FLAG` prefix before broadcasting deployment. |
-| **Solvency Filter** | [`contracts/src/Lens.sol:30`](contracts/src/Lens.sol#L30) (`quotableDepth`) | Reads `min(virtualBalance, walletBalance, allowance)` directly on-chain so phantom liquidity cannot be quoted or filled. |
-| **Maker Coverage Check** | [`contracts/src/Lens.sol:49`](contracts/src/Lens.sol#L49) (`coverage`) | Computes a maker's whole-book backing ratio on-chain given their live strategy hashes. |
-| **Pool Re-use Script** | [`contracts/script/InitPool.s.sol:41`](contracts/script/InitPool.s.sol#L41) (`run`) | Initializes new token pairs against the existing Tap hook and PoolManager without redeploying contracts. |
-| **Oracle Pricing Contract** | [`contracts/src/Beacon.sol:34`](contracts/src/Beacon.sol#L34) (`oraclePriceUsd`) | Standalone contract reading Chainlink feeds and calculating deviation basis points ([`line 47`](contracts/src/Beacon.sol#L47)). |
-| **Oracle Pricing Service** | [`web/lib/oracle.ts:33`](web/lib/oracle.ts#L33) (`oraclePriceUsd`) | Fetches live Chainlink AggregatorV3 prices and computes deviation for every maker curve slice ([`line 55`](web/lib/oracle.ts#L55)). |
-| **Maker Strategy Assembly** | [`web/app/api/strategy/route.ts:43`](web/app/api/strategy/route.ts#L43) (`POST`) | Encodes ungated, permissionless Aqua strategies with custom spread fees and salt for wallet signing. |
-| **Multi-Pair Configuration** | [`web/lib/pairs.ts:25`](web/lib/pairs.ts#L25) (`PAIRS`) | Configures pair tokens, pool keys, and tick spacings across Base mainnet and Base Sepolia. |
-| **Standardized Subgraph Schema** | [`subgraph/schema.graphql:1-11`](subgraph/schema.graphql#L1) | Proposed reusable schema for any Aqua consumer; indexes protocol-wide events rather than filtering to one app. |
-| **Cross-App Subgraph Proof** | [`web/app/api/apps/route.ts:15`](web/app/api/apps/route.ts#L15) (`GET`) | Live endpoint querying [`web/lib/graph.ts:304`](web/lib/graph.ts#L304) (`appBreakdown`), proving the schema indexes multiple independent apps on Base mainnet. |
-| **Standards Leverage Spec** | [`subgraph/STANDARD.md:1`](subgraph/STANDARD.md#L1) | Specification of the Aquifer schema as a reusable standard, live cross-app proof, and composition with Token API. |
-| **Token API Balance Integration** | [`web/lib/tokenApi.ts:42`](web/lib/tokenApi.ts#L42) (`tokenBalances`) | Composes The Graph's Token API for live wallet balance lookups with automatic fallback to RPC multicall. |
-| **Subgraph MCP Integration** | [`web/lib/subgraphMcp.ts:53`](web/lib/subgraphMcp.ts#L53) (`searchSubgraphsForTokens`) | Calls The Graph's own Subgraph MCP (`get_top_subgraph_deployments`) to surface other subgraphs indexing an unrecognised token, on [`/app/lookup`](web/app/app/lookup/page.tsx#L9) — the second, unambiguously first-party Graph product this project composes alongside Token API. |
-| **Extruction-Priced Strategy** | [`contracts/src/BeaconStrategy.sol:1`](contracts/src/BeaconStrategy.sol#L1) (`extruction`) | A real Aqua strategy priced off Chainlink directly via SwapVM's Extruction opcode (`0x20`) instead of the built-in XYC curve — proves the router is extensible past its own built-ins. Deployed on Base Sepolia; a real maker shipped through it and a real taker filled it (tx hashes below). |
-| **Extruction Interface** | [`contracts/src/interfaces/IExtruction.sol:1`](contracts/src/interfaces/IExtruction.sol#L1) | Structural copy of the real `IExtruction`/`IStaticExtruction` ABI, pulled from the deployed router's own verified Sourcify source (not a guessed git tag — an earlier version built from `1inch/swap-vm`'s `main` branch had the wrong `SwapRegisters` field count and was silently unreachable). |
-| **Extruction Validator** | [`contracts/test/BeaconStrategy.t.sol:99`](contracts/test/BeaconStrategy.t.sol#L99) | Executes the two properties 1inch's own docs require of an Extruction target — STATICCALL and CALL return byte-identical results, and `vm.accesses()` confirms zero storage writes — rather than asserting them from reading the source. |
-| **Oracle-Priced Ship Flow** | [`web/app/api/strategy/route.ts:31`](web/app/api/strategy/route.ts#L31) (`BEACON_STRATEGY_ADDRESS`) | `/api/strategy` builds an Extruction-priced program via `AquaProgramBuilder`'s base `.add()` (it has no `.extruction()` convenience method), gated to WETH/USDC on Base Sepolia only. Surfaced as a real, honestly-gated option in the existing Ship-a-strategy UI. |
+The track asks for *"a custom Aqua app that implements a sophisticated DeFi
+position"* and scores SwapVM usage higher.
 
+**The position:** a maker's quote is a function of their own unencumbered balance.
+Every other approach in this field prices off *external* state — an oracle,
+realised volatility, a pool, an auction. This one looks inward, and as far as we
+can find, nothing else on Aqua does.
 
-## Live on Base Sepolia
+**SwapVM usage is structural, not decorative.** Remove opcode 35 and there is no
+encumbrance read, no curve, and no refusal — just a stock quote. The instruction
+lives in the opcode table, not behind the `Extruction` escape hatch.
 
-Deployed and swappable by anyone, for free. Addresses in
-[`deployments/base-sepolia.json`](deployments/base-sepolia.json).
+Two mechanics we relied on, each proven separately in
+[`FacilityProof.t.sol`](contracts/test/FacilityProof.t.sol):
 
-1inch have never put Aqua on a testnet, so Aqua and the SwapVM router here are our
-own deployments, built unmodified from their sources — which their licence permits
-in as many words and which their team confirmed in Discord. The router is built
-from tag `v1.0.2`: `main` has renumbered the opcodes and will not run the SDK's
-own programs. That is written up in [FEEDBACK.md](FEEDBACK.md).
+- **`Aqua.pull()` settles to an arbitrary recipient.** Maker capital can move
+  straight to a third party; the app never takes custody and needs no balance
+  sheet. We found no other project using this.
+- **`dock()` costs 4,452 gas** and is instant, unilateral and unpenalised.
 
-A real swap, on the public testnet:
+### Uniswap Foundation
 
-```
-sold  USDC : 5000000
-got   WETH : 1425979680696660
-pool liquidity after : 0
-```
+`Tap.sol` is a v4 hook on a pool with **zero liquidity**, deployed on Base mainnet
+and Base Sepolia. It takes the entire swap in `beforeSwap` using
+`BEFORE_SWAP_RETURNS_DELTA_FLAG`, sources depth from maker wallets through Aqua,
+and settles with the PoolManager without ever adding liquidity. TVL is zero before
+and after — verifiable on chain.
 
-Five USDC split three-to-two across two makers, matching their 0.015 : 0.010
-deliverable depths. The WETH left their wallets and the USDC arrived in them. A
-third maker promised the same 0.015, holds none of it, and was skipped without
-costing the swapper anything.
+Its second job is the one that is easy to miss: **it is the only place a refusal
+can be recorded.** Opcode 35 refuses by reverting, and a reverted transaction emits
+no logs. `Tap.sol` try/catches each maker and emits `MakerSkipped` with the revert
+selector, which is what makes the refusal feed possible at all.
 
-### An Extruction-priced strategy, filled for real
+Hook address mining (CREATE2 salt search for the flag prefix) is in
+[`contracts/script/Deploy.s.sol`](contracts/script/Deploy.s.sol).
 
-`BeaconStrategy` ([`contracts/src/BeaconStrategy.sol`](contracts/src/BeaconStrategy.sol))
-is deployed at
-[`0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7`](https://sepolia.basescan.org/address/0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7)
-on Base Sepolia. It was redeployed once — the first attempt
-([`0xAe91aEea...`](contracts/fixtures/beacon-strategy.84532.json)) used a
-`SwapRegisters` struct copied from `1inch/swap-vm`'s `main` branch, which turned
-out to already be ahead of what the deployed router was actually compiled from
-(an extra `amountNetPulled` field). That mismatch changes the ABI selector, so
-the router could never actually reach it — every call hit the wrong function and
-reverted. The fix came from decoding the router's own verified Sourcify source
-directly rather than trusting a git branch; see
-[`IExtruction.sol`](contracts/src/interfaces/IExtruction.sol) for the full story.
+### The Graph
 
-One real maker shipped an Extruction-priced strategy through `/api/strategy`,
-and one real taker filled it through the real deployed router:
+**Aquifer** — [`subgraph/`](subgraph/), deployed and synced on Base.
 
-```
-ship tx : 0x70a3aef07a3b894c1e09fefec7861825e5acc4ab60fc3981a33a5391b2a257a3
-swap tx : 0x8096393361f006fa3f1d054c7b2262295c3e6551fa11075787941064d3d2f252
-sold    : 1,000,000 (1 USDC)
-received: 403,768,485,249,334 (0.000403768485249334 WETH)
+The subgraph is not a display layer here; it computes something no contract can.
+`handleShipped` decodes opcode 35's arguments straight out of the `Shipped` program
+bytes — walking `[opcode][argsLength][args]` exactly as `runLoop` does — so
+`maxUtilBps`, `widenBps` and `declaredSiblings` are indexed without any extra
+on-chain registration event.
+
+Then it answers the question the chain cannot:
+
+```graphql
+type Strategy @entity(immutable: false) {
+  usesEncumbrance:     Boolean!
+  maxUtilBps:          Int
+  widenBps:            Int
+  declaredSiblings:    [Bytes!]!
+  siblingListComplete: Boolean!     # ← only an index can compute this
+  missingSiblings:     [Bytes!]!
+  liveSiblingCount:    Int!
+}
 ```
 
-Priced at Chainlink oracle mid minus a fixed 0.20% spread — not a bonding
-curve — confirmed via on-chain `balanceOf` before/after, not the swap's own
-return value.
+*"You declared 3 siblings. You have 9 live. This strategy will under-constrain."*
+Nothing on-chain can produce that sentence, because the balance mapping is not
+enumerable.
 
-## Run it
+Two details worth noting:
 
-Everything below works against a fork of Base mainnet, so no testnet deploy and
-no faucet. The canonical Aqua and SwapVM contracts are the real ones.
+- **`backing` and `utilBps` are nullable on purpose.** 419 Ethereum maker/token
+  pairs genuinely have zero backing, so `0` is a real and dangerous state. `null`
+  means *never measured*. Conflating them would render the worst makers as healthy.
+- **Refusals are deduplicated.** `Tap.sol` runs two placement passes, so one
+  refusal emits `MakerSkipped` twice. `MakerRefusal` is keyed on
+  `txHash ++ maker ++ strategyHash` so retries within a swap collapse to one fact.
+
+A second, independent Graph product is used too: **Subgraph MCP**, for cross-protocol
+token discovery on unrecognised addresses in the lookup tab.
+
+## What is live, and what is not
+
+A status table that overclaims is worse than none.
+
+| | State |
+|---|---|
+| Opcode 35, `Encumbrance.sol` + `BoneDryOpcodes` + `BoneDryRouter` | built, 54 fork tests green |
+| Router size 19,793 / 24,576 bytes, nothing stripped | verified by test |
+| `Tap.sol` — Uniswap v4 zero-liquidity hook | **deployed**, Base mainnet + Base Sepolia |
+| `Aquifer` subgraph on Base | **deployed and synced** |
+| Encumbrance entities + sibling completeness | built, 15 matchstick tests green |
+| `MakerSkipped` with revert selector | built, tested |
+| Postgres index over 1inch's Aqua API (Ethereum) | live, refreshed on a schedule |
+| `BoneDryRouter` deployed to a public network | **not yet** |
+| Subgraph on Ethereum mainnet | **not yet** — see Known limits |
+| `Tap.sol` gate refusing incomplete sibling lists | **not yet** |
+| Provide-tab encumbrance builder | **not yet** |
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Contracts | Solidity 0.8.30, Foundry, `via_ir`, `evm_version = cancun` |
+| Upstream | `1inch/swap-vm@release/1.0.2`, `1inch/aqua`, `Uniswap/v4-core` |
+| Index | The Graph (AssemblyScript), Matchstick, Postgres (Neon) |
+| App | Next.js 16, React 19, wagmi 3, viem 2, RainbowKit |
+| Motion | GSAP + ScrollTrigger, Lenis |
+| Jobs | GitHub Actions (Vercel Hobby cron caps at once/day) |
+
+`via_ir`, `solc 0.8.30` and `cancun` are **not optional**: SwapVM dispatches through
+internal function pointers, which only resolve under the IR pipeline, and its router
+guards reentrancy with transient storage.
+
+## Repository structure
+
+```
+contracts/
+  src/vm/Encumbrance.sol       opcode 35 — the position
+  src/vm/BoneDryOpcodes.sol    opcode table, index 35 appended
+  src/vm/BoneDryRouter.sol     the redeployed SwapVM router
+  src/Tap.sol                  Uniswap v4 hook, zero-liquidity pool
+  src/Lens.sol                 on-chain solvency reads
+  src/Wellhead.sol             the router a wallet calls
+  src/BeaconStrategy.sol       Chainlink-priced Extruction strategy
+  test/                        54 tests, Base mainnet fork
+subgraph/
+  schema.graphql               Aquifer entities
+  src/aqua.ts                  ship/push/pull/dock + opcode 35 decode
+  src/swapvm.ts                fills + EncumbranceApplied
+  src/tap.ts                   refusals, deduplicated
+  tests/                       15 matchstick tests
+web/
+  app/ui/                      Landing, Desk, tabs
+  lib/                         chain reads, index, routing
+  hooks/
+```
+
+## Getting started
 
 ```bash
-# 0. contract dependencies. lib/ is not committed, and the default tag of
-#    v4-core (v4.0.0) predates src/types/PoolOperation.sol, so the commit is
-#    pinned. v4-periphery is not needed — nothing imports it.
+# contracts — lib/ is not committed
 cd contracts
-forge install foundry-rs/forge-std               uniswap/v4-core@46c6834698c48bc4a463a86d8420f4eb1d7f3b75
+forge install
+forge test                              # 54 tests, Base mainnet fork
+forge test --match-contract Encumbrance -vv   # opcode 35 only
 
-# 1. a Base fork to work against
-anvil --fork-url https://mainnet.base.org
+# subgraph
+cd ../subgraph
+npm install
+graph codegen && graph build
+graph test                              # 15 matchstick tests
 
-# 2. build the strategies and seed three makers onto the fork
-cd ../tools && npm i && node gen-strategy.cjs
-cd ../contracts && forge script script/Seed.s.sol   --rpc-url http://127.0.0.1:8545 --broadcast
-forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
-
-# 3. the app
-cd ../web && npm i && cp .env.example .env.local && npm run dev
+# app
+cd ../web
+npm install
+cp .env.example .env.local              # RPC URLs, DATABASE_URL, GRAPH_URL
+npm run dev
 ```
 
-The seed gives maker 0 three WETH, maker 1 two, and maker 2 none — while all
-three *claim* three. That is the whole point: the third is the phantom the router
-has to route around, and the second is the one whose promise outruns its wallet.
+A Base RPC is required for the fork tests — set `BASE_RPC_URL`, or they fall back
+to the public endpoint and will rate-limit.
 
-`forge test` runs the contract suite against a Base fork (set `BASE_RPC_URL` to
-use your own endpoint). `RouterAgreement` replays whatever `fixtures/route.json` holds and skips when it
-is absent. The fixture is a snapshot of a running service against one chain
-state, so it is not committed — capture it fresh, or the comparison is against a
-quote the chain has since moved past:
+## Deployed addresses
 
-```bash
-curl 'http://localhost:3000/api/route?amountIn=20000000000' > contracts/fixtures/route.json
-cd contracts && forge test
+### Base Sepolia (84532) — where you can try it
+
+| Contract | Address |
+|---|---|
+| Aqua | [`0x7a062f824FAbdf2360354Ad52B3752065150Da61`](https://sepolia.basescan.org/address/0x7a062f824FAbdf2360354Ad52B3752065150Da61) |
+| SwapVM router (`v1.0.2`) | [`0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7`](https://sepolia.basescan.org/address/0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7) |
+| `Tap` (v4 hook) | [`0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088`](https://sepolia.basescan.org/address/0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088) |
+| `Lens` | [`0xA3ce77230A06302e3De32A3816f46C293c9D291F`](https://sepolia.basescan.org/address/0xA3ce77230A06302e3De32A3816f46C293c9D291F) |
+| `Wellhead` | [`0x0A54ac0705Aeab8AB29F48899d2B347D7235a531`](https://sepolia.basescan.org/address/0x0A54ac0705Aeab8AB29F48899d2B347D7235a531) |
+
+Aqua and the SwapVM router here are **our own deployments, built unmodified from
+1inch's sources** — 1inch have never deployed Aqua to a testnet. The router is built
+from tag `v1.0.2`, whose opcode table matches what `@1inch/swap-vm-sdk` emits;
+`main` has renumbered `XYCSwap` and will not run SDK programs.
+
+A recorded fill: 5 USDC sold, 1425979680696660 wei WETH received, split 3:2 across
+two solvent makers matching their depths. A third maker promised the same and held
+nothing, and was skipped. Pool liquidity after: **0**.
+
+### Base (8453) — read-only, against canonical Aqua
+
+| Contract | Address |
+|---|---|
+| Aqua (1inch) | `0x1111113ccf1426a8e30e2bff5e005d929bf6a90a` |
+| SwapVM router (1inch) | `0x111111338c5091E8440b67B168bAe16a668AC0De` |
+| Subgraph | [`aquifer/v0.0.3`](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3) |
+
+### Ethereum (1) — read-only
+
+Same Aqua and router addresses as Base. **No Bone Dry contracts are deployed here**
+— this network exists in the app to show the measurement at scale.
+
+## Security and testing
+
+```
+forge test        → 54 passed, 0 failed  (12 suites, Base mainnet fork)
+graph test        → 15 passed, 0 failed  (matchstick)
 ```
 
-On Windows, clone somewhere short — v4-core's nested submodules (`solmate` →
-`ds-test`) blow past `MAX_PATH` from a deep directory, and `git config
-core.longpaths true` is worth setting.
+Everything runs against **real Aqua on a fork**, not mocks.
 
-The subgraph's handler tests need Matchstick, which has no Windows binary:
+| Suite | What it establishes |
+|---|---|
+| [`Encumbrance.t.sol`](contracts/test/Encumbrance.t.sol) | 16 cases: haircut curve, refusal, docked siblings, exactIn/exactOut symmetry, under-declaration caught by spot-check, quote↔swap parity **to the wei**, bytecode under EIP-170 |
+| [`EncumbranceFillDemo.t.sol`](contracts/test/EncumbranceFillDemo.t.sol) | one maker, one wallet: a fill succeeds, then siblings encumber the balance and the identical quote refuses |
+| [`TapEncumbranceRefusal.t.sol`](contracts/test/TapEncumbranceRefusal.t.sol) | a refusal caught by the hook, logged with `EncumbranceExceeded.selector`, and the swap routed around it |
+| [`FacilityProof.t.sol`](contracts/test/FacilityProof.t.sol) | the four Aqua mechanics the design rests on — see [PROOFS.md](PROOFS.md) |
+| [`TapFill.t.sol`](contracts/test/TapFill.t.sol), [`NaiveTap.t.sol`](contracts/test/NaiveTap.t.sol) | hook fills, fuzzed 1 USDC to 100M |
 
-```bash
-cd subgraph && npx graph test -d      # -d runs it in Docker
-```
+**Quote and swap can legitimately disagree.** If a sibling is filled between the
+two, the answer moves and the swap reverts. That is the mechanism working, and it
+is documented in the instruction rather than hidden.
 
-### The endpoints
+## Known limits
+
+- **A maker with more than 6 siblings can under-declare.** SwapVM's `runLoop` reads
+  instruction args with a `uint8` length, capping one instruction at 255 bytes —
+  room for 6 sibling hashes alongside the header and the declared total. The
+  subgraph flags any short list via `siblingListComplete`; the `Tap.sol` gate that
+  refuses to route to them is designed and **not yet built**.
+- **The subgraph indexes Base only.** The Ethereum figures above come from our
+  Postgres index over 1inch's Aqua API, not from The Graph. The same manifest
+  deployed to Ethereum would close this — Aqua and SwapVM are at identical
+  addresses on both chains. The completeness perf work is also untested against its
+  worst case, because the 257-strategy maker is on Ethereum and Base only carries
+  549 strategies in total.
+- **Nothing on Aqua is binding.** `dock()` costs 4,452 gas, is instant and
+  unilateral. No commitment can be relied upon, and nothing in this repo claims
+  otherwise.
+- **Sepolia's `Tap`** predates a dust-fold fix present on the Base mainnet
+  deployment.
+
+## Documents
 
 | | |
 |---|---|
-| `GET /api/makers?token=` | every live strategy, with `min(virtual, wallet, allowance)` as its depth |
-| `GET /api/route?tokenIn=&tokenOut=&amountIn=` | the split, a real quote for it, and the `hookData` the pool needs |
-| `GET /api/pool?hook=` | the pool's own liquidity, read out of PoolManager storage |
-| `GET /api/coverage?first=` | promised against held, per maker — subgraph only |
-| `POST /api/strategy` | encodes ungated Aqua strategy calldata for wallet signing |
-| `GET /api/apps?chain=` | every app shipping live strategies across Aqua per the subgraph |
-
-Connect a wallet on the fork and press Swap, or take the same path without a
-browser:
-
-```bash
-WELLHEAD=0x... node web/scripts/swap-smoke.mjs 20000000000
-```
-
-```
-quoted   : 2.969705251715010073 WETH
-status   : success
-received : 2.969694882406596405 WETH
-```
-
-The pool holds nothing before that transaction and nothing after it. The WETH
-came out of maker wallets and the USDC went into them.
-
-## What the index found on Base
-
-Aqua keys balances by `[maker][app][strategyHash][token]` and the mapping is not
-enumerable — 1inch say so themselves. So nothing on-chain, and no amount of
-`eth_call`, can total what one maker has promised across every strategy they have
-live. Only an index over `Shipped`/`Pushed`/`Pulled`/`Docked` can.
-
-Aquifer has indexed 436 shipped strategies, 129 still active, 111 makers and
-1,862 fills. Setting each maker's committed total against their wallet balance
-and Aqua allowance gives a coverage ratio, and **seven of the twelve largest
-positions on Base are under-collateralised — five of them backed by nothing**:
-
-| Maker | Live strategies | Committed | Actually backed | Coverage |
-|---|---|---|---|---|
-| `0x7553…4a55` | 8 | 12,694.5 DEGEN | 0 | **0.0%** |
-| `0x7553…4a55` | 5 | 3,174.6 | 0 | **0.0%** |
-| `0x1a09…88ec` | 4 | 139.8 | 0 | **0.0%** |
-| `0x181b…380b` | 3 | 116,795 | 1,036.3 | 0.9% |
-| `0x3a43…b77b` | 1 | 106,335 | 106,335 | 100.0% |
-| `0xd18b…32a8` | 1 | 2,904,818 | 5,983,537 | 206.0% |
-
-One maker runs eighteen live strategies across four tokens with allowance set to
-infinite and wallets holding none of it. Every one of those strategies quotes
-depth that cannot be delivered. That is the whole thesis of this project, sitting
-on mainnet, and it took a subgraph to see it.
-
-### The API and the chain agree
-
-The off-chain router and the hook no longer decide the same way. `/api/route`
-bisects each slice down to what a maker can deliver, batching every candidate
-into a single multicall; `Tap` cannot afford that inside a swap, so it quotes
-each slice once and drops any maker whose quote exceeds their depth. Two
-different algorithms — and if they disagree, the number the interface shows is
-not the number the chain will pay.
-
-`test/RouterAgreement.t.sol` replays the exact `hookData` the running API
-emitted against the real PoolManager, using the API's own quote as the
-expectation:
-
-```
-api quoted WETH : 2969705251715010073
-chain paid WETH : 2969693471214161553
-```
-
-0.04 bps apart. The hook takes only the candidate set from calldata and recomputes
-the split from its own `Lens` reading, so it never has to trust the amounts an
-off-chain service hands it.
-
-### Checked both ways
-
-`Lens.coverage()` computes the same ratio on-chain — but it takes the strategy
-hashes as calldata, because it cannot enumerate them either. The subgraph supplies
-exactly the list the contract cannot produce, which makes the two independent
-computations over the same facts. `/api/coverage` runs both and reports the
-comparison: 11 of 12 agree exactly, and the twelfth is marked *inconclusive*
-rather than failed, because the index sat 4,860 blocks ahead of the fork the
-contract was reading. Summing `rawBalances` for that position against live Base
-returns `40902390610653882910543` — the subgraph's total to the wei.
-
-## The finding that makes this possible
-
-1inch gate Aqua takers behind a soulbound `KycNFT` minted only to KYB-verified
-resolver firms. That gate is **not enforced by the router** — it is the Controls
-opcode `onlyTxOriginTokenBalanceNonZero`, which the 1inch dApp's assembler embeds
-into every strategy *it* ships.
-
-Makers are permissionless. A maker who builds their own program omits that opcode,
-and any EOA can fill it. `test/UngatedFill.t.sol` proves this against the canonical
-contracts on a Base mainnet fork:
-
-```
-Aqua   0x1111113ccf1426a8e30e2bff5e005d929bf6a90a   (code size 5619)
-router 0x111111338c5091e8440b67b168bae16a668ac0de   (code size 20541)
-
-maker ships 10,000 USDC + 3 WETH  (permissionless)
-0xBEEF sells 100 USDC             (holds no KycNFT)
-        -> receives 29702970297029702 wei WETH
-```
-
-That output is exactly `3e18 * 100 / (10000 + 100)` — constant product, settled
-against real contracts.
-
-## Why routing across makers matters
-
-Aqua's mapping is not enumerable, so the candidate makers arrive as calldata from
-an off-chain index. Splitting the input across them pro-rata to *real* depth walks
-each constant-product curve less far up its own price impact:
-
-```
-sell 5,000 USDC
-
-  one maker      1.000000000000000000 WETH
-  three makers   1.285714285714285712 WETH
-                 ---------------------------
-  improvement            +28.6%
-```
-
-## Solvency is not optional
-
-A virtual balance is a promise. Makers share one wallet across many strategies, so
-a strategy can quote depth its wallet no longer backs — 1inch document this and
-provide no on-chain guard. `Lens` takes the floor of virtual balance, wallet
-balance and Aqua allowance, and `Tap` routes around anyone who comes up short
-instead of reverting the swap:
-
-```
-maker1 virtual WETH : 3000000000000000000   <- still reads full
-maker1 real depth   : 0                     <- wallet was emptied
-swapper WETH gained : 29702970297029702     <- filled from the solvent maker
-```
-
-## Run it
-
-```bash
-cd tools && npm i && node gen-strategy.cjs   # build the ungated strategy fixture
-cd ../contracts && forge test -vv            # fork Base and fill it
-```
-
-## Setup
-
-```bash
-cd contracts && forge install foundry-rs/forge-std --no-git
-```
-
-## The router API
-
-Aqua's balance mapping is not enumerable — there is no on-chain way to ask who the
-makers are. 1inch say so themselves and recommend building a reference indexer.
-`web/` is that indexer plus the routing service that feeds `Tap` its candidate list.
-
-```
-GET /api/makers                    every live strategy + the only depth worth trusting
-GET /api/route?amountIn=...        the plan, a real quote for it, and encoded hookData
-GET /api/pool?hook=0x...           pool liquidity read straight from PoolManager storage
-```
-
-Against a Base fork with three seeded makers all *claiming* 3 WETH but backed by
-3 / 2 / 0 — plus two genuine mainnet strategies the indexer picked up:
-
-```
-GET /api/makers
-  indexed 5 · solvent 2 · totalDepth 5000000000000000000
-
-  0xf39Fd6e5  virtual 3e18  wallet 3e18  depth 3e18  shortfall 0
-  0x70997970  virtual 3e18  wallet 2e18  depth 2e18  shortfall 1e18
-  0x3C44CdDd  virtual 3e18  wallet 0     depth 0     shortfall 3e18   INSOLVENT
-```
-
-```
-GET /api/route?amountIn=5000000000        (sell 5,000 USDC)
-  makers considered 5 · used 2 · skipped 3
-
-  0xf39Fd6e5   in 3,000 USDC   out 0.692307692307692307 WETH
-  0x70997970   in 2,000 USDC   out 0.500000000000000000 WETH
-
-  split         1.192307692307692307 WETH
-  single maker  1.000000000000000000 WETH
-  improvement   +1923 bps
-```
-
-The `shortfall` column is phantom liquidity, measured. A strategy can quote depth
-its wallet no longer backs; Aqua has no on-chain guard for it, so the router
-carries one.
-
-## Aquifer — the index
-
-Aqua's `_balances` mapping is not enumerable. There is no on-chain way to ask who
-the makers are, or how much one maker has committed across their whole book.
-1inch state this plainly and recommend building a reference indexer; no hosted
-subgraph exists. `subgraph/` is that index.
-
-Five events, two data sources, from Aqua's Base deployment block **48839900**:
-
-```
-Aqua     Shipped · Docked · Pulled · Pushed
-SwapVM   Swapped
-
-join key   Swapped.orderHash == Shipped.strategyHash     (per the 1inch docs)
-```
-
-The entity that matters is `MakerTokenPosition` — one maker's committed total of a
-token across every live strategy. That number cannot be computed on-chain, and
-comparing it to the wallet balance is what produces a coverage ratio.
-
-`Shipped` carries no amounts, so there is nothing to double-count: initial
-balances arrive as `Pushed` events emitted from inside `ship()`.
-
-The router API prefers the subgraph and falls back to paging `eth_getLogs` when
-`GRAPH_URL` is unset, so it works with or without a deployment:
-
-```json
-{ "source": "aquifer-subgraph" }   // or "rpc-log-paging"
-```
-
-```bash
-cd subgraph && npm i && npm run codegen && npm run build
-npm run deploy          # needs a Subgraph Studio deploy key
-```
-
-## Standards leverage
-
-One schema covers every Aqua app rather than requiring an app-specific indexer, because Aquifer indexes Aqua's protocol-level events (`Shipped`, `Docked`, `Pushed`, `Pulled`, `Swapped`) across all routers. On Base mainnet today, a single query against this schema surfaces 132 active strategies across two independent Aqua applications without modification (documented in [`subgraph/STANDARD.md`](subgraph/STANDARD.md)). Furthermore, composing The Graph's Token API for wallet balances required no change to position-tracking because commitments and balances are decoupled concerns in the schema: Token API efficiently serves holder balances with an RPC fallback, while Aquifer tracks contract commitments.
-
-A second, independent Graph product is composed alongside Token API: [`web/lib/subgraphMcp.ts`](web/lib/subgraphMcp.ts) calls The Graph's own Subgraph MCP (`subgraphs.mcp.thegraph.com`) — on the same domain as thegraph.com, authenticated with the same Subgraph Studio API key already used for `GRAPH_URL`, unambiguously first-party in a way Token API (Pinax-branded, though "Built with The Graph") is arguably but not definitively. `get_top_subgraph_deployments` is used deterministically — one contract address in, real deployments ranked by query fees out, no synthesized commentary — to surface other subgraphs indexing an unrecognised token on [`/app/lookup`](web/app/app/lookup/page.tsx). Its own `search_subgraphs_by_keyword` tool was tried first and found to match subgraph *display names*, not addresses — a raw address as the keyword returns zero results always, regardless of whether related subgraphs exist — which is why `get_top_subgraph_deployments` is the tool actually wired in.
+| [PROOFS.md](PROOFS.md) | four Aqua mechanics, proven on a mainnet fork |
+| [COUNCIL-VERDICT.md](COUNCIL-VERDICT.md) | the measurement, and why the direction changed |
+| [COMPETITIVE-PLAN.md](COMPETITIVE-PLAN.md) | what 23 other Aqua projects actually ship |
+| [PLAN-ANTIGRAVITY-VM.md](PLAN-ANTIGRAVITY-VM.md) | the opcode build spec |
+| [PLAN-ANTIGRAVITY-EVENTS.md](PLAN-ANTIGRAVITY-EVENTS.md) | events and indexing spec |
+| [PLAN-ANTIGRAVITY-UI.md](PLAN-ANTIGRAVITY-UI.md) | landing, dashboard and tabs spec |
