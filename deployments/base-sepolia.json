@@ -5,6 +5,22 @@
   "aqua": "0x7a062f824FAbdf2360354Ad52B3752065150Da61",
   "swapVmRouter": "0xD0a0A94711aa39EfcC3Ab2aF63ffa5BAD4E640a7",
   "swapVmTag": "v1.0.2",
+  "boneDryRouter": "0x75E8971831675A3eF0CAbc4fd441dA7aeB481146",
+  "encumbranceStrategy": {
+    "maker": "0xe788c06F4f71EebE7F71b00661CA706Ed66fCABe",
+    "strategyHash": "0x7b2e1f478807218c335ebfe6a8b0250e61ab533d2a30902b9e298bfcfda467e3",
+    "siblingHashes": [
+      "0xcd0e74dea0eb0bd3349d1b06eecd0598366ea0877249cda2ce68a4062febd2b2",
+      "0x52a1426be4d94791d9d5c15d2c99c56bd980818d1cca20d724e1d4b42344a914"
+    ],
+    "declaredTotalEncumbrance": "3000000000000000",
+    "maxUtilBps": 8000,
+    "widenBps": 500,
+    "tokens": [
+      "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "0x4200000000000000000000000000000000000006"
+    ]
+  },
   "lens": "0xA3ce77230A06302e3De32A3816f46C293c9D291F",
   "tap": "0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088",
   "wellhead": "0x0A54ac0705Aeab8AB29F48899d2B347D7235a531",
