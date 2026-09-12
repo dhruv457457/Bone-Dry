@@ -194,12 +194,17 @@ export function defaultPairFor(chainId: NetworkId): PairConfig {
  * Returns canonical sorted PoolKey for any pair on a given network.
  * Currency order is determined by address value (currency0 < currency1).
  */
-export function poolKeyFor(pair: PairConfig, net: Network) {
+export function poolKeyFor(pair: PairConfig, net: Network, hookOverride?: Address | null) {
   const t0 = pair.token0.address.toLowerCase();
   const t1 = pair.token1.address.toLowerCase();
   const [currency0, currency1] =
     t0 < t1 ? [pair.token0.address, pair.token1.address] : [pair.token1.address, pair.token0.address];
-  const hooks = (pair.hook || net.hook || "") as Address;
+  // A plan is only executable through the hook whose immutable router the
+  // strategies were shipped to (Aqua.sol:64 keys balances on msg.sender), so the
+  // route API names the hook and the taker builds its key from THAT, not from a
+  // single configured default. Falls back to the configured hook when no route
+  // has been quoted yet.
+  const hooks = (hookOverride || pair.hook || net.hook || "") as Address;
   return {
     currency0,
     currency1,

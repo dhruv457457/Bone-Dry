@@ -22,6 +22,25 @@ export type MakersResponse = {
 
 export type RouteResponse = {
   source: string;
+  /** The Aqua app (SwapVM router) this plan fills from, and the v4 hook that can
+   *  reach it. A plan is only executable through this hook. */
+  app?: `0x${string}`;
+  hook?: `0x${string}` | null;
+  bookLabel?: string;
+  encumbranceAware?: boolean;
+  /** Books that did not win, so the losing one is visible rather than erased. */
+  alternatives?: {
+    app: `0x${string}`;
+    hook: `0x${string}` | null;
+    bookLabel: string;
+    encumbranceAware: boolean;
+    amountOut: string;
+    amountFilled: string;
+    makersUsed: number;
+    makersConsidered: number;
+    fillable: boolean;
+    reason?: string;
+  }[];
   tokenIn: { symbol?: string; decimals?: number; address: string };
   tokenOut: { symbol?: string; decimals?: number; address: string };
   amountIn: string;

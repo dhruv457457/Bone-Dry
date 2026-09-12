@@ -213,10 +213,19 @@ export default function Desk({
     },
     [availablePairs]
   );
-  const pKey = useMemo(() => poolKeyFor(currentPair, net), [currentPair, net]);
 
   const [input, setInput] = useState("100");
   const [route, setRoute] = useState<RouteResponse | null>(null);
+
+  // The pool the CURRENT quote is executable against. `route.hook` is the hook
+  // bound to the router that the winning book's strategies were shipped to;
+  // routing a plan at any other hook reaches a router that cannot pull those
+  // balances and reverts. Before a quote exists this is the configured default,
+  // which is what the pool-state read below wants anyway.
+  const pKey = useMemo(
+    () => poolKeyFor(currentPair, net, route?.hook ?? null),
+    [currentPair, net, route?.hook]
+  );
   const [makers, setMakers] = useState<MakersResponse | null>(null);
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
@@ -434,6 +443,25 @@ export default function Desk({
             `${net.wellhead.slice(0, 8)}… there. Point the wallet at the same RPC.`,
         });
         return;
+      }
+
+      // The plan names the hook it is executable through, and that hook's pool
+      // has to exist. Both Base hooks have initialised pools today, but a book
+      // whose pool was never initialised would revert inside PoolManager with a
+      // wrapped error the wallet renders as "Third-party contract execution
+      // error" -- which is exactly how long the NoSolventMaker bug took to find.
+      // Refuse here, by name, before spending gas.
+      if (pKey.hooks) {
+        const hookCode = await rpc.getBytecode({ address: pKey.hooks as Address });
+        if (!hookCode || hookCode === "0x") {
+          setTxState({
+            phase: "idle",
+            note:
+              `The ${route.bookLabel ?? "selected"} book routes through ${pKey.hooks.slice(0, 8)}…, ` +
+              "and there is no contract there on this network. Nothing was sent.",
+          });
+          return;
+        }
       }
 
       if (balance !== null && balance < amount) {

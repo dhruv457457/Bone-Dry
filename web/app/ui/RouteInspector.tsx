@@ -69,6 +69,31 @@ export function RouteInspector({
           <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
             {solvency.summaryText}
           </p>
+
+          {/* Which book this plan fills from, and what the other one offered.
+              Aqua keys balances by app and a v4 pool binds one hook, so these
+              cannot be combined — one is chosen. Choosing silently is the thing
+              this project argues against, so the comparison is shown. */}
+          {route.bookLabel && route.alternatives && route.alternatives.length > 0 ? (
+            <p className={s.mono} style={{ margin: "6px 0 0", fontSize: 10.5, color: "var(--ink3)" }}>
+              filling from the <strong style={{ color: "var(--ink2)" }}>{route.bookLabel}</strong> book
+              {route.encumbranceAware ? " · opcode 35 active" : ""}
+              {route.alternatives.map((alt) => {
+                const rate = (out: string, filled: string) => {
+                  const f = BigInt(filled || "0");
+                  if (f === 0n) return null;
+                  return Number(BigInt(out) * 1_000_000n / f) / 1_000_000;
+                };
+                const mine = rate(route.amountOut, route.amountFilled);
+                const theirs = rate(alt.amountOut, alt.amountFilled);
+                const worse =
+                  mine !== null && theirs !== null && theirs > 0
+                    ? ` · ${(mine / theirs).toFixed(1)}x better rate than the ${alt.bookLabel} book`
+                    : ` · ${alt.bookLabel} book: ${alt.fillable ? "nothing better" : alt.reason ?? "not fillable"}`;
+                return <span key={alt.app}>{worse}</span>;
+              })}
+            </p>
+          ) : null}
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
