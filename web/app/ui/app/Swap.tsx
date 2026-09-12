@@ -440,6 +440,57 @@ export function Swap({
                 </div>
               ) : null}
 
+              {/* ── book label + alternatives (Phase 4 / PLAN-TWO-BOOKS §4.5) ── */}
+              {route.bookLabel ? (
+                <div style={{ margin: "12px 0 0", padding: "10px 12px", background: "var(--sunk)", border: "1px solid var(--rule)", borderRadius: 6 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)", letterSpacing: ".06em" }}>
+                      ROUTED THROUGH
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+                      {route.bookLabel === "bone dry" ? "Bone Dry book" : "Evidence book"}
+                    </span>
+                    {route.encumbranceAware ? (
+                      <span className={s.pill} style={{ fontSize: 10, padding: "1px 6px", color: "var(--tan)", borderColor: "var(--tan-line)" }}>
+                        opcode 35
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* §2.1 verbatim copy — Bone Dry book must not be presented as market depth */}
+                  {route.encumbranceAware ? (
+                    <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink2)", lineHeight: 1.5 }}>
+                      <strong>Bone Dry book · {route.makersConsidered} {route.makersConsidered === 1 ? "strategy" : "strategies"}, all published by us.</strong>{" "}
+                      This is where opcode 35 runs. It is a demonstration of the constraint, not a market.
+                      The 146-maker book beside it is real third-party Aqua liquidity, and cannot carry our instruction.
+                    </p>
+                  ) : null}
+                  {/* Alternatives — the losing book is visible rather than erased */}
+                  {route.alternatives && route.alternatives.length > 0 ? (
+                    <div style={{ marginTop: 8, borderTop: "1px solid var(--rule)", paddingTop: 8 }}>
+                      {route.alternatives.map((alt) => {
+                        const altLabel = alt.bookLabel === "bone dry" ? "Bone Dry book" : "Evidence book";
+                        return (
+                          <div key={alt.app} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12, color: "var(--ink3)", flexWrap: "wrap" }}>
+                            <span>{altLabel}</span>
+                            <span className={s.mono}>
+                              {BigInt(alt.amountFilled) > 0n
+                                ? `${units(alt.amountOut, tokenOut.decimals, 4)} ${tokenOut.symbol} from ${units(alt.amountFilled, tokenIn.decimals, 2)} ${tokenIn.symbol}`
+                                : "no fill"}
+                            </span>
+                            {!alt.fillable ? (
+                              <span style={{ color: "var(--ink3)", fontStyle: "italic" }}>— cannot fill in this trade</span>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--ink3)", fontStyle: "italic" }}>
+                        Each book routes through its own hook. Aqua keys balances on msg.sender, so one swap cannot mix them.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {(() => {
                 const filledCount = route.makersUsed;
                 const skippedCount = route.makersSkipped.length;
