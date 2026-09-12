@@ -60,23 +60,22 @@ export function Header({
               <span className={s.labelSm}>reading chain</span>
             </span>
           ) : null}
-          {/* Derived from NETWORKS rather than a hardcoded pair — there are three
-              of these, and a switcher that silently omits one is a switcher that
-              makes a whole network unreachable. */}
-          <div className={s.seg}>
-            {(Object.keys(NETWORKS) as unknown as NetworkId[])
-              .map(Number)
-              .map((c) => c as NetworkId)
-              .map((c) => (
-                <button
-                  key={c}
-                  onClick={() => onChain(c)}
-                  className={`${s.segBtn} ${c === chainId ? s.segBtnOn : ""}`}
-                  title={NETWORKS[c].purpose}
-                >
-                  {NETWORKS[c].testnet ? "Sepolia" : NETWORKS[c].key === "base" ? "Base" : "Ethereum"}
-                </button>
-              ))}
+          <div className={s.chainSeg}>
+            {[
+              { id: 84532 as NetworkId, purpose: "TRY IT", name: "Base Sepolia" },
+              { id: 8453 as NetworkId, purpose: "LIVE EVIDENCE", name: "Base" },
+              { id: 1 as NetworkId, purpose: "AT SCALE", name: "Ethereum · read-only" },
+            ].map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onChain(c.id)}
+                className={`${s.chainBtn} ${c.id === chainId ? s.chainBtnOn : ""}`}
+                title={NETWORKS[c.id]?.purpose}
+              >
+                <span className={s.chainPurpose}>{c.purpose}</span>
+                <span className={s.chainLabel}>{c.name}</span>
+              </button>
+            ))}
           </div>
           {wallet}
         </div>
@@ -251,5 +250,39 @@ export function Footer({ net, stamp }: { net: Network; stamp: string }) {
         </span>
       </div>
     </footer>
+  );
+}
+
+export function ReadOnlyExplainer({
+  netName,
+  tabName,
+  onSwitchChain,
+  onExplore,
+}: {
+  netName: string;
+  tabName: string;
+  onSwitchChain: (chainId: NetworkId) => void;
+  onExplore: () => void;
+}) {
+  return (
+    <section className={`${s.card} ${s.cardPad}`} style={{ maxWidth: 640, margin: "48px auto", textAlign: "center" }}>
+      <span className={s.label} style={{ letterSpacing: ".16em", color: "var(--ink3)" }}>
+        Read-Only Network
+      </span>
+      <h2 className={`${s.display} ${s.h2}`} style={{ margin: "14px 0 10px" }}>
+        {netName} is read-only here.
+      </h2>
+      <p style={{ margin: "0 auto 24px", fontSize: 14.5, color: "var(--ink2)", lineHeight: 1.6, maxWidth: 520 }}>
+        No Bone Dry contracts are deployed on {netName} — this network is the measurement at full scale. {tabName === "swap" ? "Swapping" : "Providing"} lives on Base and Base Sepolia.
+      </p>
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button className={`${s.btn} ${s.btnSolid}`} onClick={() => onSwitchChain(84532)}>
+          Switch to Base Sepolia
+        </button>
+        <button className={s.btn} onClick={onExplore}>
+          Explore {netName} instead →
+        </button>
+      </div>
+    </section>
   );
 }

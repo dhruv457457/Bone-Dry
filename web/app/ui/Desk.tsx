@@ -34,7 +34,7 @@ import type { MakersResponse, RouteResponse, PoolResponse, CoverageResponse, App
 import { TokenIcon } from "./TokenIcon";
 import { CopyButton } from "./CopyButton";
 import { DepthChart, type RangePreset } from "./app/DepthChart";
-import { Header, FindingLine, WrongChain, Footer, TABS, type Tab } from "./app/Shell";
+import { Header, FindingLine, ReadOnlyExplainer, WrongChain, Footer, TABS, type Tab } from "./app/Shell";
 import { Swap } from "./app/Swap";
 import { Explore } from "./app/Explore";
 import { Portfolio } from "./app/Portfolio";
@@ -72,7 +72,15 @@ async function getJson<T>(url: string, timeout = TIMEOUT_MS): Promise<T> {
 }
 
 export default function Desk() {
-  const [chainId, setChainId] = useState<NetworkId>(DEFAULT_NETWORK);
+  const [chainId, setChainId] = useState<NetworkId>(() => {
+    if (typeof window !== "undefined") {
+      const c = new URLSearchParams(window.location.search).get("chain");
+      if (c === "8453") return 8453;
+      if (c === "84532") return 84532;
+      if (c === "1") return 1;
+    }
+    return DEFAULT_NETWORK;
+  });
   const net = NETWORKS[chainId];
   const hook = net.hook;
 
@@ -103,6 +111,7 @@ export default function Desk() {
     const c = search.get("chain");
     if (c === "8453") setChainId(8453);
     else if (c === "84532") setChainId(84532);
+    else if (c === "1") setChainId(1);
 
     const p = search.get("pair");
     if (p && pairsFor(chainId).some((pair) => pair.id === p)) {
@@ -259,6 +268,13 @@ export default function Desk() {
   const gen = useRef(0);
 
   const load = useCallback(async () => {
+    if (!net.hook || !net.wellhead) {
+      setBusy(false);
+      setRoute(null);
+      setMakers(null);
+      setPool(null);
+      return;
+    }
     const mine = ++gen.current;
     setBusy(true);
     setError(null);
@@ -282,7 +298,7 @@ export default function Desk() {
     } finally {
       if (mine === gen.current) setBusy(false);
     }
-  }, [tokenIn.address, tokenOut.address, amountIn, pKey, chainId]);
+  }, [tokenIn.address, tokenOut.address, amountIn, pKey, chainId, net.hook, net.wellhead]);
 
   useEffect(() => {
     const t = setTimeout(load, 250); // debounce keystrokes
@@ -538,59 +554,77 @@ export default function Desk() {
 
       <main className={s.main}>
         {tab === "swap" && (
-          <Swap
-            finding={finding}
-            chainId={chainId}
-            net={net}
-            tokenIn={tokenIn}
-            tokenOut={tokenOut}
-            input={input}
-            onInput={setInput}
-            balance={balance}
-            route={route}
-            makers={makers}
-            pool={pool}
-            busy={busy}
-            error={error}
-            connected={isConnected}
-            wrongChain={wrongChain}
-            txPhase={txState.phase}
-            txHash={txState.hash}
-            txNote={txState.note}
-            received={txState.received}
-            onSwap={executeSwap}
-            onFlip={() => setFlipped((f) => !f)}
-            onPickToken={(which) => {
-              setSearchTarget(which);
-              setSearchModalOpen(true);
-            }}
-            onExplore={() => setTab("explore")}
-            onLookup={() => setTab("lookup")}
-            quoteStamp={stamp}
-          />
-        )}
-
-        {tab === "provide" && (
-          <>
-            <FindingLine
-              finding={finding}
-              chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
-              onEvidence={() => setTab("explore")}
-              stamp={stamp}
+          !net.hook || !net.wellhead ? (
+            <ReadOnlyExplainer
+              netName={net.label}
+              tabName="swap"
+              onSwitchChain={setChainId}
+              onExplore={() => setTab("explore")}
             />
-            <ShipStrategy
+          ) : (
+            <Swap
+              finding={finding}
+              chainId={chainId}
               net={net}
               tokenIn={tokenIn}
               tokenOut={tokenOut}
-              address={address}
+              input={input}
+              onInput={setInput}
+              balance={balance}
+              route={route}
+              makers={makers}
+              pool={pool}
+              busy={busy}
+              error={error}
+              connected={isConnected}
               wrongChain={wrongChain}
-              onShipped={load}
-              onPickPair={() => {
-                setSearchTarget("pair");
+              txPhase={txState.phase}
+              txHash={txState.hash}
+              txNote={txState.note}
+              received={txState.received}
+              onSwap={executeSwap}
+              onFlip={() => setFlipped((f) => !f)}
+              onPickToken={(which) => {
+                setSearchTarget(which);
                 setSearchModalOpen(true);
               }}
+              onExplore={() => setTab("explore")}
+              onLookup={() => setTab("lookup")}
+              quoteStamp={stamp}
             />
-          </>
+          )
+        )}
+
+        {tab === "provide" && (
+          !net.hook ? (
+            <ReadOnlyExplainer
+              netName={net.label}
+              tabName="provide"
+              onSwitchChain={setChainId}
+              onExplore={() => setTab("explore")}
+            />
+          ) : (
+            <>
+              <FindingLine
+                finding={finding}
+                chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
+                onEvidence={() => setTab("explore")}
+                stamp={stamp}
+              />
+              <ShipStrategy
+                net={net}
+                tokenIn={tokenIn}
+                tokenOut={tokenOut}
+                address={address}
+                wrongChain={wrongChain}
+                onShipped={load}
+                onPickPair={() => {
+                  setSearchTarget("pair");
+                  setSearchModalOpen(true);
+                }}
+              />
+            </>
+          )
         )}
 
         {tab === "portfolio" && (
