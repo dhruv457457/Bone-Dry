@@ -8,7 +8,7 @@ import { FindingCard } from "./Shell";
 import { RouteInspector } from "../RouteInspector";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
-import { units, short as shortAddr } from "@/lib/format";
+import { units, short as shortAddr, toRaw } from "@/lib/format";
 import type { CoverageResponse, MakerRow, MakersResponse, PoolResponse, RouteResponse } from "../types";
 import type { NetworkId } from "@/lib/networks";
 
@@ -167,11 +167,21 @@ export function Swap({
     setBookPage(0);
   }, [bookFilter]);
 
+  // Base carries two stablecoins whose names differ by one letter — native USDC
+  // (0x833589fC…) and the bridged USDbC (0xd9aaEc86…). A wallet holding one and
+  // quoted in the other reads a truthful 0 as a broken app, so the shortfall is
+  // named here with the symbol spelled out, before the button is pressed rather
+  // than after it silently refuses.
+  const wantRaw = toRaw(input, tokenIn.decimals);
+  const shortOnBalance = connected && balance !== null && wantRaw > 0n && balance < wantRaw;
+
   const actionLabel = !connected
     ? "Connect wallet to swap"
     : wrongChain
       ? "Switch network to swap"
-      : txPhase === "approving"
+      : shortOnBalance
+        ? `Not enough ${tokenIn.symbol}`
+        : txPhase === "approving"
         ? "Approve in your wallet"
         : txPhase === "swapping"
           ? `Filling from ${route?.makersUsed ?? 0} wallets`
@@ -184,7 +194,12 @@ export function Swap({
               : "Swap";
 
   const actionDisabled =
-    !connected || wrongChain || txPhase === "approving" || txPhase === "swapping" || !quoted;
+    !connected ||
+    wrongChain ||
+    shortOnBalance ||
+    txPhase === "approving" ||
+    txPhase === "swapping" ||
+    !quoted;
 
   const txSteps: { label: string; detail?: string; tone: TxTone }[] =
     txPhase === "approving"
@@ -329,6 +344,29 @@ export function Swap({
           >
             {actionLabel}
           </button>
+
+          {/* executeSwap refuses before it ever opens a wallet — not enough
+              balance, or the wallet pointed at a different network than the app
+              is reading — and reports why by returning to `idle` with a note.
+              That note was only ever rendered in the `done` phase, so those two
+              refusals set a message into state that nothing displayed: the
+              button was pressed, the wallet never opened, and the screen said
+              nothing at all. A check that cannot be seen is indistinguishable
+              from a dead button. */}
+          {txPhase === "idle" && txNote ? (
+            <p
+              style={{
+                margin: "10px 0 0",
+                textAlign: "center",
+                fontSize: 13,
+                color: "var(--short)",
+                lineHeight: 1.45,
+              }}
+            >
+              {txNote}
+            </p>
+          ) : null}
+
           <p style={{ margin: "10px 0 0", textAlign: "center", fontSize: 13, color: "var(--ink3)" }}>
             {!connected
               ? "The book, the quote and the finding all work without connecting."

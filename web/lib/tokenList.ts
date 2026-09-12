@@ -30,6 +30,20 @@ export const BASE_TOKENS: SearchableToken[] = [
     category: "curated",
   },
   {
+    // Base's other stablecoin. USDbC is the Coinbase-bridged coin that shipped
+    // with the chain; USDC above is Circle's native issuance. They are separate
+    // contracts whose symbols differ by one letter, and a wallet holding one
+    // while the app quotes the other reads a correct "0" as a broken app.
+    // Listing it is the difference between an honest zero and an unexplained one.
+    address: "0xd9aaEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    symbol: "USDbC",
+    name: "USD Base Coin (bridged)",
+    decimals: 6,
+    verified: true,
+    source: "curated",
+    category: "curated",
+  },
+  {
     address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
     symbol: "cbETH",
     name: "Coinbase Wrapped Staked ETH",
