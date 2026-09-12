@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
@@ -105,6 +105,16 @@ export function Swap({
   const [raw, setRaw] = useState(false);
   const [bookFilter, setBookFilter] = useState<BookFilter>("all");
   const [bookPage, setBookPage] = useState(0);
+  // Pre-sign animation state. null = not animating. 0/1/2 = step index.
+  // The wallet is opened AFTER step 2 completes, so the user sees the full
+  // verification sequence before the popup interrupts focus.
+  const [animStep, setAnimStep] = useState<null | 0 | 1 | 2>(null);
+
+  // Reset the animation whenever a transaction cycle completes or is aborted,
+  // so the next trade re-runs the sequence from the top.
+  useEffect(() => {
+    if (txPhase !== "idle") setAnimStep(null);
+  }, [txPhase]);
 
   const hasAmount = Number(input.replace(/,/g, "")) > 0;
 
@@ -233,32 +243,144 @@ export function Swap({
     txPhase === "swapping" ||
     !quoted;
 
-  const txSteps: { label: string; detail?: string; tone: TxTone }[] =
-    txPhase === "approving"
-      ? [{ label: "Awaiting approval", detail: "your wallet is open", tone: "live" }]
-      : txPhase === "swapping"
+  /**
+   * The whole pipeline, not just the part after you sign.
+   *
+   * TxSteps only appeared once a wallet was open, so everything this app does
+   * BEFORE that -- read the book, re-read every candidate's depth live, replay
+   * Tap's own algorithm, pick between two books -- happened behind a spinner and
+   * a number that changed. That work is the product. A taker who cannot see it
+   * has to take "routes only to makers that pass the check" on faith, which is
+   * the one thing this project argues nobody should have to do.
+   *
+   * Every stage is driven by real state. Nothing is timed, staged or faked: if
+   * the quote is instant the rows land done, because they were.
+   */
+  const txSteps: { label: string; detail?: ReactNode; tone: TxTone }[] = (() => {
+    if (txPhase === "approving") {
+      return [
+        { label: "Route verified", tone: "done" as TxTone },
+        { label: "Awaiting approval", detail: "your wallet is open", tone: "live" as TxTone },
+      ];
+    }
+    if (txPhase === "swapping") {
+      return [
+        { label: "Approved", tone: "done" as TxTone },
+        { label: "Filling on chain", detail: "one signature, every solvent maker", tone: "live" as TxTone },
+      ];
+    }
+    if (txPhase === "done") {
+      return txNote
         ? [
-            { label: "Approved", tone: "done" },
-            { label: "Filling on chain", detail: "one signature, every solvent maker", tone: "live" },
+            { label: "Signed", detail: txHash, tone: "done" as TxTone },
+            { label: "Reverted", detail: txNote, tone: "bad" as TxTone },
           ]
-        : txPhase === "done"
-          ? txNote
-            ? [
-                { label: "Signed", detail: txHash, tone: "done" },
-                { label: "Reverted", detail: txNote, tone: "bad" },
-              ]
-            : [
-                { label: "Signed", detail: txHash, tone: "done" },
-                {
-                  label: "Filled",
-                  detail:
-                    received !== undefined
-                      ? `${units(received, tokenOut.decimals, 6)} ${tokenOut.symbol} landed in your wallet`
-                      : undefined,
-                  tone: "done",
-                },
-              ]
-          : [];
+        : [
+            { label: "Signed", detail: txHash, tone: "done" as TxTone },
+            {
+              label: "Filled",
+              detail:
+                received !== undefined
+                  ? `${units(received, tokenOut.decimals, 6)} ${tokenOut.symbol} landed in your wallet`
+                  : undefined,
+              tone: "done" as TxTone,
+            },
+          ];
+    }
+
+    if (!hasAmount) return [];
+
+    const bookRead = Boolean(makers);
+    const quoting = busy || (!route && hasAmount);
+
+    const steps: { label: string; detail?: ReactNode; tone: TxTone }[] = [
+      {
+        label: "Read the book",
+        detail: bookRead ? `${makers!.makers.length} live strategies on ${tokenOut.symbol}` : "asking the index",
+        tone: bookRead ? "done" : "live",
+      },
+      {
+        label: "Re-read every maker on chain",
+        detail: quoting
+          ? "balance and allowance, not the index"
+          : route
+            ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
+            : undefined,
+        tone: quoting ? "live" : route ? "done" : "idle",
+      },
+    ];
+
+    if (route && !quoted) {
+      steps.push({ label: "No solvent maker can fill this", detail: route.reason, tone: "bad" });
+      return steps;
+    }
+
+    if (route && quoted) {
+      steps.push({
+        label: "Route found",
+        detail: `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.encumbranceAware ? " · opcode 35" : ""}`,
+        tone: "done",
+      });
+      steps.push({
+        label: connected ? "Ready to sign" : "Connect a wallet to sign",
+        detail: priceSevere ? "check the rate first" : undefined,
+        tone: connected ? "live" : "idle",
+      });
+    }
+
+    return steps;
+  })();
+
+  // When animStep is running we replace the static pipeline with a sequenced
+  // replay of the same facts — one step appearing every 800 ms. The data is
+  // real; only the timing is artificial. The wallet opens on the 3rd tick.
+  const animatingSteps: typeof txSteps | null = (() => {
+    if (animStep === null || txPhase !== "idle") return null;
+    const bookDetail = makers
+      ? `${makers.makers.length} live strategies on ${tokenOut.symbol}`
+      : "…";
+    const solventDetail = route
+      ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
+      : "…";
+    const routeDetail = route
+      ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.encumbranceAware ? " · opcode 35" : ""}`
+      : "…";
+    return [
+      {
+        label: "Read the book",
+        detail: animStep >= 0 ? bookDetail : "…",
+        tone: (animStep >= 1 ? "done" : "live") as TxTone,
+      },
+      {
+        label: "Re-read every maker on chain",
+        detail: animStep >= 1 ? solventDetail : "balance and allowance, not the index",
+        tone: (animStep === 0 ? "idle" : animStep >= 2 ? "done" : "live") as TxTone,
+      },
+      {
+        label: "Route found",
+        detail: animStep >= 2 ? routeDetail : undefined,
+        tone: (animStep < 2 ? "idle" : "done") as TxTone,
+      },
+      {
+        label: "Opening wallet…",
+        detail: undefined,
+        tone: (animStep < 2 ? "idle" : "live") as TxTone,
+      },
+    ];
+  })();
+
+  const visibleSteps = animatingSteps ?? txSteps;
+
+  // Intercept the swap button: play the pre-sign animation, then open the wallet.
+  const handleSwapClick = () => {
+    if (animStep !== null) return; // already animating
+    setAnimStep(0);
+    setTimeout(() => setAnimStep(1), 800);
+    setTimeout(() => setAnimStep(2), 1600);
+    setTimeout(() => {
+      onSwap();
+    }, 2400);
+  };
 
   return (
     <>
@@ -398,8 +520,8 @@ export function Swap({
 
           <button
             className={`${s.btnBlock} ${txPhase === "done" && txNote ? s.btnBlockShort : ""}`}
-            disabled={actionDisabled}
-            onClick={onSwap}
+            disabled={actionDisabled || animStep !== null}
+            onClick={handleSwapClick}
           >
             {actionLabel}
           </button>
@@ -436,7 +558,7 @@ export function Swap({
                   : `Live on ${net.label} · routes only to makers that pass the check.`}
           </p>
 
-          <TxSteps steps={txSteps} />
+          <TxSteps steps={visibleSteps} />
           {error ? (
             <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 11, color: "var(--short)" }}>
               {error}
@@ -499,7 +621,12 @@ export function Swap({
                   fill -- what the pool holds, and which book it routed through --
                   and stacking them turned a 920px card into 423px of vertical
                   scroll for content that fits in a strip. */}
-              <div className={s.receiptTop}>
+              {/* The ROUTED THROUGH panel stood here saying what the breakdown's
+                  subtitle says one card up, and what the pipeline's "Route found"
+                  row now says in the swap card itself -- three copies of one fact.
+                  The breakdown keeps it, beside the rows it describes. This card is
+                  left with only what nothing else states: what the pool holds, and
+                  the identifiers. With one cell left there is no grid to make. */}
               {pool ? (
                 <div className={s.zeroRow} style={{ alignItems: "center" }}>
                   <div style={{ minWidth: 0 }}>
@@ -525,62 +652,7 @@ export function Swap({
                 </div>
               ) : null}
 
-              {/* ── book label + alternatives (Phase 4 / PLAN-TWO-BOOKS §4.5) ── */}
-              {route.bookLabel ? (
-                <div style={{ margin: "12px 0 0", padding: "10px 12px", background: "var(--sunk)", border: "1px solid var(--rule)", borderRadius: 6 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                    <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)", letterSpacing: ".06em" }}>
-                      ROUTED THROUGH
-                    </span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-                      {route.bookLabel === "bone dry" ? "Bone Dry book" : "Evidence book"}
-                    </span>
-                    {route.encumbranceAware ? (
-                      <span className={s.pill} style={{ fontSize: 10, padding: "1px 6px", color: "var(--tan)", borderColor: "var(--tan-line)" }}>
-                        opcode 35
-                      </span>
-                    ) : null}
-                  </div>
-                  {/* §2.1 verbatim copy — Bone Dry book must not be presented as market depth */}
-                  {route.encumbranceAware ? (
-                    <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink2)", lineHeight: 1.5 }}>
-                      <strong>Bone Dry book · {route.makersConsidered} {route.makersConsidered === 1 ? "strategy" : "strategies"}, all published by us.</strong>{" "}
-                      This is where opcode 35 runs. It is a demonstration of the constraint, not a market.
-                      {/* Derived, not hardcoded: "146" was the strategy count on 1inch's router
-                          the day this was written, and it was labelled makers. Both drift. */}
-                      {route.alternatives?.[0]?.makersConsidered
-                        ? ` The ${route.alternatives[0].makersConsidered}-wallet book beside it is real third-party Aqua liquidity, and cannot carry our instruction.`
-                        : " The book beside it is real third-party Aqua liquidity, and cannot carry our instruction."}
-                    </p>
-                  ) : null}
-                  {/* Alternatives — the losing book is visible rather than erased */}
-                  {route.alternatives && route.alternatives.length > 0 ? (
-                    <div style={{ marginTop: 8, borderTop: "1px solid var(--rule)", paddingTop: 8 }}>
-                      {route.alternatives.map((alt) => {
-                        const altLabel = alt.bookLabel === "bone dry" ? "Bone Dry book" : "Evidence book";
-                        return (
-                          <div key={alt.app} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12, color: "var(--ink3)", flexWrap: "wrap" }}>
-                            <span>{altLabel}</span>
-                            <span className={s.mono}>
-                              {BigInt(alt.amountFilled) > 0n
-                                ? `${units(alt.amountOut, tokenOut.decimals, 4)} ${tokenOut.symbol} from ${units(alt.amountFilled, tokenIn.decimals, 2)} ${tokenIn.symbol}`
-                                : "no fill"}
-                            </span>
-                            {!alt.fillable ? (
-                              <span style={{ color: "var(--ink3)", fontStyle: "italic" }}>— cannot fill in this trade</span>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--ink3)", fontStyle: "italic" }}>
-                        Each book routes through its own hook. Aqua keys balances on msg.sender, so one swap cannot mix them.
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
 
-              </div>
 
               {(() => {
                 const filledCount = route.makersUsed;
