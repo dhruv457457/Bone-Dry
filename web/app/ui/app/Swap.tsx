@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
-import { FindingCard } from "./Shell";
+import { FindingLine } from "./Shell";
 import { RouteInspector } from "../RouteInspector";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
@@ -229,14 +229,19 @@ export function Swap({
           : [];
 
   return (
-    <div className={`${s.cols} ${s.in}`}>
+    <>
+      {/* One line, as every other tab uses. The full card put the Swap button
+          near y=600 -- below the fold on a laptop -- to repeat a number the rail
+          already carries. The histogram version stays on Explore, where the
+          distribution is the subject rather than an interruption. */}
+      <FindingLine
+        finding={finding}
+        chainLabel={net.aquaIsOurs ? "Base" : net.label}
+        onEvidence={onExplore}
+        stamp={quoteStamp}
+      />
+    <div className={`${s.cols} ${s.colsSwap} ${s.in}`}>
       <div className={s.colNarrow}>
-        <FindingCard
-          finding={finding}
-          chainLabel={net.aquaIsOurs ? "Base" : net.label}
-          onEvidence={onExplore}
-          stamp={quoteStamp}
-        />
 
         {/* ── the swap itself ──────────────────────────────────────────── */}
         <section className={`${s.card} ${s.cardPad}`}>
@@ -386,6 +391,14 @@ export function Swap({
         </section>
 
         {/* ── route receipt ────────────────────────────────────────────── */}
+      </div>
+
+      {/* ── the maker book & route inspector ───────────────────────────── */}
+      <div className={s.colWide}>
+        {/* The receipt sat in the left column, 400px from the breakdown, saying
+            the same four counts under a different heading. It belongs beside the
+            rows it describes -- the book it routed through, and the pool that
+            holds nothing, directly above the makers that filled it. */}
         <section className={`${s.card} ${s.cardPad}`}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <span className={s.label}>Route receipt</span>
@@ -509,26 +522,11 @@ export function Swap({
                     copyValue: pool ? pool.poolId : undefined,
                     color: "var(--ink3)",
                   },
-                  {
-                    label: "Strategies considered",
-                    value: `${route.makersConsidered}`,
-                    color: "var(--ink)",
-                  },
-                  {
-                    label: "├─ Filled",
-                    value: `${filledCount} wallet${filledCount === 1 ? "" : "s"}`,
-                    color: "var(--ink)",
-                  },
-                  {
-                    label: "├─ Skipped — could not pay",
-                    value: `${skippedCount}`,
-                    color: skippedCount ? "var(--ink2)" : "var(--ink3)",
-                  },
-                  {
-                    label: "└─ Wrong pair / no depth",
-                    value: `${unfillableCount}`,
-                    color: "var(--ink3)",
-                  },
+                  // The considered/filled/skipped/unfillable tree lived here and
+                  // in the breakdown's filter pills 400px to the right, same four
+                  // numbers under two headings. The pills won: they are beside the
+                  // rows they filter. Only "unfilled" survives, because nothing
+                  // else on the page says the route could not absorb the input.
                   {
                     label: "Unfilled at this size",
                     value: units(route.unfilled, tokenIn.decimals, 2),
@@ -562,212 +560,47 @@ hookData: ${route.hookData}`}
             </div>
           )}
         </section>
-      </div>
-
-      {/* ── the maker book & route inspector ───────────────────────────── */}
-      <div className={s.colWide}>
         <RouteInspector
           route={route}
           tokenIn={tokenIn}
           tokenOut={tokenOut}
           net={net}
         />
-        <section className={`${s.card} ${s.cardClip}`}>
-        <div
-          className={s.cardHead}
-          style={{ padding: "18px 22px", alignItems: "flex-end" }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
-              The maker book
-            </h2>
-            <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
-              Promised vs. actually held, in {tokenOut.symbol}.
-            </p>
-          </div>
-          {makers && makers.makers.length > 0 ? (
-            <span
-              className={s.mono}
-              style={{ fontSize: 11, letterSpacing: ".06em", color: "var(--ink2)", border: "1px solid var(--rule)", padding: "5px 10px", whiteSpace: "nowrap" }}
-            >
-              {makers.solvent} backed ·{" "}
-              <span style={{ color: "var(--short)" }}>{makers.indexed - makers.solvent} short</span> ·{" "}
-              {makers.indexed} live
-            </span>
-          ) : null}
-        </div>
+        {/* The 55-row maker book lived here: 1,113px of a 1,636px page, and since
+            the router started choosing between books it was listing the EVIDENCE
+            book's wallets under a trade filled from the Bone Dry book, with
+            nothing saying they were different. It also duplicated Explore's
+            "Coverage per maker", which does the same job across every token with
+            network totals and a distribution beside it.
 
-        {busy && !makers ? (
-          <div style={{ padding: "14px 22px 20px" }}>
-            {["0s", ".08s", ".16s", ".24s", ".32s", ".4s"].map((d) => (
-              <Shim key={d} delay={d} w="100%" h={10} />
-            ))}
-            <p className={s.mono} style={{ margin: "12px 0 0", fontSize: 10, color: "var(--ink3)" }}>
-              reading balances and allowances
-            </p>
-          </div>
-        ) : !makers || makers.makers.length === 0 ? (
-          <Blocked
-            tag={makers?.index && !makers.index.ready ? "index behind" : "index healthy · 0 results"}
-            title={`No live strategies offer ${tokenOut.symbol} yet.`}
-            body={`Nobody is quoting this token on ${net.label} right now — try another pair, or check a wallet directly.`}
-            actions={
-              <>
-                <button className={`${s.btn} ${s.btnSolid}`} onClick={onExplore}>
-                  See the network
-                </button>
-                <button className={s.btn} onClick={onLookup}>
-                  Look up a wallet
-                </button>
-              </>
-            }
-          />
-        ) : (
-          <>
-            {/* One filter, one page at a time. A token with real depth can carry
-                well over a hundred live strategies, and listing all of them
-                turned the swap card beside this table into a footnote at the
-                bottom of an endless scroll. */}
-            <div
-              style={{
-                padding: "12px 22px",
-                borderBottom: "1px solid var(--rule)",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
-              }}
-            >
-              <div className={s.seg}>
-                {BOOK_FILTERS.map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => setBookFilter(f.key)}
-                    className={`${s.segBtn} ${bookFilter === f.key ? s.segBtnOn : ""}`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-              <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                {filteredRows.length} of {makers.makers.length}
+            So the rows moved to the tab that already had them, and the number --
+            which is the finding, and the reason this project exists -- stays here
+            as one line. */}
+        {makers && makers.makers.length > 0 ? (
+          <section className={`${s.card} ${s.cardPad}`} style={{ marginTop: 20 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <span className={s.label}>The rest of the book</span>
+              <span style={{ fontSize: 14, color: "var(--ink2)" }}>
+                <strong style={{ color: "var(--ink)" }}>{enrichedRows.length}</strong> wallets quote{" "}
+                {tokenOut.symbol} on {net.label}
+                {(() => {
+                  const short = enrichedRows.filter((r) => !r.m.solvent).length;
+                  return short > 0 ? (
+                    <>
+                      {" · "}
+                      <strong style={{ color: "var(--short)" }}>{short}</strong> can&apos;t deliver what they promised
+                    </>
+                  ) : null;
+                })()}
               </span>
+              <button className={s.btnQuiet} onClick={onExplore} style={{ marginLeft: "auto" }}>
+                See the evidence →
+              </button>
             </div>
-
-            <Table
-              cols={BOOK_COLS}
-              min={740}
-              head={
-                <>
-                  <span>Maker</span>
-                  <span className={s.right}>Promised</span>
-                  <span className={s.right}>Deliverable</span>
-                  <span className={s.right}>Shortfall</span>
-                  <span className={s.right}>Coverage</span>
-                  <span className={s.right}>Oracle</span>
-                </>
-              }
-            >
-              {pageRows.length === 0 ? (
-                <p style={{ margin: 0, padding: "18px 22px", fontSize: 14, color: "var(--ink3)" }}>
-                  No maker on this page matches &ldquo;{BOOK_FILTERS.find((f) => f.key === bookFilter)?.label}&rdquo;.
-                </p>
-              ) : (
-                pageRows.map(({ m, i, cov, slice, used, noAllowance, tag }) => {
-                  const dec = makers.token.decimals;
-                  return (
-                    <Trow cols={BOOK_COLS} tone={used ? "used" : undefined} key={`${m.maker}-${m.strategyHash}-${i}`}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, paddingRight: 14 }}>
-                        <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span className={s.mono} style={{ fontSize: 13, display: "inline-flex", alignItems: "center" }}>
-                            {shortAddr(m.maker)}
-                            <CopyButton value={m.maker} />
-                          </span>
-                          <span className={`${s.pill} ${used ? s.pillRouted : tag === "skipped" ? s.pillSkipped : m.solvent ? "" : s.pillShort}`}>
-                            {tag}
-                          </span>
-                        </span>
-                        <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                          wallet {units(m.wallet, dec, 2)} · allowance{" "}
-                          <span style={{ color: noAllowance ? "var(--short)" : "var(--ink3)" }}>
-                            {noAllowance ? "0.00" : allowanceText(m.allowance, dec)}
-                          </span>
-                        </span>
-                      </div>
-                      <span className={`${s.num} ${s.right}`} style={{ color: "var(--ink3)", paddingRight: 16 }}>
-                        {units(m.virtual, dec, 2)}
-                      </span>
-                      <span className={`${s.numBig} ${s.right}`} style={{ paddingRight: 16 }}>
-                        {units(m.depth, dec, 2)}
-                      </span>
-                      <span
-                        className={`${s.num} ${s.right}`}
-                        style={{ color: m.shortfall === "0" ? "var(--ink3)" : "var(--short)", paddingRight: 18 }}
-                      >
-                        {m.shortfall === "0" ? "—" : units(m.shortfall, dec, 2)}
-                      </span>
-                      <div style={{ paddingRight: 14 }}>
-                        <Bar pct={cov} />
-                      </div>
-                      <span className={`${s.mono} ${s.right}`} style={{ fontSize: 11.5, color: "var(--ink3)" }}>
-                        {slice?.oracleDeviationBps ?? "—"}
-                      </span>
-                    </Trow>
-                  );
-                })
-              )}
-            </Table>
-
-            {bookPages > 1 ? (
-              <div
-                style={{
-                  padding: "11px 22px",
-                  borderTop: "1px solid var(--rule)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                }}
-              >
-                <button
-                  className={`${s.btn} ${s.btnXs}`}
-                  disabled={bookPageClamped === 0}
-                  onClick={() => setBookPage((p) => Math.max(0, p - 1))}
-                >
-                  ‹ Prev
-                </button>
-                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                  page {bookPageClamped + 1} of {bookPages}
-                </span>
-                <button
-                  className={`${s.btn} ${s.btnXs}`}
-                  disabled={bookPageClamped >= bookPages - 1}
-                  onClick={() => setBookPage((p) => Math.min(bookPages - 1, p + 1))}
-                >
-                  Next ›
-                </button>
-              </div>
-            ) : null}
-
-            <div className={s.legend}>
-              <span className={s.legendItem}>
-                <span className={s.swatch} />
-                can deliver
-              </span>
-              <span className={s.legendItem}>
-                <span className={`${s.swatch} ${s.swatchShort}`} />
-                short
-              </span>
-              <span className={s.legendItem}>
-                <span className={s.swatchEdge} />
-                in this route
-              </span>
-              <span>amounts shown to 2dp · full precision in raw hook data</span>
-            </div>
-          </>
-        )}
-        </section>
+          </section>
+        ) : null}
       </div>
     </div>
+    </>
   );
 }

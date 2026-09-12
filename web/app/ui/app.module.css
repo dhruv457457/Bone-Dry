@@ -979,3 +979,9 @@
   .chainPurpose { font-size: 7.5px; }
   .chainLabel { font-size: 10px; }
 }
+
+/* Swap's own ratio. 380px made the receive amount sit tight against its ticker;
+   420 gives the pay/receive rows room. Additive -- .colsBuild is Provide's and
+   has been re-tuned twice already. */
+.colsSwap { grid-template-columns: minmax(420px, 32%) 1fr; }
+@media (max-width: 1080px) { .colsSwap { grid-template-columns: 1fr; } }
