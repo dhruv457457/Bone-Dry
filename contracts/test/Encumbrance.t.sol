@@ -819,6 +819,160 @@ contract EncumbranceTest is Test {
         this.parseCalldata(rawPacked);
     }
 
+    /// @notice Phase 6a: Quote and Swap parity to the wei, proving that removing view and adding EncumbranceApplied
+    /// does not introduce any divergence between static quoting and real execution.
+    function test_QuoteAndSwapParityToTheWei() public {
+        address taker = makeAddr("parityTaker");
+        uint16 maxUtilBps = 10_000;
+        uint16 widenBps = 2_000;
+
+        // =====================================================================
+        // PART 1: ExactIn Quote & Swap Parity to the wei
+        // =====================================================================
+        address maker1 = makeAddr("parityMaker1");
+        deal(address(WETH), maker1, 10e18);
+        vm.prank(maker1);
+        WETH.approve(address(aqua), 10e18);
+
+        // Sibling encumbers 5 WETH (50% util)
+        bytes32 sibHash1 = _shipSibling(maker1, 10001, 10_000e6, 5e18);
+        bytes32[] memory siblings1 = new bytes32[](1);
+        siblings1[0] = sibHash1;
+
+        (ISwapVM.Order memory order1, bytes32 orderHash1) = _createAndShipStrategy(
+            maker1,
+            10002,
+            5e18,
+            siblings1,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 amountIn = 1_000e6;
+
+        // Static quote in view/static context
+        (, uint256 quotedOut,) = router.quote(
+            order1,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        deal(address(USDC), taker, amountIn);
+        vm.prank(taker);
+        USDC.approve(address(router), amountIn);
+
+        uint256 rawOut = (amountIn * 10e18) / (10_000e6 + amountIn);
+        uint256 haircut = (rawOut * uint256(widenBps) * 5000) / 1e8;
+        uint256 expectedSwapOut = rawOut - haircut;
+
+        // Expect EncumbranceApplied emitted during swap
+        vm.expectEmit(true, true, true, true, address(router));
+        emit Encumbrance.EncumbranceApplied(
+            maker1,
+            orderHash1,
+            address(WETH),
+            5e18,
+            10e18,
+            5000,
+            true, // isExactIn
+            rawOut,
+            expectedSwapOut
+        );
+
+        vm.prank(taker);
+        (uint256 swapIn, uint256 swapOut, bytes32 executedHash1) = router.swap(
+            order1,
+            address(USDC),
+            address(WETH),
+            amountIn,
+            takerTraitsAndData
+        );
+
+        assertEq(swapIn, amountIn, "ExactIn swap input matches input");
+        assertEq(swapOut, quotedOut, "Quote and Swap amountOut must agree to the wei");
+        assertEq(swapOut, expectedSwapOut, "Swap amountOut matches expected haircut math");
+        assertEq(executedHash1, orderHash1, "Executed hash matches orderHash");
+
+        emit log_named_uint("ExactIn Quoted amountOut (wei)", quotedOut);
+        emit log_named_uint("ExactIn Swapped amountOut (wei)", swapOut);
+        emit log_string("ExactIn Quote and Swap agree to the wei!");
+
+        // =====================================================================
+        // PART 2: ExactOut Quote & Swap Parity to the wei
+        // =====================================================================
+        address maker2 = makeAddr("parityMaker2");
+        deal(address(WETH), maker2, 10e18);
+        vm.prank(maker2);
+        WETH.approve(address(aqua), 10e18);
+
+        bytes32 sibHash2 = _shipSibling(maker2, 20001, 10_000e6, 5e18);
+        bytes32[] memory siblings2 = new bytes32[](1);
+        siblings2[0] = sibHash2;
+
+        (ISwapVM.Order memory order2, bytes32 orderHash2) = _createAndShipStrategy(
+            maker2,
+            20002,
+            5e18,
+            siblings2,
+            maxUtilBps,
+            widenBps,
+            10_000e6,
+            10e18
+        );
+
+        uint256 requestedOut = 0.5e18;
+        (uint256 quotedInExactOut, uint256 quotedOutExactOut,) = router.quote(
+            order2,
+            address(USDC),
+            address(WETH),
+            requestedOut,
+            takerTraitsAndDataExactOut
+        );
+
+        deal(address(USDC), taker, quotedInExactOut * 2);
+        vm.prank(taker);
+        USDC.approve(address(router), quotedInExactOut * 2);
+
+        uint256 rawIn = Math.ceilDiv(requestedOut * 10_000e6, 10e18 - requestedOut);
+        uint256 penalty = Math.mulDiv(rawIn, uint256(widenBps) * 5000, 1e8, Math.Rounding.Ceil);
+        uint256 expectedSwapIn = rawIn + penalty;
+
+        vm.expectEmit(true, true, true, true, address(router));
+        emit Encumbrance.EncumbranceApplied(
+            maker2,
+            orderHash2,
+            address(WETH),
+            5e18,
+            10e18,
+            5000,
+            false, // isExactIn = false
+            rawIn,
+            expectedSwapIn
+        );
+
+        vm.prank(taker);
+        (uint256 swapInExactOut, uint256 swapOutExactOut, bytes32 executedHash2) = router.swap(
+            order2,
+            address(USDC),
+            address(WETH),
+            requestedOut,
+            takerTraitsAndDataExactOut
+        );
+
+        assertEq(swapOutExactOut, quotedOutExactOut, "ExactOut quote and swap output agree to the wei");
+        assertEq(swapInExactOut, quotedInExactOut, "ExactOut quote and swap input agree to the wei");
+        assertEq(swapInExactOut, expectedSwapIn, "ExactOut swap input matches expected penalty math");
+        assertEq(executedHash2, orderHash2, "Executed hash matches orderHash2");
+
+        emit log_named_uint("ExactOut Quoted amountIn (wei)", quotedInExactOut);
+        emit log_named_uint("ExactOut Swapped amountIn (wei)", swapInExactOut);
+        emit log_string("ExactOut Quote and Swap agree to the wei!");
+    }
+
     function buildWrapper(
         uint256 declaredTotalEncumbrance,
         bytes32[] memory siblingHashes,

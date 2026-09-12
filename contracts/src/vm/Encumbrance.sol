@@ -102,6 +102,22 @@ abstract contract Encumbrance {
     /// @dev Reverts when required output exceeds deliverable unencumbered backing
     error EncumbranceInsufficient(uint256 amountOut, uint256 free);
 
+    /// @notice Emitted when the encumbrance curve was applied to a real fill.
+    /// @dev Never emitted during quote() — see the isStaticContext guard. A refusal
+    ///      emits nothing at all, because the transaction reverts; refusals are
+    ///      observed by Tap.sol instead.
+    event EncumbranceApplied(
+        address indexed maker,
+        bytes32 indexed orderHash,
+        address indexed token,      // tokenOut, the encumbered side
+        uint256 encumbered,
+        uint256 backing,
+        uint256 utilBps,
+        bool    isExactIn,
+        uint256 adjustedFrom,       // amountOut (exactIn) or amountIn (exactOut), before
+        uint256 adjustedTo          // ...and after
+    );
+
     /// @dev Provides access to IAqua, implemented by BoneDryOpcodes via AquaOpcodes._AQUA
     function _aqua() internal view virtual returns (IAqua);
 
@@ -136,7 +152,7 @@ abstract contract Encumbrance {
     ///
     /// @param ctx VM Context
     /// @param args Packed calldata containing declaredTotalEncumbrance, sibling hashes, maxUtilBps, and widenBps
-    function _encumberedCap(Context memory ctx, bytes calldata args) internal view {
+    function _encumberedCap(Context memory ctx, bytes calldata args) internal {
         (
             uint256 declaredTotalEncumbrance,
             uint256 siblingCount,
@@ -191,6 +207,8 @@ abstract contract Encumbrance {
             revert EncumbranceExceeded(util, maxUtilBps);
         }
 
+        uint256 adjustedFrom = ctx.query.isExactIn ? ctx.swap.amountOut : ctx.swap.amountIn;
+
         // Apply price widening curve based on swap direction
         if (widenBps > 0 && util > 0) {
             if (ctx.query.isExactIn) {
@@ -206,10 +224,27 @@ abstract contract Encumbrance {
             }
         }
 
+        uint256 adjustedTo = ctx.query.isExactIn ? ctx.swap.amountOut : ctx.swap.amountIn;
+
         // Hard solvency floor: deliverable amountOut cannot exceed free backing
         uint256 free = backing > declaredTotalEncumbrance ? backing - declaredTotalEncumbrance : 0;
         if (ctx.swap.amountOut > free) {
             revert EncumbranceInsufficient(ctx.swap.amountOut, free);
+        }
+
+        // Emit only during real swap execution, never in static quote context
+        if (!ctx.vm.isStaticContext) {
+            emit EncumbranceApplied(
+                ctx.query.maker,
+                ctx.query.orderHash,
+                ctx.query.tokenOut,
+                declaredTotalEncumbrance,
+                backing,
+                util,
+                ctx.query.isExactIn,
+                adjustedFrom,
+                adjustedTo
+            );
         }
     }
 }
