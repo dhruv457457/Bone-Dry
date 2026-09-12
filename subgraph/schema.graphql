@@ -54,6 +54,9 @@ type Strategy @entity(immutable: false) {
   maxUtilBps: Int
   widenBps: Int
   declaredSiblings: [Bytes!]!
+  siblingListComplete: Boolean!
+  missingSiblings: [Bytes!]!
+  liveSiblingCount: Int!
   commitments: [Commitment!]! @derivedFrom(field: "strategy")
   fills: [Fill!]! @derivedFrom(field: "strategy")
   applications: [EncumbranceApplication!]! @derivedFrom(field: "strategy")
@@ -83,6 +86,7 @@ type MakerTokenPosition @entity(immutable: false) {
   token: Bytes!
   totalCommitted: BigInt!
   activeStrategies: BigInt!
+  liveStrategies: [Bytes!]!
   backing: BigInt
   utilBps: Int
   backingObservedAt: BigInt

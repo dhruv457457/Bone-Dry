@@ -7,13 +7,13 @@ import {
   newMockEvent,
 } from "matchstick-as/assembly/index";
 import { Address, BigInt, Bytes, ethereum } from "@graphprotocol/graph-ts";
-import { Shipped, Pushed } from "../generated/Aqua/Aqua";
+import { Shipped, Pushed, Docked } from "../generated/Aqua/Aqua";
 import { MakerSkipped } from "../generated/Tap/Tap";
 import { EncumbranceApplied } from "../generated/SwapVM/SwapVM";
-import { handleShipped, handlePushed } from "../src/aqua";
+import { handleShipped, handlePushed, handleDocked } from "../src/aqua";
 import { handleMakerSkipped } from "../src/tap";
 import { handleEncumbranceApplied } from "../src/swapvm";
-import { MakerTokenPosition } from "../generated/schema";
+import { MakerTokenPosition, Strategy } from "../generated/schema";
 
 const MAKER = "0x1111111111111111111111111111111111111111";
 const APP = "0x2222222222222222222222222222222222222222";
@@ -25,12 +25,77 @@ const TX_HASH = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefa
 // args: declaredTotal = 8e18, 1 sibling (0x11...11), maxUtilBps = 7500, widenBps = 100
 const PROG_HEX = "0x140800000000000003e9110023460000000000000000000000000000000000000000000000006f05b59d3b200000000111111111111111111111111111111111111111111111111111111111111111111d4c0064";
 
+const HASH_1 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const HASH_2 = "0x0000000000000000000000000000000000000000000000000000000000000002";
+const HASH_3 = "0x0000000000000000000000000000000000000000000000000000000000000003";
+
+// S1 declares S2
+const PROG_S1 = "0x140800000000000003e9110023460000000000000000000000000000000000000000000000006f05b59d3b200000000100000000000000000000000000000000000000000000000000000000000000021d4c0064";
+// S2 declares S1
+const PROG_S2 = "0x140800000000000003e9110023460000000000000000000000000000000000000000000000006f05b59d3b200000000100000000000000000000000000000000000000000000000000000000000000011d4c0064";
+// S3 declares 0 siblings
+const PROG_S3 = "0x140800000000000003e9110023260000000000000000000000000000000000000000000000006f05b59d3b20000000001d4c0064";
+
 function sid(): string {
   return APP + "-" + HASH;
 }
 
 function pid(): string {
   return MAKER + "-" + TOKEN;
+}
+
+function mockShippedWith(hash: string, progHex: string): Shipped {
+  let e = changetype<Shipped>(newMockEvent());
+  e.parameters = new Array();
+  e.parameters.push(
+    new ethereum.EventParam("maker", ethereum.Value.fromAddress(Address.fromString(MAKER)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("app", ethereum.Value.fromAddress(Address.fromString(APP)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("strategyHash", ethereum.Value.fromBytes(Bytes.fromHexString(hash)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("strategy", ethereum.Value.fromBytes(Bytes.fromHexString(progHex)))
+  );
+  return e;
+}
+
+function mockPushedWith(hash: string, amount: BigInt): Pushed {
+  let e = changetype<Pushed>(newMockEvent());
+  e.parameters = new Array();
+  e.parameters.push(
+    new ethereum.EventParam("maker", ethereum.Value.fromAddress(Address.fromString(MAKER)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("app", ethereum.Value.fromAddress(Address.fromString(APP)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("strategyHash", ethereum.Value.fromBytes(Bytes.fromHexString(hash)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("token", ethereum.Value.fromAddress(Address.fromString(TOKEN)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("amount", ethereum.Value.fromUnsignedBigInt(amount))
+  );
+  return e;
+}
+
+function mockDockedWith(hash: string): Docked {
+  let e = changetype<Docked>(newMockEvent());
+  e.parameters = new Array();
+  e.parameters.push(
+    new ethereum.EventParam("maker", ethereum.Value.fromAddress(Address.fromString(MAKER)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("app", ethereum.Value.fromAddress(Address.fromString(APP)))
+  );
+  e.parameters.push(
+    new ethereum.EventParam("strategyHash", ethereum.Value.fromBytes(Bytes.fromHexString(hash)))
+  );
+  return e;
 }
 
 function mockShippedEncumbered(): Shipped {
@@ -243,5 +308,79 @@ describe("Phase 6c Encumbrance & Events", () => {
     assert.fieldEquals("MakerTokenPosition", pid(), "backing", "10000000000000000000");
     assert.fieldEquals("MakerTokenPosition", pid(), "utilBps", "3000");
     assert.fieldEquals("MakerTokenPosition", pid(), "backingObservedAt", "1700000000");
+  });
+
+  test("sibling list completeness updates dynamically across ships, pushes, and docks", () => {
+    let s1Id = APP + "-" + HASH_1;
+    let s2Id = APP + "-" + HASH_2;
+    let s3Id = APP + "-" + HASH_3;
+    let amt = BigInt.fromString("1000000000000000000");
+
+    // 1. S1 ships and pushes: has no other live siblings
+    handleShipped(mockShippedWith(HASH_1, PROG_S1));
+    handlePushed(mockPushedWith(HASH_1, amt));
+
+    let s1 = Strategy.load(s1Id)!;
+    assert.assertTrue(s1 != null);
+    assert.assertTrue(s1.siblingListComplete == true);
+    assert.assertTrue(s1.liveSiblingCount == 0);
+    assert.assertTrue(s1.missingSiblings.length == 0);
+
+    // 2. S2 ships and pushes: S1 declares S2, S2 declares S1 -> both complete
+    handleShipped(mockShippedWith(HASH_2, PROG_S2));
+    handlePushed(mockPushedWith(HASH_2, amt));
+
+    s1 = Strategy.load(s1Id)!;
+    let s2 = Strategy.load(s2Id)!;
+    assert.assertTrue(s1.siblingListComplete == true);
+    assert.assertTrue(s1.liveSiblingCount == 1);
+    assert.assertTrue(s1.missingSiblings.length == 0);
+
+    assert.assertTrue(s2.siblingListComplete == true);
+    assert.assertTrue(s2.liveSiblingCount == 1);
+    assert.assertTrue(s2.missingSiblings.length == 0);
+
+    // 3. S3 ships and pushes declaring no siblings:
+    // S1 misses S3, S2 misses S3, S3 misses S1 and S2
+    handleShipped(mockShippedWith(HASH_3, PROG_S3));
+    handlePushed(mockPushedWith(HASH_3, amt));
+
+    s1 = Strategy.load(s1Id)!;
+    s2 = Strategy.load(s2Id)!;
+    let s3 = Strategy.load(s3Id)!;
+
+    assert.assertTrue(s1.siblingListComplete == false);
+    assert.assertTrue(s1.liveSiblingCount == 2);
+    assert.assertTrue(s1.missingSiblings.length == 1);
+    assert.assertTrue(s1.missingSiblings[0].equals(Bytes.fromHexString(HASH_3)));
+
+    assert.assertTrue(s2.siblingListComplete == false);
+    assert.assertTrue(s2.liveSiblingCount == 2);
+    assert.assertTrue(s2.missingSiblings.length == 1);
+    assert.assertTrue(s2.missingSiblings[0].equals(Bytes.fromHexString(HASH_3)));
+
+    assert.assertTrue(s3.siblingListComplete == false);
+    assert.assertTrue(s3.liveSiblingCount == 2);
+    assert.assertTrue(s3.missingSiblings.length == 2);
+
+    // 4. S3 docks: completeness restored for S1 and S2
+    handleDocked(mockDockedWith(HASH_3));
+
+    s1 = Strategy.load(s1Id)!;
+    s2 = Strategy.load(s2Id)!;
+    s3 = Strategy.load(s3Id)!;
+
+    assert.assertTrue(s1.siblingListComplete == true);
+    assert.assertTrue(s1.liveSiblingCount == 1);
+    assert.assertTrue(s1.missingSiblings.length == 0);
+
+    assert.assertTrue(s2.siblingListComplete == true);
+    assert.assertTrue(s2.liveSiblingCount == 1);
+    assert.assertTrue(s2.missingSiblings.length == 0);
+
+    assert.assertTrue(s3.active == false);
+    assert.assertTrue(s3.liveSiblingCount == 0);
+    assert.assertTrue(s3.siblingListComplete == true);
+    assert.assertTrue(s3.missingSiblings.length == 0);
   });
 });

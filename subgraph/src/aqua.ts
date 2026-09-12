@@ -54,9 +54,72 @@ function position(m: Address, token: Address, ts: BigInt): MakerTokenPosition {
     p.token = token;
     p.totalCommitted = ZERO;
     p.activeStrategies = ZERO;
+    p.liveStrategies = [];
+    p.updatedAt = ts;
+  } else {
+    if (ts.gt(p.updatedAt)) {
+      p.updatedAt = ts;
+    }
   }
-  p.updatedAt = ts;
   return p as MakerTokenPosition;
+}
+
+export function bytesArrayContains(arr: Array<Bytes>, item: Bytes): boolean {
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i].equals(item)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function bytesArrayRemove(arr: Array<Bytes>, item: Bytes): Array<Bytes> {
+  let result = new Array<Bytes>();
+  for (let i = 0; i < arr.length; i++) {
+    if (!arr[i].equals(item)) {
+      result.push(arr[i]);
+    }
+  }
+  return result;
+}
+
+export function bytesArrayDiff(a: Array<Bytes>, b: Array<Bytes>): Array<Bytes> {
+  let diff = new Array<Bytes>();
+  for (let i = 0; i < a.length; i++) {
+    if (!bytesArrayContains(b, a[i])) {
+      diff.push(a[i]);
+    }
+  }
+  return diff;
+}
+
+export function recomputeStrategyCompleteness(s: Strategy, app: Address): void {
+  let makerAddr = Address.fromString(s.maker);
+  let liveSiblings = new Array<Bytes>();
+
+  let tokens = s.tokens;
+  for (let i = 0; i < tokens.length; i++) {
+    let token = Address.fromBytes(tokens[i]);
+    let pos = position(makerAddr, token, s.shippedAt);
+    let live = pos.liveStrategies;
+    for (let j = 0; j < live.length; j++) {
+      let sibHash = live[j];
+      if (!sibHash.equals(s.strategyHash) && !bytesArrayContains(liveSiblings, sibHash)) {
+        liveSiblings.push(sibHash);
+      }
+    }
+  }
+
+  s.liveSiblingCount = liveSiblings.length;
+  if (!s.usesEncumbrance) {
+    s.siblingListComplete = true;
+    s.missingSiblings = [];
+  } else {
+    let missing = bytesArrayDiff(liveSiblings, s.declaredSiblings);
+    s.missingSiblings = missing;
+    s.siblingListComplete = (missing.length == 0);
+  }
+  s.save();
 }
 
 export class DecodedEncumbrance {
@@ -155,6 +218,7 @@ export function handleShipped(e: Shipped): void {
 
   if (reship) {
     let stale = s.tokens;
+    let recomputed = new Array<string>();
     for (let i = 0; i < stale.length; i++) {
       let token = Address.fromBytes(stale[i]);
       let c = Commitment.load(cid(e.params.app, e.params.strategyHash, token));
@@ -165,7 +229,20 @@ export function handleShipped(e: Shipped): void {
           ? pos.totalCommitted.minus(c.remaining)
           : ZERO;
         pos.activeStrategies = pos.activeStrategies.gt(ZERO) ? pos.activeStrategies.minus(ONE) : ZERO;
+        pos.liveStrategies = bytesArrayRemove(pos.liveStrategies, s.strategyHash);
         pos.save();
+
+        let remainingLive = pos.liveStrategies;
+        for (let j = 0; j < remainingLive.length; j++) {
+          let sibId = sid(e.params.app, remainingLive[j]);
+          if (!recomputed.includes(sibId)) {
+            recomputed.push(sibId);
+            let sib = Strategy.load(sibId);
+            if (sib != null && sib.active) {
+              recomputeStrategyCompleteness(sib, e.params.app);
+            }
+          }
+        }
       }
       store.remove("Commitment", c.id);
     }
@@ -187,6 +264,9 @@ export function handleShipped(e: Shipped): void {
   s.maxUtilBps = enc.maxUtilBps;
   s.widenBps = enc.widenBps;
   s.declaredSiblings = enc.declaredSiblings;
+  s.siblingListComplete = true;
+  s.missingSiblings = [];
+  s.liveSiblingCount = 0;
 
   s.save();
 
@@ -202,9 +282,13 @@ export function handleDocked(e: Docked): void {
 
   s.active = false;
   s.dockedAt = e.block.timestamp;
+  s.liveSiblingCount = 0;
+  s.missingSiblings = [];
+  s.siblingListComplete = true;
 
   // Docked zeroes every token at once, so unwind each commitment we recorded.
   let tokens = s.tokens;
+  let recomputed = new Array<string>();
   for (let i = 0; i < tokens.length; i++) {
     let token = Address.fromBytes(tokens[i]);
     let c = Commitment.load(cid(e.params.app, e.params.strategyHash, token));
@@ -214,7 +298,20 @@ export function handleDocked(e: Docked): void {
     pos.totalCommitted = pos.totalCommitted.minus(c.remaining);
     if (pos.totalCommitted.lt(ZERO)) pos.totalCommitted = ZERO;
     pos.activeStrategies = pos.activeStrategies.gt(ZERO) ? pos.activeStrategies.minus(ONE) : ZERO;
+    pos.liveStrategies = bytesArrayRemove(pos.liveStrategies, s.strategyHash);
     pos.save();
+
+    let remainingLive = pos.liveStrategies;
+    for (let j = 0; j < remainingLive.length; j++) {
+      let sibId = sid(e.params.app, remainingLive[j]);
+      if (!recomputed.includes(sibId)) {
+        recomputed.push(sibId);
+        let sib = Strategy.load(sibId);
+        if (sib != null && sib.active) {
+          recomputeStrategyCompleteness(sib, e.params.app);
+        }
+      }
+    }
 
     c.remaining = ZERO;
     c.save();
@@ -238,6 +335,7 @@ export function handlePushed(e: Pushed): void {
 
   let id = cid(e.params.app, e.params.strategyHash, e.params.token);
   let c = Commitment.load(id);
+  let firstPush = (c == null);
   if (c == null) {
     c = new Commitment(id);
     c.strategy = s.id;
@@ -254,6 +352,11 @@ export function handlePushed(e: Pushed): void {
 
     let pos = position(e.params.maker, e.params.token, e.block.timestamp);
     pos.activeStrategies = pos.activeStrategies.plus(ONE);
+    let live = pos.liveStrategies;
+    if (!bytesArrayContains(live, s.strategyHash)) {
+      live.push(s.strategyHash);
+      pos.liveStrategies = live;
+    }
     pos.save();
   }
 
@@ -264,6 +367,16 @@ export function handlePushed(e: Pushed): void {
   let pos2 = position(e.params.maker, e.params.token, e.block.timestamp);
   pos2.totalCommitted = pos2.totalCommitted.plus(e.params.amount);
   pos2.save();
+
+  if (firstPush) {
+    let live = pos2.liveStrategies;
+    for (let i = 0; i < live.length; i++) {
+      let sib = Strategy.load(sid(e.params.app, live[i]));
+      if (sib != null && sib.active) {
+        recomputeStrategyCompleteness(sib, e.params.app);
+      }
+    }
+  }
 }
 
 export function handlePulled(e: Pulled): void {
