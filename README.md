@@ -116,7 +116,7 @@ to the maker's *other* strategies, and prices accordingly:
 Not a filter we run on your behalf. A property of the position itself, true for any
 taker through any app, whether Bone Dry is involved or not.
 
-### One fill, end to end
+### One fill, end to end — and where each step runs today
 
 ```mermaid
 flowchart LR
@@ -141,6 +141,23 @@ flowchart LR
 6. A maker who refused is caught by the hook and logged with the revert selector.
    This matters: **a reverted transaction emits nothing**, so without the hook
    catching it, refusals would be invisible to any indexer.
+
+> **Steps 3, 4 and 6 are built and fork-tested, and not yet on the path the app
+> takes.** They run through the opcode-35 hook at `0xaC7bCA41…`, whose router is
+> `BoneDryRouter`. The web app currently routes through the hook at `0xeAdD3C76…`,
+> and `Tap.router` is `immutable` (`Tap.sol:42`), so that hook is welded to 1inch's
+> canonical router — whose opcode table ends at 34 and cannot reach opcode 35.
+>
+> Both hooks are deployed on Base mainnet and both pools are initialised; what is
+> missing is the routing layer choosing between them, because `Aqua.pull` keys
+> balances on `msg.sender` and so the two books cannot be filled in one
+> transaction. Step 6's `logs → subgraph` edge is likewise unbuilt: the `Tap` data
+> source is declared as a template that nothing instantiates.
+>
+> Until that lands, every refusal reason shown in the app is **computed
+> off-chain** by the same solvency rules, as a prediction of what the chain would
+> do — not read back from `MakerSkipped`. See [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md)
+> and [PLAN-GRAPH.md](PLAN-GRAPH.md).
 
 ### What a fill costs
 
@@ -351,10 +368,12 @@ A status table that overclaims is worse than none.
 | Encumbrance entities + sibling completeness | built, 15 matchstick tests green |
 | `MakerSkipped` with revert selector | built, tested |
 | Postgres index over 1inch's Aqua API (Ethereum) | live, refreshed on a schedule |
-| `BoneDryRouter` deployed to a public network | **not yet** |
+| `BoneDryRouter` deployed to a public network | **deployed**, Base mainnet `0x74195573…` |
+| Provide-tab encumbrance builder, shipping opcode 35 | **live** — declares encumbrance server-side from `rawBalances` |
+| App routing a swap through the opcode-35 hook | **not yet** — see [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md) |
+| `MakerRefusal` / `EncumbranceApplication` indexed | **not yet** — see [PLAN-GRAPH.md](PLAN-GRAPH.md) |
 | Subgraph on Ethereum mainnet | **not yet** — see Known limits |
 | `Tap.sol` gate refusing incomplete sibling lists | **not yet** |
-| Provide-tab encumbrance builder | **not yet** |
 
 ## Tech stack
 
@@ -441,13 +460,44 @@ A recorded fill: 5 USDC sold, 1425979680696660 wei WETH received, split 3:2 acro
 two solvent makers matching their depths. A third maker promised the same and held
 nothing, and was skipped. Pool liquidity after: **0**.
 
-### Base (8453) — read-only, against canonical Aqua
+### Base (8453) — the evidence, and our own contracts beside it
+
+Reads run against **1inch's own canonical Aqua**, with 146 third-party maker
+strategies we did not ship. Our contracts are deployed on the same chain.
+
+**1inch's, not ours:**
 
 | Contract | Address |
 |---|---|
-| Aqua (1inch) | `0x1111113ccf1426a8e30e2bff5e005d929bf6a90a` |
-| SwapVM router (1inch) | `0x111111338c5091E8440b67B168bAe16a668AC0De` |
-| Subgraph | [`aquifer/v0.0.3`](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3) |
+| Aqua | [`0x1111113ccf1426a8e30e2bff5e005d929bf6a90a`](https://basescan.org/address/0x1111113ccf1426a8e30e2bff5e005d929bf6a90a) |
+| SwapVM router | [`0x111111338c5091E8440b67B168bAe16a668AC0De`](https://basescan.org/address/0x111111338c5091E8440b67B168bAe16a668AC0De) |
+
+**Ours, deployed to Base mainnet:**
+
+| Contract | Address | Size |
+|---|---|---|
+| `BoneDryRouter` — SwapVM + opcode 35 | [`0x74195573Fa9bC965667e03319F2C58567d4B96BE`](https://basescan.org/address/0x74195573Fa9bC965667e03319F2C58567d4B96BE) | 19,793 b |
+| `Tap` — v4 hook bound to `BoneDryRouter` | [`0xaC7bCA41EA8Fce76651684943Db2c38003c98088`](https://basescan.org/address/0xaC7bCA41EA8Fce76651684943Db2c38003c98088) | 6,158 b |
+| `Tap` — v4 hook bound to 1inch's router, **the one the app routes through** | [`0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088`](https://basescan.org/address/0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088) | 5,849 b |
+| `Lens` | [`0xbC7C42DA3a234cAf8d44cbeB440610CDB8790Fd6`](https://basescan.org/address/0xbC7C42DA3a234cAf8d44cbeB440610CDB8790Fd6) | |
+| `Wellhead` | [`0xae0188F3b68804847a740C0F7016e1A4E0bB4E64`](https://basescan.org/address/0xae0188F3b68804847a740C0F7016e1A4E0bB4E64) | |
+| Subgraph | [`aquifer/v0.0.3`](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3) — predates the encumbrance entities | |
+
+Two v4 pools are initialised, one per hook (`0x620f798e…`, `0x33e4c020…`), both
+holding zero liquidity by design.
+
+There are two hooks because `Tap.router` is `immutable` and a v4 pool binds to
+exactly one hook. The second was deployed once `BoneDryRouter` existed; the app
+has not been moved onto it yet. See the note under [One fill, end to
+end](#one-fill-end-to-end--and-where-each-step-runs-today).
+
+**Three live encumbrance strategies**, maker
+`0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`, promising 0.21 USDC and 0.000036 WETH
+in total against a wallet holding 0.2276 and 0.0000389 — sibling encumbrance at
+6,165 bps, under the 8,000 refusal line with the widening curve already active.
+`ship()` transfers nothing, so an unbacked position would have cost exactly the
+same and been the phantom liquidity this project measures. The ship script carries
+`require()` guards that abort rather than overpromise.
 
 ### Ethereum (1) — read-only
 
@@ -487,7 +537,20 @@ is documented in the instruction rather than hidden.
   deployed to Ethereum would close this — Aqua and SwapVM are at identical
   addresses on both chains. The completeness perf work is also untested against its
   worst case, because the 257-strategy maker is on Ethereum and Base only carries
-  549 strategies in total.
+  549 strategies shipped all-time — 163 of them currently active.
+- **The app routes through the hook that cannot reach opcode 35.** `Tap.router` is
+  `immutable` and a v4 pool binds one hook, so the 146 third-party Aqua strategies
+  (shipped to 1inch's router) and our opcode-35 strategies (shipped to
+  `BoneDryRouter`) are two books that no single transaction can fill from —
+  `Aqua.pull` keys balances on `msg.sender`. The app currently routes the first.
+  Closing this is a routing change, not a contract change: both hooks and both
+  pools are already live. [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md).
+- **Refusals are predicted, not yet read back.** `Tap.sol` catches each maker's
+  revert and emits `MakerSkipped` with the selector, which is the only way a
+  refusal can be observed at all. Nothing consumes it yet: the subgraph's `Tap`
+  data source is a template nothing instantiates. Every refusal reason in the app
+  is computed off-chain from the same rules — a faithful prediction, and clearly a
+  different kind of evidence. [PLAN-GRAPH.md](PLAN-GRAPH.md).
 - **Nothing on Aqua is binding.** `dock()` costs 4,452 gas, is instant and
   unilateral. No commitment can be relied upon, and nothing in this repo claims
   otherwise.

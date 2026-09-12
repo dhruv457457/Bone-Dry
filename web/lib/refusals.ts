@@ -8,6 +8,12 @@ export interface MakerRefusalRecord {
   blockNumber: bigint;
   timestamp?: number;
   txHash: `0x${string}`;
+  /** Which strategy of that maker refused, and on which token. */
+  strategyHash?: `0x${string}`;
+  token?: Address;
+  /** The caught revert selector, and its name where we know it. */
+  reason?: `0x${string}`;
+  reasonName?: string;
 }
 
 export interface MakerReliabilityMetrics {
@@ -21,9 +27,43 @@ export interface MakerReliabilityMetrics {
   refusals: MakerRefusalRecord[];
 }
 
+/**
+ * This must match `Tap.sol:56` exactly, because the signature IS the filter.
+ *
+ * It previously read `MakerSkipped(address indexed maker, uint256 wanted)` — two
+ * parameters against the five the hook emits — so getLogs filtered on
+ *   0xabb600620bdc343dcfdb23bd124b0460d1b7425cf22e19f8c7d92f677d3c742d
+ * while every real refusal carries
+ *   0xe4993c16be3560fa7c0ee16526c5d0683a9296a0e12503241e7435e050b4c78a
+ * and the query matched nothing, forever, returning an empty array
+ * indistinguishable from "this maker has never refused anyone".
+ *
+ * `reason` is the revert selector the hook caught. It is the single most valuable
+ * field this project produces — a reverted transaction emits nothing, so without
+ * Tap catching and re-emitting it, a refusal cannot be observed at all — and the
+ * old shape did not even ask for it.
+ */
 const MAKER_SKIPPED_EVENT = parseAbiItem(
-  "event MakerSkipped(address indexed maker, uint256 wanted)"
+  "event MakerSkipped(address indexed maker, bytes32 indexed strategyHash, address indexed token, uint256 wanted, bytes4 reason)"
 );
+
+/** Revert selectors Encumbrance.sol and Tap.sol can produce, keccak-derived.
+ *  An unknown selector is shown as itself rather than guessed at. */
+const REFUSAL_REASONS: Record<string, string> = {
+  "0x78306a7e": "EncumbranceZeroBacking",
+  "0x50b899a5": "EncumbranceUnderdeclared",
+  "0x831f3352": "EncumbranceExceeded",
+  "0xea7d00c7": "EncumbranceInsufficient",
+  "0x3016ef4c": "NoSolventMaker",
+  "0x5e384a92": "CouldNotFillEntireSwap",
+  "0xffffffff": "QuoteUnusable", // Tap.sol:53 REASON_QUOTE_UNUSABLE
+  "0x00000000": "revert data empty",
+};
+
+export function refusalReasonName(selector?: `0x${string}`): string {
+  if (!selector) return "unknown";
+  return REFUSAL_REASONS[selector.toLowerCase()] ?? selector;
+}
 
 /**
  * Fetches historical MakerSkipped logs directly on-chain from Bone Dry's Tap.sol hook.
@@ -77,6 +117,10 @@ export async function fetchOnChainRefusals(
           wanted: log.args.wanted ?? 0n,
           blockNumber: log.blockNumber ?? 0n,
           txHash: log.transactionHash as `0x${string}`,
+          strategyHash: log.args.strategyHash as `0x${string}` | undefined,
+          token: log.args.token as Address | undefined,
+          reason: log.args.reason as `0x${string}` | undefined,
+          reasonName: refusalReasonName(log.args.reason as `0x${string}` | undefined),
         });
       }
 
