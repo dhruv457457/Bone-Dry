@@ -272,7 +272,7 @@ export function Swap({
         stamp={quoteStamp}
       />
     <div className={`${s.cols} ${s.colsSwap} ${s.in}`}>
-      <div className={s.colNarrow}>
+      <div className={`${s.colNarrow} ${s.swapCol}`}>
 
         {/* ── the swap itself ──────────────────────────────────────────── */}
         <section className={`${s.card} ${s.cardPad}`}>
@@ -442,11 +442,20 @@ export function Swap({
             </p>
           ) : null}
         </section>
-        {/* Back in the left column, where it belongs: it describes the quote
-            beside it, and it is metadata, not the result. It was moved right to
-            stop it duplicating the breakdown -- but the duplication was the counts
-            tree, which is deleted, and moving the whole card put a 405px utility
-            panel above the 271px result it supports. */}
+
+        {/* ── route receipt ────────────────────────────────────────────── */}
+      </div>
+
+      {/* ── the maker book & route inspector ───────────────────────────── */}
+      <div className={s.colWide}>
+        <RouteInspector
+          route={route}
+          tokenIn={tokenIn}
+          tokenOut={tokenOut}
+          net={net}
+        />
+        {/* Metadata reads after the result, not before it: what filled, then
+            the pool and book it filled through. */}
         <section className={`${s.card} ${s.cardPad}`}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <span className={s.label}>Route receipt</span>
@@ -476,6 +485,11 @@ export function Swap({
             </div>
           ) : (
             <div>
+              {/* Side by side at this width. These two are metadata about the
+                  fill -- what the pool holds, and which book it routed through --
+                  and stacking them turned a 920px card into 423px of vertical
+                  scroll for content that fits in a strip. */}
+              <div className={s.receiptTop}>
               {pool ? (
                 <div className={s.zeroRow} style={{ alignItems: "center" }}>
                   <div style={{ minWidth: 0 }}>
@@ -556,6 +570,8 @@ export function Swap({
                 </div>
               ) : null}
 
+              </div>
+
               {(() => {
                 const filledCount = route.makersUsed;
                 const skippedCount = route.makersSkipped.length;
@@ -608,18 +624,6 @@ hookData: ${route.hookData}`}
             </div>
           )}
         </section>
-
-        {/* ── route receipt ────────────────────────────────────────────── */}
-      </div>
-
-      {/* ── the maker book & route inspector ───────────────────────────── */}
-      <div className={s.colWide}>
-        <RouteInspector
-          route={route}
-          tokenIn={tokenIn}
-          tokenOut={tokenOut}
-          net={net}
-        />
         {/* The 55-row maker book lived here: 1,113px of a 1,636px page, and since
             the router started choosing between books it was listing the EVIDENCE
             book's wallets under a trade filled from the Bone Dry book, with
