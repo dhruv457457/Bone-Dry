@@ -120,11 +120,28 @@ export async function attachOracleDeviations(
  * sum over whatever candidate set this hookData ships.
  */
 export function dedupeByMaker(depths: MakerDepth[]): MakerDepth[] {
+  // One candidate per maker, chosen by PRICE, not by size.
+  //
+  // This used to keep whichever sibling held the most, on the assumption that
+  // a maker's strategies price alike. They need not. Our own Base maker carried
+  // a stale set at 5,833 USDC/WETH beside a repriced set at 2,526; the stale one
+  // held 12.0e12 against the new one's 11.7e12, won the comparison by that
+  // rounding margin, and quoted every taker at 2.3x market. The book looked
+  // mispriced when only the selection was.
+  //
+  // filterFillable probes every strategy with the SAME input, so probeOut is a
+  // like-for-like price. Depth stays the tie-break: it is a ceiling on how much
+  // can be filled, never a statement about the rate.
+  const better = (a: MakerDepth, b: MakerDepth) => {
+    const ao = a.probeOut ?? 0n, bo = b.probeOut ?? 0n;
+    if (ao !== bo) return ao > bo;
+    return a.depth > b.depth;
+  };
   const best = new Map<string, MakerDepth>();
   for (const d of depths) {
     const key = d.maker.toLowerCase();
     const existing = best.get(key);
-    if (!existing || d.depth > existing.depth) best.set(key, d);
+    if (!existing || better(d, existing)) best.set(key, d);
   }
   return [...best.values()].filter((d) => d.solvent).sort(byDepthDesc);
 }
@@ -639,7 +656,11 @@ export async function filterFillable(
   const fillable: MakerDepth[] = [];
   const unfillable: Address[] = [];
   solvent.forEach((d, i) => {
-    if ((q.perMaker[i]?.amountOut ?? 0n) > 0n) fillable.push(d);
+    const out = q.perMaker[i]?.amountOut ?? 0n;
+    // Carry the probe result. Every probe used the same input, so these outputs
+    // rank the strategies by price -- which is what dedupeByMaker needs and
+    // depth cannot tell it.
+    if (out > 0n) fillable.push({ ...d, probeOut: out });
     else unfillable.push(d.maker);
   });
   return { fillable, unfillable };

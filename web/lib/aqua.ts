@@ -20,6 +20,10 @@ export type MakerDepth = Strategy & {
   /** min of the three — the only number a router may trust */
   depth: bigint;
   solvent: boolean;
+  /** What this strategy quoted for filterFillable's probe. Every candidate is
+   *  probed with the SAME input, so these are directly comparable and are the
+   *  only per-strategy price signal available before planning. */
+  probeOut?: bigint;
 };
 
 /**

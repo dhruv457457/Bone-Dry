@@ -25,7 +25,8 @@
     "poolInitialized": true,
     "checkedAt": "2026-09-12"
   },
-  "encumbranceStrategy": {
+  "encumbranceStrategyNote": "Live and genuinely backed. Three strategies promise 0.21 USDC and 0.000036 WETH in total against a wallet holding 0.2276 and 0.0000389 -- ship() transfers nothing, so an unbacked position here would have cost the same and been exactly the phantom liquidity this project measures. The ship script carries require() guards that abort rather than overpromise. Sibling encumbrance is 24/38.9 of backing, 6,165 bps: under the 8,000 refusal line with the widening curve already active, so the position is constrained right now rather than idle.",
+  "encumbranceStrategyV1": {
     "maker": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
     "strategyHash": "0xf5c6d66978bda17d766226b1a7278b4e524bf9d20100901988a1c867945a7ae7",
     "strategyTx": "0x2c696a2f6b7cdcd11d597ffdc4994736d8b83bbea37df9d52c128d7ab96cf90b",
@@ -53,7 +54,48 @@
       "backed": true,
       "utilBpsAtShip": 6165,
       "checkedAt": "2026-09-12"
-    }
+    },
+    "note": "Superseded by encumbranceStrategy below. Priced at 5,833 USDC/WETH against a market of ~2,526 -- for an XYC strategy the shipped amounts ARE the reserves, so they are the price. Left live deliberately: it is a real maker quoting 2.3x above market, which is the kind of position this project measures."
   },
-  "encumbranceStrategyNote": "Live and genuinely backed. Three strategies promise 0.21 USDC and 0.000036 WETH in total against a wallet holding 0.2276 and 0.0000389 -- ship() transfers nothing, so an unbacked position here would have cost the same and been exactly the phantom liquidity this project measures. The ship script carries require() guards that abort rather than overpromise. Sibling encumbrance is 24/38.9 of backing, 6,165 bps: under the 8,000 refusal line with the widening curve already active, so the position is constrained right now rather than idle."
+  "encumbranceStrategy": {
+    "maker": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+    "strategyHash": "0xa330b560041689b2821313993310521e82ad5a54767d23756a2de9ae20766c64",
+    "strategyTx": "0x5499cf19976e8b5cc9e86ab10fa1e6d2ab153a4112d705c319ac8e9b5ea04f7a",
+    "siblingHashes": [
+      "0x77f372202e853d401b0af9c977881510f530ed68512594595179747e19964df4",
+      "0x931d3894767bfcc791e1195ea6b7fe358b9544a03a5be319e3b4fef03d7310c2"
+    ],
+    "siblingTxs": [
+      "0xc8077a92118315403943ab19738e0dcbfdb5819a7617ff355f122f02a7fa8b96",
+      "0xc8164417bfea928ceb947bc979971854c9325f907e339f3823b7556bb69d6166"
+    ],
+    "blocks": [
+      51223557,
+      51223558,
+      51223559
+    ],
+    "declaredTotalEncumbrance": "23400000000000",
+    "maxUtilBps": 8000,
+    "widenBps": 500,
+    "tokens": [
+      "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "0x4200000000000000000000000000000000000006"
+    ],
+    "perStrategy": {
+      "usdc": "29558",
+      "weth": "11700000000000"
+    },
+    "impliedPriceUsdcPerWeth": "2526.32",
+    "verified": {
+      "totalPromisedWeth": "35100000000000",
+      "walletWeth": "38925271417871",
+      "totalPromisedUsdc": "88674",
+      "walletUsdc": "227609",
+      "backed": true,
+      "utilBpsAtShip": 6011,
+      "quotedVsOracleSmallSize": "96.7-99.8%",
+      "checkedAt": "2026-09-12"
+    },
+    "note": "Repriced set. 0.029558 USDC : 0.0000117 WETH implies 2,526.32 against a Chainlink read of 2,526.33. Sized so the position is constrained rather than idle -- two siblings owe 0.0000234 WETH against 0.0000389 backing, 6,011 bps, under the 8,000 refusal line with the widening curve active. Reserves are small because the maker's whole WETH inventory is 0.0000389 WETH, so the XYC curve degrades past a few thousandths of a USDC; that is the position being honest about its size, not a misprice."
+  }
 }
