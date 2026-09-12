@@ -725,5 +725,56 @@ contract EncumbranceTest is Test {
             takerTraitsAndData
         );
     }
+
+    /// @notice Boundary Test: Attempting 8 siblings fails safely (build rejects, and parse rejects with EncumbranceParsingSiblingCountExceedsCapacity)
+    function test_Boundary_eightSiblingsFailsSafely() public {
+        bytes32[] memory eightSiblings = new bytes32[](8);
+        for (uint256 i = 0; i < 8; i++) {
+            eightSiblings[i] = bytes32(uint256(i + 1));
+        }
+
+        // Test A: EncumbranceArgsBuilder.build explicitly rejects 8 siblings
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EncumbranceArgsBuilder.EncumbranceBuildingSiblingCountExceedsCapacity.selector,
+                8,
+                7
+            )
+        );
+        this.buildWrapper(eightSiblings, 10_000, 2_000);
+
+        // Test B: Handcrafting raw calldata with siblingCount = 8 fails safely in parse
+        bytes memory rawPacked = abi.encodePacked(uint16(8));
+        for (uint256 i = 0; i < 8; i++) {
+            rawPacked = abi.encodePacked(rawPacked, eightSiblings[i]);
+        }
+        rawPacked = abi.encodePacked(rawPacked, uint16(10_000), uint16(2_000));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EncumbranceArgsBuilder.EncumbranceParsingSiblingCountExceedsCapacity.selector,
+                8,
+                7
+            )
+        );
+        this.parseCalldata(rawPacked);
+    }
+
+    function buildWrapper(
+        bytes32[] memory siblingHashes,
+        uint16 maxUtilBps,
+        uint16 widenBps
+    ) external pure returns (bytes memory) {
+        return EncumbranceArgsBuilder.build(siblingHashes, maxUtilBps, widenBps);
+    }
+
+    function parseCalldata(bytes calldata args) external pure returns (
+        uint256 siblingCount,
+        bytes calldata siblingHashes,
+        uint16 maxUtilBps,
+        uint16 widenBps
+    ) {
+        return EncumbranceArgsBuilder.parse(args);
+    }
 }
 

@@ -12,13 +12,17 @@ library EncumbranceArgsBuilder {
     using SafeCast for uint256;
     using Calldata for bytes;
 
+    uint256 internal constant MAX_INSTRUCTION_SIBLINGS = 7;
+
     error EncumbranceParsingMissingSiblingCount();
     error EncumbranceParsingMissingSiblingHashes();
     error EncumbranceParsingMissingMaxUtilBps();
     error EncumbranceParsingMissingWidenBps();
+    error EncumbranceParsingSiblingCountExceedsCapacity(uint256 siblingCount, uint256 maxAllowed);
+    error EncumbranceBuildingSiblingCountExceedsCapacity(uint256 siblingCount, uint256 maxAllowed);
 
     /// @notice Builds packed instruction calldata for OP_ENCUMBERED_CAP (opcode 35)
-    /// @param siblingHashes Hashes of sibling strategies to account for encumbrance
+    /// @param siblingHashes Hashes of sibling strategies to account for encumbrance (max 7)
     /// @param maxUtilBps Maximum utilisation basis points (1e4 = 100%) before reverting
     /// @param widenBps Haircut basis points applied to amountOut at 100% utilisation
     function build(
@@ -26,6 +30,9 @@ library EncumbranceArgsBuilder {
         uint16 maxUtilBps,
         uint16 widenBps
     ) internal pure returns (bytes memory) {
+        if (siblingHashes.length > MAX_INSTRUCTION_SIBLINGS) {
+            revert EncumbranceBuildingSiblingCountExceedsCapacity(siblingHashes.length, MAX_INSTRUCTION_SIBLINGS);
+        }
         bytes memory packed = abi.encodePacked(siblingHashes.length.toUint16());
         for (uint256 i = 0; i < siblingHashes.length; i++) {
             packed = abi.encodePacked(packed, siblingHashes[i]);
@@ -47,6 +54,9 @@ library EncumbranceArgsBuilder {
     ) {
         unchecked {
             siblingCount = uint16(bytes2(args.slice(0, 2, EncumbranceParsingMissingSiblingCount.selector)));
+            if (siblingCount > MAX_INSTRUCTION_SIBLINGS) {
+                revert EncumbranceParsingSiblingCountExceedsCapacity(siblingCount, MAX_INSTRUCTION_SIBLINGS);
+            }
             uint256 hashesEnd = 2 + 32 * siblingCount;
             uint256 maxUtilEnd = hashesEnd + 2;
             uint256 widenEnd = maxUtilEnd + 2;
@@ -64,8 +74,9 @@ abstract contract Encumbrance {
     /// @dev Marker used by Aqua to signify that a strategy has been docked
     uint8 private constant _AQUA_DOCKED = 0xff;
 
-    /// @dev Maximum siblings encodable in a single SwapVM instruction (uint8 argsLength limit = 255 bytes)
-    uint256 public constant MAX_INSTRUCTION_SIBLINGS = 7;
+    /// @notice Maximum siblings encodable in a single SwapVM instruction (uint8 argsLength limit = 255 bytes).
+    /// @dev Enforced explicitly in EncumbranceArgsBuilder.parse() and build().
+    uint256 public constant MAX_INSTRUCTION_SIBLINGS = EncumbranceArgsBuilder.MAX_INSTRUCTION_SIBLINGS;
 
     /// @dev Reverts when maker has zero deliverable backing (balance == 0 or allowance == 0)
     error EncumbranceZeroBacking();
