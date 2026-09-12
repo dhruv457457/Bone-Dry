@@ -6,6 +6,7 @@ import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
 import { FindingLine } from "./Shell";
 import { RouteInspector } from "../RouteInspector";
+import { BookDepth } from "./BookDepth";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr, toRaw } from "@/lib/format";
@@ -448,6 +449,15 @@ export function Swap({
 
       {/* ── the maker book & route inspector ───────────────────────────── */}
       <div className={s.colWide}>
+        {/* The chart the right column needed. 55 bars regardless of what the
+            route did, so this side holds its weight whether one maker fills or
+            fifty -- and it is the project's claim drawn rather than asserted. */}
+        {makers && makers.makers.length > 0 ? (
+          <section className={`${s.card} ${s.cardPad}`} style={{ marginBottom: 20 }}>
+            <BookDepth makers={makers} route={route} tokenOut={tokenOut} />
+          </section>
+        ) : null}
+
         <RouteInspector
           route={route}
           tokenIn={tokenIn}

@@ -983,15 +983,15 @@
 /* Swap's own ratio. 380px made the receive amount sit tight against its ticker;
    420 gives the pay/receive rows room. Additive -- .colsBuild is Provide's and
    has been re-tuned twice already. */
-/* Swap is a single centred column on ONE measure.
-   Two columns could never balance -- the breakdown is one row when a single
-   maker fills and fifty when the book is deep -- so the column went. But the
-   first pass kept the swap card at 468px inside a 920px measure, which stacked
-   two different page widths and left nothing aligned to anything. A page reads
-   as one object when its blocks share an edge. 860px is that edge: it clears the
-   six-column breakdown's minimum without a horizontal scrollbar, and is narrow
-   enough that the swap card does not look stranded in it. */
-.colsSwap { grid-template-columns: minmax(0, 860px); justify-content: center; gap: 18px; }
+/* Two columns, with a chart holding the right one up.
+   The column was removed earlier because the right side was thin -- a one-row
+   table beside a full-height left column reads as content that failed to load.
+   That was the wrong correction: the fix for a thin column is to put something
+   in it, not to delete it. BookDepth is 55 bars whatever the route did, so the
+   right side now carries weight at any data density, which is the property the
+   old ratios could never promise. */
+.colsSwap { grid-template-columns: minmax(380px, 33%) 1fr; gap: 22px; }
+@media (max-width: 1080px) { .colsSwap { grid-template-columns: 1fr; } }
 .colsSwap .swapCol { width: 100%; }
 
 /* Receipt metadata reads across, not down: pool state beside the book that
