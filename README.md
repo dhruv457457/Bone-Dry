@@ -142,22 +142,22 @@ flowchart LR
    This matters: **a reverted transaction emits nothing**, so without the hook
    catching it, refusals would be invisible to any indexer.
 
-> **Steps 3, 4 and 6 are built and fork-tested, and not yet on the path the app
-> takes.** They run through the opcode-35 hook at `0xaC7bCA41…`, whose router is
-> `BoneDryRouter`. The web app currently routes through the hook at `0xeAdD3C76…`,
-> and `Tap.router` is `immutable` (`Tap.sol:42`), so that hook is welded to 1inch's
-> canonical router — whose opcode table ends at 34 and cannot reach opcode 35.
+> **Where this runs today.** There are two Tap hooks on Base, because `Tap.router` is
+> `immutable` (`Tap.sol:42`): `0xeAdD3C76…` is bound to 1inch's canonical router
+> (146 third-party strategies, opcode table ending at 34) and `0xaC7bCA41…` to
+> `BoneDryRouter` (opcode 35). `Aqua.pull` keys balances on `msg.sender`, so the two
+> books can never be filled in one transaction.
 >
-> Both hooks are deployed on Base mainnet and both pools are initialised; what is
-> missing is the routing layer choosing between them, because `Aqua.pull` keys
-> balances on `msg.sender` and so the two books cannot be filled in one
-> transaction. Step 6's `logs → subgraph` edge is likewise unbuilt: the `Tap` data
-> source is declared as a template that nothing instantiates.
+> The app plans both books, ranks them by the rate a taker actually gets, and builds
+> the swap against the hook that can fill the winner. At small sizes the Bone Dry
+> book wins and steps 3–4 run through opcode 35; at larger sizes its shallow reserves
+> price out and the evidence book wins. No signed fill has yet landed through
+> opcode 35.
 >
-> Until that lands, every refusal reason shown in the app is **computed
-> off-chain** by the same solvency rules, as a prediction of what the chain would
-> do — not read back from `MakerSkipped`. See [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md)
-> and [PLAN-GRAPH.md](PLAN-GRAPH.md).
+> Step 6's `logs → subgraph` edge is not built: the subgraph's `Tap` data source is
+> a template nothing instantiates. Refusal reasons shown in the app are **computed
+> off-chain** by the same rules — a prediction of what the chain would do, not read
+> back from `MakerSkipped`. See [PLAN-GRAPH.md](PLAN-GRAPH.md).
 
 ### What a fill costs
 
