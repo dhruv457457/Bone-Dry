@@ -274,6 +274,13 @@ export function Provide({
   const siblingLimitExceeded = liveSiblings.length > 6;
 
   // Live promised encumbrance across all siblings on tokenOut
+  /** Whether the index actually answered. A failed or unavailable read used to
+   *  leave strategies empty and print "0 WETH promised" -- for a wallet with
+   *  1.18 WETH already promised on 1inch's router against 0.0000032 held. On the
+   *  one page whose job is to show what you have already promised, "unknown"
+   *  and "nothing" must not look the same. */
+  const exposureKnown = exposure !== null && exposure.available !== false;
+
   const alreadyPromisedOut = useMemo(() => {
     if (liveSiblings.length > 0) {
       return liveSiblings.reduce((sum, strat) => {
@@ -627,7 +634,11 @@ export function Provide({
               <div>
                 <div style={{ fontSize: 11, color: "var(--ink3)" }}>Total Promised (Siblings)</div>
                 <div className={s.mono} style={{ fontSize: 12, color: alreadyPromisedOut > 0n ? "var(--ink)" : "var(--ink3)" }}>
-                  {isBackingLoading ? "…" : `${units(alreadyPromisedOut, tokenOut.decimals, 4)} ${tokenOut.symbol}`}
+                  {isBackingLoading
+                    ? "…"
+                    : address && !exposureKnown
+                      ? "— index unavailable"
+                      : `${units(alreadyPromisedOut, tokenOut.decimals, 4)} ${tokenOut.symbol}`}
                 </div>
               </div>
               <div>
@@ -970,7 +981,7 @@ export function Provide({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--ink)" }}>Sibling Constraints</span>
                 <span className={s.mono} style={{ fontSize: 9.5, color: "var(--ink3)" }}>
-                  {liveSiblings.length} on {tokenOut.symbol} · max 6
+                  {address && !exposureKnown && !exposureLoading ? "— unknown" : `${liveSiblings.length} on ${tokenOut.symbol}`} · max 6
                 </span>
               </div>
 
@@ -1185,13 +1196,18 @@ export function Provide({
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
                     <span className={s.label} style={{ fontSize: 10 }}>Haircut</span>
                     <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
-                      -{currentHaircutBps} bps
+                      {/* "-0 bps" read as a negative number; zero has no sign. */}
+                      {currentHaircutBps === 0 ? "0 bps" : `−${currentHaircutBps} bps`}
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                    <span className={s.label} style={{ fontSize: 10 }}>1.000 Quotes As</span>
+                    {/* This is the share of the OUTPUT a taker keeps, and the haircut is
+                        taken from tokenOut (Encumbrance.sol:216). It was labelled
+                        "1.000 quotes as 1.0000 USDC" -- the input token, shaped like a
+                        price -- which described neither. */}
+                    <span className={s.label} style={{ fontSize: 10 }}>Taker keeps</span>
                     <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
-                      {currentQuoteVal.toFixed(4)} {tokenIn.symbol}
+                      {(currentQuoteVal * 100).toFixed(2)}% of {tokenOut.symbol} out
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>

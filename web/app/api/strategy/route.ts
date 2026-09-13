@@ -1,4 +1,4 @@
-import { encodeFunctionData, isAddress, getAddress, concatHex, isHex, size, type Hex } from "viem";
+import { encodeFunctionData, isAddress, getAddress, concatHex, isHex, size, type Hex, type Address } from "viem";
 import { AquaProgramBuilder, Order, MakerTraits, instructions, SwapVmProgram } from "@1inch/swap-vm-sdk";
 import { Address as SdkAddress, HexString } from "@1inch/sdk-core";
 import { networkFrom, clientFor, BEACON_STRATEGY_ADDRESS } from "@/lib/networks";
@@ -116,52 +116,66 @@ export async function POST(req: Request) {
     let allSiblingHashes: Hex[] = [];
 
     if (maxUtilBps !== undefined) {
-      if (Array.isArray(body.siblingHashes)) {
+      // Every live strategy this maker has on tokenOut, with the router it lives
+      // under. The index is preferred even when the client sends a list: the
+      // client's list carries no app, and the app is the whole question here.
+      type Sib = { hash: Hex; app: Address };
+      let siblings: Sib[] = [];
+      const book = await makerBook(n, maker);
+      if (book !== null) {
+        const outLower = tokenOut.toLowerCase();
+        siblings = book.strategies
+          .filter((st) => st.tokens.some((t) => t.toLowerCase() === outLower))
+          .map((st) => ({ hash: st.strategyHash as Hex, app: st.app as Address }));
+      } else if (Array.isArray(body.siblingHashes)) {
         for (let i = 0; i < body.siblingHashes.length; i++) {
           const h = body.siblingHashes[i];
           if (typeof h !== "string" || !isHex(h) || size(h) !== 32) {
             throw new BadInput(`invalid sibling hash at index ${i}: ${h}`);
           }
-          allSiblingHashes.push(h as Hex);
+          siblings.push({ hash: h as Hex, app });
         }
       } else {
-        // Query makerBook from graph to discover active sibling strategies on tokenOut
-        const book = await makerBook(n, maker);
-        if (book === null) {
-          throw new BadInput(
-            !n.graphUrl
-              ? `no index available to discover siblings on ${n.label}; pass siblingHashes explicitly`
-              : `the ${n.label} index is unavailable or still catching up; pass siblingHashes explicitly`
-          );
-        }
-        const outLower = tokenOut.toLowerCase();
-        allSiblingHashes = book.strategies
-          .filter((st) => st.tokens.some((t) => t.toLowerCase() === outLower))
-          .map((st) => st.strategyHash);
-      }
-
-      // Sample only up to MAX_INSTRUCTION_SIBLINGS (6) into the on-chain wire args
-      sampledSiblingHashes = allSiblingHashes.slice(0, MAX_INSTRUCTION_SIBLINGS);
-
-      // Compute declaredTotalEncumbrance server-side from live claims on tokenOut
-      // across ALL siblings (via aqua.rawBalances under boneDryRouter).
-      // Under-declaring reverts EncumbranceUnderdeclared (Encumbrance.sol:191) at fill time;
-      // never trust a client-supplied total, and fail loudly if balances cannot be read.
-      if (allSiblingHashes.length > 0) {
-        const client = clientFor(n);
-        const calls = allSiblingHashes.map(
-          (sibHash) =>
-            ({
-              address: n.aqua,
-              abi: aquaAbi,
-              functionName: "rawBalances",
-              args: [maker, app, sibHash, tokenOut],
-            }) as const
+        throw new BadInput(
+          !n.graphUrl
+            ? `no index available to discover siblings on ${n.label}; pass siblingHashes explicitly`
+            : `the ${n.label} index is unavailable or still catching up; pass siblingHashes explicitly`
         );
-        const results = await client.multicall({ contracts: calls, allowFailure: false });
+      }
+      allSiblingHashes = siblings.map((x) => x.hash);
+
+      // Declared: every live commitment on tokenOut, under WHICHEVER router it was
+      // shipped to. All of them draw on the same wallet.
+      //
+      // Sampled: only siblings under this router. Opcode 35 reads sibling balances
+      // at rawBalances(maker, address(this), ...) (Encumbrance.sol:174), so a
+      // strategy on 1inch's router always reads as 0 there -- passing those hashes
+      // wasted instruction slots and, worse, let a maker with 1.18 WETH promised on
+      // 1inch's router against 0.0000032 held declare 0 and look healthy. The
+      // declared total is a separate field precisely so it can exceed what the
+      // contract can sample; the contract only floors it (Encumbrance.sol:191).
+      sampledSiblingHashes = siblings
+        .filter((x) => x.app.toLowerCase() === app.toLowerCase())
+        .slice(0, MAX_INSTRUCTION_SIBLINGS)
+        .map((x) => x.hash);
+
+      if (siblings.length > 0) {
+        const client = clientFor(n);
+        const results = await client.multicall({
+          contracts: siblings.map(
+            (sib) =>
+              ({
+                address: n.aqua,
+                abi: aquaAbi,
+                functionName: "rawBalances",
+                args: [maker, sib.app, sib.hash, tokenOut],
+              }) as const
+          ),
+          allowFailure: false,
+        });
         for (let i = 0; i < results.length; i++) {
           const [bal, tokensCount] = results[i] as unknown as [bigint, number];
-          if (tokensCount !== 0xff) {
+          if (tokensCount !== 0xff && tokensCount !== 0) {
             declaredTotalEncumbrance += bal;
           }
         }
