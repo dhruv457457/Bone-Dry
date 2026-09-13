@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/logo.jpg" alt="Bone-Dry Logo" width="120" style="border-radius: 24px; margin-bottom: 12px;" />
+<img src="./assets/logo.svg" alt="Bone-Dry Logo" width="120" style="border-radius: 24px; margin-bottom: 12px;" />
 
 # Bone Dry
 
