@@ -296,7 +296,7 @@ Depth chart — pick one and commit:
 - **(b)** keep the gaussian, retitle to "Illustrative shape", and delete the
   `Invariant: x · y = k` strip (`DepthChart.tsx:230`).
 
-**(a) is worth real effort** — no competitor draws real Aqua depth. But (b)
+**(a) is worth real effort** — real Aqua depth is rarely drawn. But (b)
 shipped honestly beats (a) half-done. What is not allowed is the present state:
 invented maths under a truthful-sounding caption.
 

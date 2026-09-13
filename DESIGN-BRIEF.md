@@ -47,13 +47,13 @@ is the wrong decision.**
 
 Two audiences, and they want opposite things from the same pixels.
 
-**Hackathon judges** (this is a competition entry — 1inch, Uniswap Foundation, and The Graph
+**Hackathon judges** (this is a hackathon entry — 1inch, Uniswap Foundation, and The Graph
 tracks). They will spend somewhere between ninety seconds and five minutes, will probably not
-connect a wallet, and are comparing this against a dozen other entries in the same hour. They need
+connect a wallet, and have many submissions to get through in the same hour. They need
 to understand what is novel here and see proof it is real, fast, without reading.
 
 **Actual DeFi users** — someone about to swap, or a maker deciding whether to publish liquidity.
-They want a fast, legible, trustworthy trading surface and do not care about the competition at
+They want a fast, legible, trustworthy trading surface and do not care about the hackathon at
 all.
 
 The current build serves neither well. It reads like a research paper that happens to have inputs
@@ -224,7 +224,7 @@ component above needs all of these, and several of them are the *normal* case, n
 2. **A single readable pattern for "promised vs. actually backed"** that works at four different
    scopes, so learning it once is enough.
 3. **A way for a judge who will not connect a wallet to see the product actually work.** This is
-   currently the biggest gap between this entry and the competition. What that is — a recorded run,
+   currently the biggest gap in this entry. What that is — a recorded run,
    a guided walkthrough, a pre-filled demonstration, something else entirely — is your call, but it
    has to be unambiguously labelled as a recording and never presented as live.
 4. **An on-ramp for someone who has never heard of Aqua**, without turning the product into a

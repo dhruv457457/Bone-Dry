@@ -329,7 +329,7 @@ free       = backing − encumbered
 ```
 
 Plain HTML and CSS is fine. **Do not add a maths-rendering dependency** (KaTeX or
-similar) for five expressions — two competitors did and it is not worth the weight.
+similar) for five expressions — it is not worth the weight.
 
 This is a differentiator: it turns "trust our number" into "here is the arithmetic
 and here are its inputs."

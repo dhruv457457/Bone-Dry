@@ -1,6 +1,5 @@
 # Bone Dry — strategic verdict and the evidence behind it
 
-Companion to [COMPETITIVE-PLAN.md](COMPETITIVE-PLAN.md) (the 23-repo teardown).
 This file records **the measurement that changed the strategy**, the council that
 argued it out, and the direction we settled on.
 
@@ -60,9 +59,9 @@ Per maker, `committed = Σ virtual across all their strategies`,
 
 ## 2. Why this changes the strategy
 
-Every competitor checks solvency **per maker**: Solvent scores an agent,
-Overdraft measures a wallet, Barker guards a position. Each check asks *"can this
-maker pay this promise?"* and each answer is individually **yes**.
+A solvency check is usually **per maker**: score an agent, measure a wallet, guard
+a position. Each check asks *"can this maker pay this promise?"* and each answer is
+individually **yes**.
 
 The 257 strategies on one wallet are each individually fine. They share one
 balance. They cannot all be paid.
@@ -70,8 +69,8 @@ balance. They cannot all be paid.
 That is a **joint** property. It is invisible to every per-maker data model in the
 field, and it is exactly what `MakerTokenPosition` in our subgraph already
 models — aggregated across strategies **and across apps**, because our schema
-keys on `app`. No competitor has a protocol-wide vantage point; they each see
-their own book.
+keys on `app`. A tool that reads one book at a time has no protocol-wide vantage
+point.
 
 ---
 
@@ -79,12 +78,12 @@ their own book.
 
 **Contrarian** — "Your differentiator is a preposition." *Set*-level vs
 *per*-maker is invisible to a judge with five minutes. You will be filed in the
-"solvency tooling" bucket with three other projects and ranked fourth. Separately:
+"solvency tooling" bucket with everything else. Separately:
 your index is fed by the API you claim to replace. Get out of the category.
 
 **First Principles** — Aqua is not an AMM or an order book. It is a **registry of
 uncollateralized promises**; `ship()` writes a number with nothing behind it.
-Competitors treat insolvency as binary. But a promise backed by shared collateral
+Insolvency is usually treated as binary. But a promise backed by shared collateral
 has a *probability* of delivery, and probability is priceable. The missing
 primitive is not a filter. It is **credit**.
 
@@ -114,8 +113,8 @@ demo depend on live mainnet state during judging — pin a block and replay.
 ### Blind spots caught
 
 1. **We had never counted.** The whole strategy was hypothesis until §1.
-2. **Cross-*app* visibility** is structural to our schema and absent from every
-   competitor's. It had not been named as an asset.
+2. **Cross-*app* visibility** is structural to our schema and absent from a
+   per-maker model. It had not been named as an asset.
 3. **`aqua_depth` already contains everything.** The reserve ratio is a `GROUP BY`.
    Most of this is a query, not a build.
 4. **The name already tells the story.**
@@ -130,8 +129,8 @@ demo depend on live mainnet state during judging — pin a block and replay.
 Three layers, each proving the next:
 
 1. **Reserve ratio** — per maker, per token, across every strategy and every app:
-   `backing / committed`. The number Aqua cannot produce and no competitor's
-   schema can express.
+   `backing / committed`. The number Aqua cannot produce and a per-maker schema
+   cannot express.
 2. **Stress test** — *"if 30% of advertised WETH depth were called in one block,
    who fails?"* A bank-run simulation against real state, with an ordering,
    because Aqua is literally first-fill-wins.
@@ -171,5 +170,5 @@ None decorative. This is the answer to "are we using Uniswap properly."
 | **Before** | "A Uniswap v4 pool with no liquidity, filled from 1inch Aqua makers, that skips makers who can't deliver." |
 | **After** | "1inch Aqua is fractional-reserve market making — 102,593 WETH advertised, 4 deliverable. We built the reserve ratio, the stress test, and the router that trades on them." |
 
-The old verb was *skip* — defensive, and a subset of what Solvent and Overdraft
-already do. The new claim is a measurement nobody else can take.
+The old verb was *skip* — defensive, and a subset of what a per-maker check already
+does. The new claim is a measurement of the whole book.

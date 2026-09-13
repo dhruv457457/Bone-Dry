@@ -611,7 +611,7 @@ export function Provide({
       </div>
 
       {/* What this wallet has already promised, on every chain we read. Replaces a
-          banner of competitor and fee figures that nothing in the app measured. */}
+          banner of market and fee figures that nothing in the app measured. */}
       <div style={{ marginBottom: 12 }}>
         <BookStrip
           book={makerBook.book}

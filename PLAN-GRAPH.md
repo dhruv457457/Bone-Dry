@@ -133,8 +133,8 @@ re-emitting the selector is the only way to observe one. That machinery is deplo
 correct. Nothing reads it.
 
 For The Graph track specifically: strip `MakerRefusal` and `EncumbranceApplication` and
-what remains is Shipped/Docked/Pulled/Pushed/Swapped — the same index any of the other ten
-subgraph projects in `COMPETITIVE-PLAN.md` would build in an afternoon. Those two entities
+what remains is Shipped/Docked/Pulled/Pushed/Swapped — the same index any Aqua subgraph
+would build in an afternoon. Those two entities
 *are* the submission.
 
 ---
@@ -196,8 +196,8 @@ column should distinguish **predicted** (solvency engine, pre-trade) from **obse
 (`MakerRefusal`, post-trade), and a maker page should show their refusal history with
 decoded reasons.
 
-That distinction is worth more than any additional chart on this project. Every competitor
-can predict. Only we emit the refusal and read it back.
+That distinction is worth more than any additional chart on this project. Anyone can
+predict a refusal. This project emits it and reads it back.
 
 ---
 

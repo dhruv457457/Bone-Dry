@@ -27,7 +27,7 @@ export function getReasonName(reason: Bytes): string {
 /**
  * Indexes MakerSkipped events emitted by Bone Dry's Tap.sol hook.
  *
- * In standard Aqua, insolvent/flaked fills revert silently with zero emitted events (SUBFLOOR problem).
+ * In standard Aqua, insolvent/flaked fills revert silently with zero emitted events.
  * Bone Dry catches them via try/catch and logs MakerSkipped, creating the first queryable
  * on-chain refusal and reliability history in DeFi.
  *

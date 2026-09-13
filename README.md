@@ -179,7 +179,7 @@ Measured on a Base mainnet fork (`forge test --gas-report`):
 | Fill with one sibling + haircut (Case 2) | 518,883 |
 | `EncumbranceApplied` event | ~3,035 |
 | Reading one sibling's `rawBalances` | ~2,600 cold |
-| **`dock()` — a maker revoking everything** | **4,452** |
+| **`dock()` — a maker revoking everything** | **4,452 exec (~36k total tx gas)** |
 
 That last row is the important one. See [Known limits](#known-limits).
 
@@ -266,7 +266,7 @@ compass for makers:
 
 The **Provide** tab surfaces this asymmetry directly to makers:
 1. **Cross-Chain Yield Inefficiency Radar:** Alerts makers to unserved volume on counterpart chains.
-2. **Smart Spread Benchmarks:** Recommends optimal spread pricing based on competitor density (e.g. 35 bps on Base vs. 5 bps on Ethereum).
+2. **Your book on every chain:** Shows what the connected wallet has promised on Base and Ethereum against what backs it, per chain and combined.
 3. **Opcode-35 Protected Deployment:** Makers can ship aggressive quotes on Base without risk of over-promising, because Opcode 35 dynamically cuts their quote or refuses as their wallet balance gets encumbered elsewhere.
 
 ### 120× latency elimination (4.4s → 36ms)
@@ -311,7 +311,7 @@ flowchart TB
   end
 
   subgraph thegraph["The Graph Indexing"]
-    SG["Aquifer Subgraph (Base & L1)<br/>• Decodes Raw SwapVM Bytecode<br/>• Reconstructs Sibling Debt Trees<br/>• Exposes Phantom Liquidity"]
+    SG["Aquifer Subgraph (Base)<br/>• Decodes Raw SwapVM Bytecode<br/>• Reconstructs Sibling Debt Trees<br/>• Exposes Phantom Liquidity"]
   end
 
   subgraph engine["Bone-Dry Engine & Next.js App"]
@@ -441,7 +441,7 @@ Two mechanics we relied on, each proven separately in
 - **`Aqua.pull()` settles to an arbitrary recipient.** Maker capital can move
   straight to a third party; the app never takes custody and needs no balance
   sheet. We found no other project using this.
-- **`dock()` costs 4,452 gas** and is instant, unilateral and unpenalised.
+- **`dock()` costs ~36k total tx gas (4,452 execution)** and is instant, unilateral and unpenalised.
 
 ### Uniswap Foundation
 
@@ -734,7 +734,6 @@ is documented in the instruction rather than hidden.
 |---|---|
 | [PROOFS.md](PROOFS.md) | four Aqua mechanics, proven on a mainnet fork |
 | [COUNCIL-VERDICT.md](COUNCIL-VERDICT.md) | the measurement, and why the direction changed |
-| [COMPETITIVE-PLAN.md](COMPETITIVE-PLAN.md) | what 23 other Aqua projects actually ship |
 | [PLAN-ANTIGRAVITY-VM.md](PLAN-ANTIGRAVITY-VM.md) | the opcode build spec |
 | [PLAN-ANTIGRAVITY-EVENTS.md](PLAN-ANTIGRAVITY-EVENTS.md) | events and indexing spec |
 | [PLAN-ANTIGRAVITY-UI.md](PLAN-ANTIGRAVITY-UI.md) | landing, dashboard and tabs spec |

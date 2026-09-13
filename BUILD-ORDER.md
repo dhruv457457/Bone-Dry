@@ -1,8 +1,7 @@
 # Bone Dry — build order
 
 What to actually do, in sequence. Decision and evidence live in
-[COUNCIL-VERDICT.md](COUNCIL-VERDICT.md); competitor teardown in
-[COMPETITIVE-PLAN.md](COMPETITIVE-PLAN.md).
+[COUNCIL-VERDICT.md](COUNCIL-VERDICT.md).
 
 Each step is gated on the one before it. Nothing here is speculative — steps 1–4
 are mostly queries over data we already hold.
@@ -31,9 +30,8 @@ recomputes them live during judging is a demo that can fail during judging.
 
 ## Step 2 — Own the data: deploy the subgraph to Ethereum mainnet *(hours)*
 
-Today `lib/indexer.ts` pages `api.1inch.dev/aqua/v1.0/strategies/opened`. Ten of
-23 competitors run their own subgraph; we are the only solvency project that does
-not own its data, and it costs us the Graph track.
+Today `lib/indexer.ts` pages `api.1inch.dev/aqua/v1.0/strategies/opened`. A
+solvency project that does not own its data is weak on the Graph track.
 
 - Copy `subgraph/subgraph.yaml` → `subgraph.mainnet.yaml`; change
   `network: base` → `network: mainnet`; set `startBlock` from `aquaGenesis`
@@ -87,8 +85,8 @@ one block, who fails?"*
 - Output: number of makers that fail, volume that reverts, and *which specific
   strategies collide with each other*.
 
-This is a bank-run simulation on real mainnet state. No competitor's data model
-can produce it.
+This is a bank-run simulation on real mainnet state. A per-maker data model cannot
+produce it.
 
 ---
 
@@ -131,17 +129,15 @@ live mainnet.
 
 ## Step 7 — Credibility pass *(hours)*
 
-Cheap items that competitors have and we do not.
+Cheap items we did not have yet.
 
-- **Tests.** We have none. Field has `vitest` in 7 repos, `matchstick-as` in 4.
-  Minimum: matchstick tests on the subgraph mappings (Graph judges look) and
+- **Tests.** We have none. Minimum: matchstick tests on the subgraph mappings (Graph judges look) and
   vitest on the solver from step 5.
-- **MCP server.** `lib/subgraphMcp.ts` exists, half-built. Seven competitors ship
-  `@modelcontextprotocol/sdk`. Expose `makerReserve`, `tokenDepth`,
+- **MCP server.** `lib/subgraphMcp.ts` exists, half-built. Expose `makerReserve`, `tokenDepth`,
   `stressTest` so an agent can ask "is this maker good for 100k USDC." This is
-  the whole field's AI story and it is one file for us.
+  one file for us.
 - **Self-chaining keeper.** Replace `*/30 * * * *` in
-  `.github/workflows/refresh-index.yml` with Solvent's pattern — 8 passes 60s
+  `.github/workflows/refresh-index.yml` with a self-chaining pattern — 8 passes 60s
   apart, then `gh workflow run` to re-trigger, cron as backstop only, plus a
   `concurrency` group. ~60s freshness for free, 15× better than today. Twenty
   minutes of work.
@@ -152,10 +148,9 @@ Cheap items that competitors have and we do not.
 
 ## Step 8 — Optional: the solvency floor as a real opcode *(1 day, only if 1–6 land)*
 
-Our skip rule lives in TypeScript. Solvent's `SolvencyFloor` refuses **inside the
-VM**, so a maker cannot quote what it cannot pay. Four competitors forked the
-router and added opcodes; we use `IExtruction`, the plug-in seam 1inch ships for
-you.
+Our skip rule lives in TypeScript. A floor that refuses **inside the VM** means a
+maker cannot quote what it cannot pay. Today we use `IExtruction`, the plug-in seam
+1inch ships for you.
 
 Fork `swap-vm` at `release/1.0.2` (per Discord — **not** `main`), strip unused
 opcodes for the EIP-170 bytecode limit, add ours.

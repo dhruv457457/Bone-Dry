@@ -17,9 +17,9 @@ wrong thing and it will look like it works.
 The 1inch Aqua track asks for *"a custom Aqua app that implements a sophisticated
 DeFi position"* and says *"projects that utilize SwapVM will be scored higher."*
 
-Every competitor prices off **external** state — an oracle (Keel), volatility
-(Riptide), a pool (Bebecita), an auction (Glasshouse). We are building the first
-Aqua position that prices off **its own wallet's existing obligations**.
+Pricing on Aqua usually reads **external** state — an oracle, volatility, a pool,
+an auction. We are building an Aqua position that prices off **its own wallet's
+existing obligations**.
 
 ### The mechanism
 
@@ -82,8 +82,7 @@ fork (see `PROOFS.md`):
 4. **Do not broadcast any transaction.** No `--broadcast`, no deploy scripts run
    against a live network. Fork tests only. Deployment is a separate, explicit
    decision by Dhruv.
-5. **Do not vendor or copy code from any competitor repo** (Riptide, Solvent,
-   Glasshouse, Subfloor, Keel, Bebecita, or any other ETHGlobal entry). Upstream
+5. **Do not vendor or copy code from any third-party repo.** Upstream
    `1inch/swap-vm` and `1inch/aqua` are the only external Solidity sources.
 6. **Never fake data or stub a passing test.** If something cannot be proven on a
    fork, say so and stop — do not write a mock that makes a green checkmark.
@@ -283,7 +282,7 @@ That pair is the submission's money shot. Log both clearly.
 - Do not reorder or reuse upstream opcode indices 0–34.
 - Do not claim, in code comments or anywhere else, that an Aqua commitment is
   binding, guaranteed, or irrevocable. `dock()` costs 4,452 gas (`PROOFS.md` P3).
-- Do not copy code from competitor repos.
+- Do not copy code from third-party repos.
 - Do not write a mock to turn a red test green. Report the blocker instead.
 
 ## 8. Open questions — answer, don't assume

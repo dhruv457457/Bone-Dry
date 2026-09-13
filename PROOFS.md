@@ -31,7 +31,7 @@ Result of a 400 USDC draw against a 1,000 USDC facility:
 | **the facility contract** | 0 | **0** |
 
 The app never takes custody, never holds a balance, needs no balance sheet.
-**A draw can repay a debt atomically.** Nobody in the field is using this.
+**A draw can repay a debt atomically.**
 
 ## P2 — A draw cannot exceed the commitment ✅
 
