@@ -76,6 +76,16 @@ export function RouteInspector({
               Aqua keys balances by app and a v4 pool binds one hook, so these
               cannot be combined — one is chosen. Choosing silently is the thing
               this project argues against, so the comparison is shown. */}
+          {/* §2.1 -- restored. Deleted with the receipt's ROUTED THROUGH panel on
+              the claim that this card still said it; it did not. "1 of 1 wallets"
+              read as opcode 35 filtering makers out, and this sentence is why it
+              no longer does. */}
+          {route.encumbranceAware ? (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink2)", lineHeight: 1.5, maxWidth: "80ch" }}>
+              <strong>Bone Dry book · {route.makersConsidered} strateg{route.makersConsidered === 1 ? "y" : "ies"}, all published by us.</strong>{" "}
+              Where opcode 35 runs — a demonstration of the constraint, not a market.
+            </p>
+          ) : null}
           {route.bookLabel && route.alternatives && route.alternatives.length > 0 ? (
             <p className={s.mono} style={{ margin: "6px 0 0", fontSize: 10.5, color: "var(--ink3)" }}>
               filling from the <strong style={{ color: "var(--ink2)" }}>{route.bookLabel}</strong> book

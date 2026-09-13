@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
@@ -253,8 +253,10 @@ export function Swap({
    * has to take "routes only to makers that pass the check" on faith, which is
    * the one thing this project argues nobody should have to do.
    *
-   * Every stage is driven by real state. Nothing is timed, staged or faked: if
-   * the quote is instant the rows land done, because they were.
+   * Every stage is driven by real state: if the quote is instant the rows land
+   * done, because they were. The one exception is the replay below, which re-plays
+   * these same facts on a timer after Swap is pressed -- the facts are real, the
+   * pacing is not, and it says so rather than pretending otherwise.
    */
   const txSteps: { label: string; detail?: ReactNode; tone: TxTone }[] = (() => {
     if (txPhase === "approving") {
@@ -372,14 +374,28 @@ export function Swap({
   const visibleSteps = animatingSteps ?? txSteps;
 
   // Intercept the swap button: play the pre-sign animation, then open the wallet.
+  // Latest onSwap, not the one captured at click time: a quote that refreshes
+  // during the replay must be the one that gets signed.
+  const onSwapRef = useRef(onSwap);
+  onSwapRef.current = onSwap;
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
   const handleSwapClick = () => {
     if (animStep !== null) return; // already animating
     setAnimStep(0);
-    setTimeout(() => setAnimStep(1), 800);
-    setTimeout(() => setAnimStep(2), 1600);
-    setTimeout(() => {
-      onSwap();
-    }, 2400);
+    timers.current = [
+      setTimeout(() => setAnimStep(1), 800),
+      setTimeout(() => setAnimStep(2), 1600),
+      setTimeout(() => {
+        onSwapRef.current();
+        // Hand back to the real pipeline immediately. executeSwap's pre-flight
+        // refusals (wrong network, no hook code, short balance) return with the
+        // phase still "idle", so the txPhase effect above never fires -- without
+        // this the button stayed disabled and "Opening wallet" spun until reload.
+        setAnimStep(null);
+      }, 2400),
+    ];
   };
 
   return (
