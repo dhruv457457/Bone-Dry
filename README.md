@@ -370,7 +370,7 @@ A status table that overclaims is worse than none.
 | Postgres index over 1inch's Aqua API (Ethereum) | live, refreshed on a schedule |
 | `BoneDryRouter` deployed to a public network | **deployed**, Base mainnet `0x74195573…` |
 | Provide-tab encumbrance builder, shipping opcode 35 | **live** — declares encumbrance server-side from `rawBalances` |
-| App routing a swap through the opcode-35 hook | **not yet** — see [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md) |
+| App routing a swap through the opcode-35 hook | **built** — the router plans both books and routes to the hook that can fill; first signed fill pending |
 | `MakerRefusal` / `EncumbranceApplication` indexed | **not yet** — see [PLAN-GRAPH.md](PLAN-GRAPH.md) |
 | Subgraph on Ethereum mainnet | **not yet** — see Known limits |
 | `Tap.sol` gate refusing incomplete sibling lists | **not yet** |
@@ -492,9 +492,11 @@ has not been moved onto it yet. See the note under [One fill, end to
 end](#one-fill-end-to-end--and-where-each-step-runs-today).
 
 **Three live encumbrance strategies**, maker
-`0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`, promising 0.21 USDC and 0.000036 WETH
-in total against a wallet holding 0.2276 and 0.0000389 — sibling encumbrance at
-6,165 bps, under the 8,000 refusal line with the widening curve already active.
+`0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`, repriced to market on 2026-09-12: 0.029558 USDC :
+0.0000117 WETH each (2,526 USDC/WETH against a Chainlink read of 2,526), promising 0.0887 USDC and
+0.0000351 WETH in total against a wallet holding 0.2276 and 0.0000389 — sibling encumbrance at
+6,011 bps, under the 8,000 refusal line with the widening curve already active. The first set,
+shipped at an implied 5,833, is left live as a real example of a maker quoting well above market.
 `ship()` transfers nothing, so an unbacked position would have cost exactly the
 same and been the phantom liquidity this project measures. The ship script carries
 `require()` guards that abort rather than overpromise.
