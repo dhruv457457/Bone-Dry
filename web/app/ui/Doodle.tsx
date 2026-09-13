@@ -133,24 +133,27 @@ export default function Doodle() {
     // tweens, and a ticker callback is neither.
     const shake = { amp: 0 };
     let buzz: (() => void) | undefined;
+    // Every tween that repeats forever, so they can be paused while the drawing is
+    // off screen. See the observer at the end of this effect.
+    const loops: gsap.core.Tween[] = [];
 
     const ctx = gsap.context(() => {
       // A slow lean, so he reads as holding something rather than posing next to
       // it. Pivoted at his feet — a figure under load bends from the ground.
-      gsap.to("[data-fig]", {
+      loops.push(gsap.to("[data-fig]", {
         rotation: 1.2,
         svgOrigin: "720 745",
         duration: 2.6,
         ease: "sine.inOut",
         yoyo: true,
         repeat: -1,
-      });
+      }));
 
       // A flame does not ease. Short, uneven, never at rest, and pinned at its
       // base so it licks upward instead of pulsing. On its own element, so the
       // scroll can grow the aura underneath without the two fighting over one
       // transform.
-      gsap.to("[data-flame]", {
+      loops.push(gsap.to("[data-flame]", {
         scaleY: 1.14,
         scaleX: 0.93,
         svgOrigin: "720 512",
@@ -158,13 +161,13 @@ export default function Doodle() {
         ease: "rough({ strength: 1.6, points: 24, clamp: true })",
         yoyo: true,
         repeat: -1,
-      });
+      }));
 
       // Every tongue on its own flicker. One shape scaled as a unit reads as a
       // pulsing blob -- fire is several things moving at different speeds, so
       // the duration and the delay both shift per tongue.
       gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-vflame]")).forEach((el, i) => {
-        gsap.to(el, {
+        loops.push(gsap.to(el, {
           scaleY: 1.26,
           scaleX: 0.88,
           transformOrigin: "50% 100%",
@@ -173,13 +176,13 @@ export default function Doodle() {
           yoyo: true,
           repeat: -1,
           delay: (i % 5) * 0.06,
-        });
+        }));
       });
 
       // Embers rise and go out. Staggered hard, or they pulse together and read
       // as a string of lights rather than as something being thrown.
       gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-ember]")).forEach((el, i) => {
-        gsap.fromTo(
+        loops.push(gsap.fromTo(
           el,
           { y: 0, opacity: 0.95 },
           {
@@ -190,7 +193,7 @@ export default function Doodle() {
             repeat: -1,
             delay: (i % 6) * 0.31,
           },
-        );
+        ));
       });
 
       // How hard the whole thing is buzzing. The scroll writes the amplitude and
@@ -382,7 +385,32 @@ export default function Doodle() {
         .to("[data-lava-r]", { scale: 2.4, svgOrigin: "1262 470", duration: 0.4, ease: "power2.out" }, SNAP);
     }, svg);
 
+    // The white band over the dark section. The drawing is a sticky layer that
+    // animates every frame (the buzz runs on the ticker, the flames and embers
+    // repeat forever), and it went on repainting after it scrolled away. Chrome
+    // then composited stale tiles of it -- paper with tan cliffs at the sides --
+    // over the clip-pathed dark section below. z-index on that section was not
+    // enough. So once the stage is out of view the drawing is hidden outright and
+    // nothing in it runs; it comes back, mid-motion, when the stage returns.
+    const hold = (svg.closest("[data-stage]") as HTMLElement | null) ?? svg;
+    const holder = svg.parentElement;
+    let running = true;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry.isIntersecting;
+        if (visible === running) return;
+        running = visible;
+        if (holder) holder.style.visibility = visible ? "" : "hidden";
+        loops.forEach((t) => (visible ? t.resume() : t.pause()));
+        if (buzz) (visible ? gsap.ticker.add(buzz) : gsap.ticker.remove(buzz));
+      },
+      { threshold: 0 }
+    );
+    io.observe(hold);
+
     return () => {
+      io.disconnect();
+      if (holder) holder.style.visibility = "";
       if (buzz) gsap.ticker.remove(buzz);
       ctx.revert();
     };
@@ -412,13 +440,6 @@ export default function Doodle() {
         <g className={s.rope} data-rope data-shake>
           <path data-rope-l d={ROPE.leftTaut} />
           <path data-rope-r d={ROPE.rightTaut} />
-          {/* The one label left in the drawing. The mountains carried figures for
-              a while and it read as a chart; what he is actually holding is the
-              promise, so that is the only thing named. It buzzes with everything
-              else under load. */}
-          <text className={s.ropeTag} x="404" y="664" textAnchor="middle" data-shake>
-            THE PROMISE
-          </text>
         </g>
 
         {/* ── the ground, left and right ─────────────────────────────────── */}

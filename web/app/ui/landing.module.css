@@ -584,3 +584,59 @@
   .stage { --band: clamp(170px, 30vh, 230px); }
   .doodleHold { bottom: 0; }
 }
+
+/* ── the fix ──────────────────────────────────────────────────────────────
+   The answer to the dark panel. Paper, not ink, so the page visibly turns from
+   the problem to the solution; three numbered steps, then receipts that link to
+   the real transactions. */
+.darkEyebrow { display: block; margin-bottom: 18px; color: rgba(251, 250, 246, 0.55); }
+.fix {
+  position: relative;
+  z-index: 1;
+  background: var(--paper);
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(80px, 13vh, 150px) 24px clamp(30px, 5vh, 60px);
+}
+.fixHead { max-width: 30ch; }
+.fixTitle {
+  margin: 12px 0 0;
+  font-size: clamp(30px, 4.4vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+}
+.fixTitle em { font-style: normal; color: var(--red-bright); }
+.fixSteps {
+  list-style: none;
+  margin: clamp(38px, 6vh, 64px) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: clamp(22px, 3vw, 44px);
+}
+.fixStep { border-top: 1px solid var(--ink); padding-top: 14px; }
+.fixNum { font-family: var(--mono); font-size: 11px; color: var(--red-bright); letter-spacing: 0.08em; }
+.fixH { margin: 8px 0 0; font-size: clamp(19px, 1.8vw, 24px); letter-spacing: -0.02em; line-height: 1.15; }
+.fixP { margin: 10px 0 0; color: var(--ink-soft); font-size: 15px; line-height: 1.5; max-width: 38ch; }
+.receipts { margin-top: clamp(44px, 7vh, 76px); }
+.receiptRow {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+.receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+  transition: transform 0.18s ease;
+}
+.receipt:hover { transform: translateY(-3px); }
+.receiptTag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(251, 250, 246, 0.55); }
+.receiptFig { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: clamp(24px, 2.6vw, 34px); letter-spacing: -0.04em; color: var(--red-bright); }
+.receiptSay { font-size: 14px; line-height: 1.4; color: rgba(251, 250, 246, 0.75); }
+.receiptTx { font-family: var(--mono); font-size: 11px; color: rgba(251, 250, 246, 0.5); margin-top: auto; }

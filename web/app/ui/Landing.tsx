@@ -236,7 +236,7 @@ export default function Landing() {
           </div>
 
           <div className={`${s.heroFoot} label`} data-fade data-herofoot>
-            <span>Live on Base Sepolia</span>
+            <span>Live on Base &amp; Ethereum</span>
             <span>Uniswap v4 hook</span>
             <span>1inch Aqua</span>
             <span>The Graph</span>
@@ -263,6 +263,9 @@ export default function Landing() {
           ))}
         </div>
         <div className={s.darkInner}>
+          <span className={`label ${s.darkEyebrow}`} data-finding>
+            The problem
+          </span>
           <h2 className={s.finding} data-finding>
             {FINDING.under} of the {FINDING.of} largest maker positions on Base
             were <b>promising liquidity they did not hold</b>.
@@ -310,6 +313,87 @@ export default function Landing() {
             Base read on {MEASURED}; Ethereum from this project&apos;s own index.
             The app re-runs both live.
           </p>
+        </div>
+      </section>
+
+      {/* The answer to the dark panel, before the proof strip and the three doors.
+          Scrolled as a talk, the page now runs claim -> problem -> fix -> proof ->
+          what you can do. Every receipt below is a real mainnet transaction or
+          address, recorded in deployments/base.json and deployments/ethereum.json. */}
+      <section className={s.fix} id="fix">
+        <div className={s.fixHead} data-proof>
+          <span className="label">The fix</span>
+          <h2 className={s.fixTitle}>
+            Opcode 35: a strategy that checks its own wallet <em>before</em> it quotes.
+          </h2>
+        </div>
+
+        <ol className={s.fixSteps}>
+          <li className={s.fixStep} data-proof>
+            <span className={s.fixNum}>01</span>
+            <h3 className={s.fixH}>Count what the wallet already owes</h3>
+            <p className={s.fixP}>
+              The strategy carries the total its maker has promised elsewhere. The VM
+              reads those sibling strategies on chain and reverts if the declared
+              figure is lower. Declaring more is always allowed.
+            </p>
+          </li>
+          <li className={s.fixStep} data-proof>
+            <span className={s.fixNum}>02</span>
+            <h3 className={s.fixH}>Price the strain</h3>
+            <p className={s.fixP}>
+              The quote widens with how committed the wallet is: haircut = widen &times;
+              utilisation. At 60% committed and 500&nbsp;bps, a fill gives up 3%.
+            </p>
+          </li>
+          <li className={s.fixStep} data-proof>
+            <span className={s.fixNum}>03</span>
+            <h3 className={s.fixH}>Refuse past the ceiling</h3>
+            <p className={s.fixP}>
+              At the ceiling the quote reverts. A Uniswap v4 hook catches it, records
+              why, and fills the swap from a maker that can pay, in the same
+              transaction.
+            </p>
+          </li>
+        </ol>
+
+        <div className={s.receipts} data-proof>
+          <span className="label">On mainnet, not a mock</span>
+          <div className={s.receiptRow}>
+            <a
+              className={s.receipt}
+              href="https://basescan.org/tx/0x95aab656e6e9459b37b399f62ffebccf6b06d5aa24041ab7f0c45de861fbafa2"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span className={s.receiptTag}>Base &middot; fill</span>
+              <span className={s.receiptFig}>298.54 bps</span>
+              <span className={s.receiptSay}>haircut at 59.71% committed, opcode 35 in the fill</span>
+              <span className={s.receiptTx}>0x95aab656&hellip; &#8599;</span>
+            </a>
+            <a
+              className={s.receipt}
+              href="https://basescan.org/tx/0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span className={s.receiptTag}>Base &middot; refusal</span>
+              <span className={s.receiptFig}>89.97% &gt; 80%</span>
+              <span className={s.receiptSay}>EncumbranceExceeded caught by the hook; the swap filled from another strategy</span>
+              <span className={s.receiptTx}>0xe29c843d&hellip; &#8599;</span>
+            </a>
+            <a
+              className={s.receipt}
+              href="https://etherscan.io/address/0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span className={s.receiptTag}>Ethereum &middot; deployed</span>
+              <span className={s.receiptFig}>2 chains</span>
+              <span className={s.receiptSay}>the same router and both hooks, with two opcode-35 strategies live</span>
+              <span className={s.receiptTx}>0xF3Da3145&hellip; &#8599;</span>
+            </a>
+          </div>
         </div>
       </section>
 
@@ -397,11 +481,11 @@ export default function Landing() {
             </div>
             <div className={s.panelRow}>
               <span>quote worse by</span>
-              <span>20% at the limit</span>
+              <span>4% at the limit</span>
             </div>
             <div className={s.panelRow}>
-              <span>siblings declared</span>
-              <span className={s.gone}>3 of 9 live</span>
+              <span>backing counted</span>
+              <span>min(balance, allowance)</span>
             </div>
           </div>
         </div>
@@ -441,8 +525,7 @@ export default function Landing() {
           Open the app
         </Link>
         <p className={s.ctaNote}>
-          Base Sepolia, free tokens, nothing to lose. Mainnet is there too,
-          read-only.
+          Base and Ethereum mainnet. Reading the book needs no wallet.
         </p>
       </section>
     </div>
