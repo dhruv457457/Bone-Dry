@@ -17,6 +17,11 @@ type RouteCacheEntry = {
 };
 const routeServerCache = new Map<string, RouteCacheEntry>();
 const ROUTE_CACHE_TTL = 20_000; // 20s TTL
+/** Quotes still being computed, by cache key. The Swap card, the background pre-fetch
+ *  and the cross-chain card ask for the same Ethereum quote within the same second;
+ *  without this each one paid the full ~20s of RPC reads, they slowed each other
+ *  down, and the browser gave up at 30s. Now the later ones wait for the first. */
+const routeInflight = new Map<string, Promise<Record<string, unknown> | null>>();
 
 /**
  * GET /api/route?tokenIn=&tokenOut=&amountIn=
@@ -43,6 +48,18 @@ export async function GET(req: Request) {
     if (hit && Date.now() - hit.at < ROUTE_CACHE_TTL) {
       return j(hit.data);
     }
+    const fresh = url.searchParams.get("fresh") === "1";
+    const pending = fresh ? undefined : routeInflight.get(cacheKey);
+    if (pending) {
+      const shared = await pending;
+      if (shared) return j(shared);
+      // the first computation failed; fall through and try again ourselves
+    }
+    let settle: (v: Record<string, unknown> | null) => void = () => {};
+    if (!fresh) {
+      routeInflight.set(cacheKey, new Promise((r) => (settle = r)));
+    }
+    try {
 
     // Each Aqua app is its own book, and they cannot be merged.
     //
@@ -71,7 +88,12 @@ export async function GET(req: Request) {
         //
         // Measured on Base: one routed maker was indexed at 3,927,565,582,548 and
         // held 2,423,165,503,335 live — 38% less. The transaction reverted.
-        depths = await measureDepth(n, indexed, tokenOut, book.app);
+        // Re-check live only what the index last saw holding something. On Ethereum
+        // that is 177 of 477: a strategy whose wallet was empty at the last refresh
+        // cannot fill now unless the maker topped up since, and it reappears at the
+        // next refresh. Measured, this was the largest single cost of a quote.
+        const held = indexed.filter((r) => r.depth > 0n);
+        depths = await measureDepth(n, held, tokenOut, book.app);
         source = "indexed-db + live depth recheck";
       } else {
         // The index for history, a short chain scan for the tail it has not reached.
@@ -93,6 +115,9 @@ export async function GET(req: Request) {
       // Having the token is not the same as being willing to part with it. Probe
       // each solvent maker once and drop the ones whose quote reverts, so their
       // share of the input is not thrown away on a fill that can never land.
+      // Every held candidate is probed. Capping this to the deepest 60 was tried and
+      // cut 3 of Ethereum's 4 fillable makers: the deepest wallets are mostly the
+      // ones whose quotes revert, and the fills come from further down the list.
       const { fillable, unfillable } = await filterFillable(n, depths, tokenIn, tokenOut, amountIn, book.app);
 
       // One candidate per maker: `depths` is per-strategy, and sibling strategies
@@ -283,8 +308,14 @@ export async function GET(req: Request) {
       routeServerCache.clear();
     }
     routeServerCache.set(cacheKey, { data: payload, at: Date.now() });
+    settle(payload);
 
     return j(payload);
+    } finally {
+      // Resolves waiters with null if we threw before settling; a no-op otherwise.
+      settle(null);
+      if (!fresh) routeInflight.delete(cacheKey);
+    }
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
     if ((e as Error).message?.startsWith("unknown chain")) return fail((e as Error).message, 400);

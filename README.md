@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./assets/logo.jpg" alt="Bone-Dry Logo" width="120" style="border-radius: 24px; margin-bottom: 12px;" />
+
 # Bone Dry
 
 **A promise that can't bounce.**
@@ -18,6 +20,10 @@ Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation, The 
 
 **[Live demo](https://bone-dry.vercel.app/)** · deployed on Base and Ethereum mainnet
 
+<br/><br/>
+
+<img src="./assets/landing-page.png" alt="Bone-Dry Interface Hero" width="100%" style="border-radius: 8px; border: 1px solid #333;" />
+
 </div>
 
 ---
@@ -32,6 +38,9 @@ It also means nothing stops a maker promising the same money twice. Or 257 times
 
 - [The problem, in one paragraph](#the-problem-in-one-paragraph)
 - [We measured it](#we-measured-it)
+- [Platform walkthrough](#platform-walkthrough)
+  - [Taker desk: Pre-flight solvency depth & dual-chain routing](#taker-desk-pre-flight-solvency-depth--dual-chain-routing)
+  - [Maker desk: Solvency haircut & on-chain refusal curve](#maker-desk-solvency-haircut--on-chain-refusal-curve)
 - [How it works](#how-it-works)
   - [One fill, end to end](#one-fill-end-to-end)
   - [What a fill costs](#what-a-fill-costs)
@@ -111,6 +120,30 @@ Per maker: `committed = Σ virtual across their live strategies`,
 > complaint. That is evidence *for* the argument, not a flaw in the measurement,
 > but do not read it as real depth. DAI at 20.6% matters too: a metric reading
 > 100% everywhere would mean the measurement was broken, not the market.
+
+## Platform walkthrough
+
+Bone Dry turns solvency verification into a first-class user experience across both taker and maker workflows on Base and Ethereum mainnet.
+
+### Taker desk: Pre-flight solvency depth & dual-chain routing
+
+Before any signature touches a wallet, Bone Dry verifies on-chain solvency for every candidate maker, clamps quotes to verifiable backing (`min(balanceOf, allowance)`), and evaluates whether routing across Base or Ethereum yields superior deliverable output.
+
+<p align="center">
+  <img src="./assets/swap-desk.png" alt="Bone-Dry Swap Desk with Pre-Flight Solvency Depth" width="100%" style="border-radius: 8px; border: 1px solid #333;" />
+  <br/>
+  <em><b>Swap Workspace</b>: Live deliverable vs. phantom liquidity depth histogram, maker encumbrance clamping, and dual-chain execution routing.</em>
+</p>
+
+### Maker desk: Solvency haircut & on-chain refusal curve
+
+Makers construct strategies whose SwapVM bytecode enforces Opcode 35 (`OP_ENCUMBERED_CAP`). The strategy dynamically widens its spread as sister commitments consume backing, and enforces a hard on-chain refusal cliff (`maxUtilBps`) before writing a cheque the wallet cannot cover.
+
+<p align="center">
+  <img src="./assets/provide-solvency-curve.png" alt="Bone-Dry Maker Solvency Response Curve" width="100%" style="border-radius: 8px; border: 1px solid #333;" />
+  <br/>
+  <em><b>Provide / Maker Builder</b>: Interactive Solvency Response Curve illustrating linear widening haircuts, order size floor (<code>amountOut &gt; free</code>), refusal cliff (<code>util &ge; max</code>), and cross-chain sibling aggregation.</em>
+</p>
 
 ## How it works
 
