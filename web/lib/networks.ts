@@ -70,7 +70,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     id: 8453,
     key: "base",
     label: "Base",
-    purpose: "Real Aqua makers. Read-only — this is the evidence, not a sandbox.",
+    purpose: "Real Aqua makers, and Bone Dry's own router, hooks and strategies beside them.",
     testnet: false,
     explorer: "https://basescan.org",
     // QuikNode's paid Build plan first -- verified live: correct chainId,
@@ -264,6 +264,16 @@ export function appsOf(n: Network): AquaApp[] {
 }
 
 export const DEFAULT_NETWORK: NetworkId = 8453;
+
+/** Networks a user can switch to. Ethereum (read-only measurement) and Base
+ *  Sepolia stay fully configured -- every API route still serves them -- but they
+ *  are hidden from the switcher for the submission, where Base mainnet is the
+ *  product. Add an id back here to re-enable one; nothing else needs to change. */
+export const ENABLED_NETWORKS: NetworkId[] = [8453];
+
+export function isEnabledNetwork(id: number): id is NetworkId {
+  return (ENABLED_NETWORKS as number[]).includes(id);
+}
 
 export function isNetworkId(v: unknown): v is NetworkId {
   return v === 8453 || v === 84532 || v === 1;

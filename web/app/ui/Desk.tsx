@@ -17,6 +17,7 @@ import {
   publicClientFor,
   NETWORKS,
   DEFAULT_NETWORK,
+  isEnabledNetwork,
   type NetworkId,
   type Network,
 } from "@/lib/networks";
@@ -80,18 +81,19 @@ export default function Desk({
   initialChain?: string;
   initialAddress?: string;
 } = {}) {
-  const [chainId, setChainId] = useState<NetworkId>(() => {
-    if (initialChain === "8453") return 8453;
-    if (initialChain === "84532") return 84532;
-    if (initialChain === "1") return 1;
+  // Only networks in ENABLED_NETWORKS can be selected, including from a ?chain=
+  // link, so a hidden network cannot be reached by URL either.
+  const [chainId, setChainIdRaw] = useState<NetworkId>(() => {
+    const pick = (c: string | null | undefined) => (c && isEnabledNetwork(Number(c)) ? (Number(c) as NetworkId) : null);
+    const fromProp = pick(initialChain);
+    if (fromProp) return fromProp;
     if (typeof window !== "undefined") {
-      const c = new URLSearchParams(window.location.search).get("chain");
-      if (c === "8453") return 8453;
-      if (c === "84532") return 84532;
-      if (c === "1") return 1;
+      const fromUrl = pick(new URLSearchParams(window.location.search).get("chain"));
+      if (fromUrl) return fromUrl;
     }
     return DEFAULT_NETWORK;
   });
+  const setChainId = (c: NetworkId) => setChainIdRaw(isEnabledNetwork(c) ? c : DEFAULT_NETWORK);
   const net = NETWORKS[chainId];
   const hook = net.hook;
 
@@ -120,9 +122,7 @@ export default function Desk({
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
     const c = search.get("chain");
-    if (c === "8453") setChainId(8453);
-    else if (c === "84532") setChainId(84532);
-    else if (c === "1") setChainId(1);
+    if (c && isEnabledNetwork(Number(c))) setChainId(Number(c) as NetworkId);
 
     const p = search.get("pair");
     if (p && pairsFor(chainId).some((pair) => pair.id === p)) {

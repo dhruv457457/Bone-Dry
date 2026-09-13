@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import s from "../app.module.css";
 import { Bar, Blocked, Shim, Table, Trow } from "./bits";
 import { FindingCard } from "./Shell";
@@ -9,6 +9,10 @@ import { CopyButton } from "../CopyButton";
 import type { AppsResponse, CoverageResponse } from "../types";
 import type { Network } from "@/lib/networks";
 import { tokensForChain } from "@/lib/tokenList";
+
+/** Rows per page. 172 positions rendered at once made the page a scroll through
+ *  every maker on Base before reaching anything below the table. */
+const PAGE_SIZE = 20;
 
 const MAKER_COLS = "minmax(150px,1.2fr) 96px 58px 120px 132px 146px";
 const APP_COLS = "1fr 96px 60px 68px";
@@ -36,6 +40,7 @@ export function Explore({
   onRetry: () => void;
 }) {
   const [sort, setSort] = useState<Sort>("worst");
+  const [page, setPage] = useState(0);
 
   /** Address → symbol, for the tokens this chain's list knows. Built once per
    *  network rather than per row; the coverage API returns decimals but no
@@ -53,6 +58,12 @@ export function Explore({
     else list.sort((a, b) => b.activeStrategies - a.activeStrategies);
     return list;
   }, [coverage, sort]);
+
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageClamped = Math.min(page, pages - 1);
+  const pageRows = rows.slice(pageClamped * PAGE_SIZE, pageClamped * PAGE_SIZE + PAGE_SIZE);
+  // A new sort re-orders everything, so page 4 of the old order is meaningless.
+  useEffect(() => setPage(0), [sort, net.id]);
 
   /**
    * Counts, not sums.
@@ -216,7 +227,7 @@ export function Explore({
                 </>
               }
             >
-              {rows.map((m, i) => {
+              {pageRows.map((m, i) => {
                 const cov = covOf(m.coverageBps);
                 return (
                   <Trow cols={MAKER_COLS} tone={cov === 0 ? "short" : undefined} key={`${m.maker}-${m.token}-${i}`}>
@@ -254,6 +265,33 @@ export function Explore({
                 );
               })}
             </Table>
+            {pages > 1 ? (
+              <div
+                style={{
+                  padding: "10px 20px",
+                  borderTop: "1px solid var(--rule)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <button className={`${s.btn} ${s.btnXs}`} disabled={pageClamped === 0} onClick={() => setPage(pageClamped - 1)}>
+                  ‹ Prev
+                </button>
+                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+                  {pageClamped * PAGE_SIZE + 1}–{Math.min(rows.length, (pageClamped + 1) * PAGE_SIZE)} of {rows.length} · page{" "}
+                  {pageClamped + 1} of {pages}
+                </span>
+                <button
+                  className={`${s.btn} ${s.btnXs}`}
+                  disabled={pageClamped >= pages - 1}
+                  onClick={() => setPage(pageClamped + 1)}
+                >
+                  Next ›
+                </button>
+              </div>
+            ) : null}
           </section>
 
           <section className={`${s.card} ${s.cardClip}`}>

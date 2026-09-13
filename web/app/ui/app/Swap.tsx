@@ -105,10 +105,13 @@ export function Swap({
   const [raw, setRaw] = useState(false);
   const [bookFilter, setBookFilter] = useState<BookFilter>("all");
   const [bookPage, setBookPage] = useState(0);
-  // Pre-sign animation state. null = not animating. 0/1/2 = step index.
-  // The wallet is opened AFTER step 2 completes, so the user sees the full
-  // verification sequence before the popup interrupts focus.
-  const [animStep, setAnimStep] = useState<null | 0 | 1 | 2>(null);
+  // The swap modal. It opens only when Swap is pressed -- the verification steps
+  // used to sit in the card permanently, already "done", before anything had been
+  // asked for. animStep paces the replay (null = not replaying); handedOff marks
+  // that onSwap has been called and the wallet is being asked.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [animStep, setAnimStep] = useState<null | 0 | 1 | 2 | 3>(null);
+  const [handedOff, setHandedOff] = useState(false);
 
   // Reset the animation whenever a transaction cycle completes or is aborted,
   // so the next trade re-runs the sequence from the top.
@@ -333,73 +336,147 @@ export function Swap({
     return steps;
   })();
 
-  // When animStep is running we replace the static pipeline with a sequenced
-  // replay of the same facts — one step appearing every 800 ms. The data is
-  // real; only the timing is artificial. The wallet opens on the 3rd tick.
+  // The replay: the same real facts the route already established, revealed one
+  // stage at a time. The facts are real; the pacing is not, and it says so here.
   const animatingSteps: typeof txSteps | null = (() => {
-    if (animStep === null || txPhase !== "idle") return null;
-    const bookDetail = makers
-      ? `${makers.makers.length} live strategies on ${tokenOut.symbol}`
-      : "…";
-    const solventDetail = route
-      ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
-      : "…";
-    const routeDetail = route
-      ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.opcode35Filled ? " · opcode 35" : ""}`
-      : "…";
+    if (animStep === null) return null;
+    const tone = (stage: number): TxTone => (animStep > stage ? "done" : animStep === stage ? "live" : "idle");
     return [
       {
         label: "Read the book",
-        detail: animStep >= 0 ? bookDetail : "…",
-        tone: (animStep >= 1 ? "done" : "live") as TxTone,
+        detail: animStep >= 1 && makers ? `${makers.makers.length} live strategies on ${tokenOut.symbol}` : "asking the index",
+        tone: tone(0),
       },
       {
         label: "Re-read every maker on chain",
-        detail: animStep >= 1 ? solventDetail : "balance and allowance, not the index",
-        tone: (animStep === 0 ? "idle" : animStep >= 2 ? "done" : "live") as TxTone,
+        detail:
+          animStep >= 2 && route
+            ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
+            : "balance and allowance, not the index",
+        tone: tone(1),
       },
       {
         label: "Route found",
-        detail: animStep >= 2 ? routeDetail : undefined,
-        tone: (animStep < 2 ? "idle" : "done") as TxTone,
+        detail:
+          animStep >= 3 && route
+            ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.opcode35Filled ? " · opcode 35" : ""}`
+            : undefined,
+        tone: tone(2),
       },
       {
-        label: "Opening wallet…",
-        detail: undefined,
-        tone: (animStep < 2 ? "idle" : "live") as TxTone,
+        label: "Ready to sign",
+        detail: animStep >= 3 ? (priceSevere ? "check the rate first" : "opening your wallet") : undefined,
+        tone: tone(3),
       },
     ];
   })();
 
-  const visibleSteps = animatingSteps ?? txSteps;
-
-  // Intercept the swap button: play the pre-sign animation, then open the wallet.
   // Latest onSwap, not the one captured at click time: a quote that refreshes
   // during the replay must be the one that gets signed.
   const onSwapRef = useRef(onSwap);
   onSwapRef.current = onSwap;
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const clearTimers = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  };
+  useEffect(() => clearTimers, []);
+
+  // The replay hands over to the wallet phases as soon as they start.
+  useEffect(() => {
+    if (txPhase !== "idle") {
+      setAnimStep(null);
+      setHandedOff(false);
+    }
+  }, [txPhase]);
 
   const handleSwapClick = () => {
-    if (animStep !== null) return; // already animating
+    if (modalOpen) return;
+    setModalOpen(true);
+    setHandedOff(false);
     setAnimStep(0);
+    clearTimers();
     timers.current = [
-      setTimeout(() => setAnimStep(1), 800),
-      setTimeout(() => setAnimStep(2), 1600),
+      setTimeout(() => setAnimStep(1), 750),
+      setTimeout(() => setAnimStep(2), 1500),
+      setTimeout(() => setAnimStep(3), 2250),
       setTimeout(() => {
-        onSwapRef.current();
-        // Hand back to the real pipeline immediately. executeSwap's pre-flight
-        // refusals (wrong network, no hook code, short balance) return with the
-        // phase still "idle", so the txPhase effect above never fires -- without
-        // this the button stayed disabled and "Opening wallet" spun until reload.
         setAnimStep(null);
-      }, 2400),
+        setHandedOff(true);
+        onSwapRef.current();
+      }, 3000),
     ];
   };
 
+  const busyInWallet = txPhase === "approving" || txPhase === "swapping";
+  const canClose = animStep === null && !busyInWallet;
+  const closeModal = () => {
+    // Closing during the replay cancels it: nothing has been signed yet.
+    clearTimers();
+    setAnimStep(null);
+    setHandedOff(false);
+    setModalOpen(false);
+  };
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && (canClose || animStep !== null)) closeModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const modalSteps: typeof txSteps =
+    animatingSteps ??
+    (busyInWallet || txPhase === "done"
+      ? txSteps
+      : txNote
+        ? [{ label: "Refused before signing", detail: txNote, tone: "bad" as TxTone }]
+        : handedOff
+          ? [
+              { label: "Route verified", tone: "done" as TxTone },
+              { label: "Opening wallet…", tone: "live" as TxTone },
+            ]
+          : []);
+
   return (
     <>
+      {modalOpen ? (
+        <div className={s.swapModalBackdrop} role="presentation" onClick={() => (canClose ? closeModal() : null)}>
+          <div
+            className={s.swapModal}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Swap progress"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className={s.label} style={{ margin: 0 }}>Swap</p>
+            <h3 className={s.display} style={{ fontSize: 24, margin: "6px 0 2px" }}>
+              {input} {tokenIn.symbol} → {tokenOut.symbol}
+            </h3>
+            <p className={s.mono} style={{ margin: "0 0 14px", fontSize: 11, color: "var(--ink3)" }}>
+              {route ? `quoted ${units(route.amountOut, tokenOut.decimals, 8)} ${tokenOut.symbol}` : ""} · on {net.label}
+            </p>
+            <TxSteps steps={modalSteps} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+              {animStep !== null ? (
+                <button className={`${s.btn} ${s.btnXs}`} onClick={closeModal}>
+                  Cancel
+                </button>
+              ) : canClose ? (
+                <button className={`${s.btn} ${s.btnSolid}`} onClick={closeModal}>
+                  {txPhase === "done" ? "Done" : "Close"}
+                </button>
+              ) : (
+                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
+                  continue in your wallet
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* One line, as every other tab uses. The full card put the Swap button
           near y=600 -- below the fold on a laptop -- to repeat a number the rail
           already carries. The histogram version stays on Explore, where the
@@ -536,7 +613,7 @@ export function Swap({
 
           <button
             className={`${s.btnBlock} ${txPhase === "done" && txNote ? s.btnBlockShort : ""}`}
-            disabled={actionDisabled || animStep !== null}
+            disabled={actionDisabled || modalOpen}
             onClick={handleSwapClick}
           >
             {actionLabel}
@@ -574,7 +651,8 @@ export function Swap({
                   : `Live on ${net.label} · routes only to makers that pass the check.`}
           </p>
 
-          <TxSteps steps={visibleSteps} />
+          {/* Only the receipt stays in the card once the modal closes. */}
+          {txPhase === "done" && !modalOpen ? <TxSteps steps={txSteps} /> : null}
           {error ? (
             <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 11, color: "var(--short)" }}>
               {error}

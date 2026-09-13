@@ -1003,3 +1003,23 @@
 /* Portfolio: holdings and swaps side by side under the full-width positions table. */
 .pfPair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
 @media (max-width: 900px) { .pfPair { grid-template-columns: 1fr; } }
+
+/* Swap modal: the verification steps, shown only once Swap is pressed. */
+.swapModalBackdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(20, 18, 15, 0.42);
+  display: grid; place-items: center; padding: 20px;
+  animation: swapFade .16s ease-out;
+}
+.swapModal {
+  width: min(100%, 440px);
+  background: var(--surface, #fffdf8);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 24px 24px 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+  animation: swapRise .2s ease-out;
+}
+@keyframes swapFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes swapRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .swapModalBackdrop, .swapModal { animation: none; } }

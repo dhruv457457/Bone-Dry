@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import s from "../app.module.css";
 import { Spinner } from "./bits";
 import type { CoverageResponse } from "../types";
-import { NETWORKS, type Network, type NetworkId } from "@/lib/networks";
+import { NETWORKS, ENABLED_NETWORKS, type Network, type NetworkId } from "@/lib/networks";
 
 export type Tab = "swap" | "provide" | "portfolio" | "explore" | "lookup";
 export const TABS: Tab[] = ["swap", "provide", "portfolio", "explore", "lookup"];
@@ -76,9 +76,9 @@ export function Header({
               why. This was briefly hardcoded to carry the purpose labels; the
               labels live in the lookup below instead, so both hold. */}
           <div className={s.chainSeg}>
-            {(Object.keys(NETWORKS) as unknown as NetworkId[])
-              .map(Number)
-              .map((c) => c as NetworkId)
+            {/* ENABLED_NETWORKS, not every key of NETWORKS: Ethereum and Base
+                Sepolia are hidden for the submission but still configured. */}
+            {ENABLED_NETWORKS
               .map((c) => (
                 <button
                   key={c}
