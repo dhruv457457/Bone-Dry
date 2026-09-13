@@ -50,21 +50,5 @@ dataSources:
           handler: handleSwapped
         - event: EncumbranceApplied(indexed address,indexed bytes32,indexed address,uint256,uint256,uint256,bool,uint256,uint256)
           handler: handleEncumbranceApplied
-templates:
-  - kind: ethereum/contract
-    name: Tap
-    network: mainnet
-    source:
-      abi: Tap
-    mapping:
-      kind: ethereum/events
-      apiVersion: 0.0.7
-      language: wasm/assemblyscript
-      file: ./src/tap.ts
-      entities: [MakerRefusal, Maker, Protocol]
-      abis:
-        - name: Tap
-          file: ./abis/Tap.json
-      eventHandlers:
-        - event: MakerSkipped(indexed address,indexed bytes32,indexed address,uint256,bytes4)
-          handler: handleMakerSkipped
+# No Tap data source on Ethereum: no Bone Dry hook is deployed there. A Tap
+# template used to sit here that nothing instantiated, which read as coverage.

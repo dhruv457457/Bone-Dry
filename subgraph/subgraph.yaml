@@ -48,14 +48,42 @@ dataSources:
       eventHandlers:
         - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
           handler: handleSwapped
+  # BoneDryRouter: SwapVM with opcode 35 appended. The only router that can emit
+  # EncumbranceApplied -- the handler used to sit on 1inch's router above, whose
+  # opcode table ends at 34, so it could never fire. Deployed at block 51213548
+  # (tx 0xd034eb62). First real event: tx 0x95aab656, block 51242689.
+  - kind: ethereum
+    name: BoneDryRouter
+    network: base
+    source:
+      address: "0x74195573Fa9bC965667e03319F2C58567d4B96BE"
+      abi: SwapVM
+      startBlock: 51213548
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/swapvm.ts
+      entities: [Fill, Strategy, Maker, Protocol, EncumbranceApplication, MakerTokenPosition]
+      abis:
+        - name: SwapVM
+          file: ./abis/SwapVM.json
+      eventHandlers:
+        - event: Swapped(bytes32,address,address,address,address,uint256,uint256)
+          handler: handleSwapped
         - event: EncumbranceApplied(indexed address,indexed bytes32,indexed address,uint256,uint256,uint256,bool,uint256,uint256)
           handler: handleEncumbranceApplied
-templates:
-  - kind: ethereum/contract
+  # Both Tap hooks, as plain data sources. Tap used to be declared under
+  # `templates:` and nothing ever called TapTemplate.create(), so MakerSkipped was
+  # never indexed and MakerRefusal was never written -- silently. Start blocks are
+  # the first block each hook has code at, measured on chain.
+  - kind: ethereum
     name: Tap
     network: base
     source:
+      address: "0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088"
       abi: Tap
+      startBlock: 51140916
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -68,17 +96,22 @@ templates:
       eventHandlers:
         - event: MakerSkipped(indexed address,indexed bytes32,indexed address,uint256,bytes4)
           handler: handleMakerSkipped
-# A Tap data source belongs here once Bone Dry's hook is deployed to Base
-# mainnet -- every other data source above targets `network: base` because
-# that's what this manifest is. It does not exist there yet (see
-# HOOK_ADDRESS / NEXT_PUBLIC_HOOK_ADDRESS in web/lib/networks.ts: mainnet's
-# hook is unset). The mapping (src/tap.ts) and schema fields (MakerRefusal,
-# Maker.skipsAsMaker, Protocol.skips) are already written and ready --
-# what's missing is a manifest to attach them to. A datasource block was
-# committed here for a moment pointed at 0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088
-# under `network: base`, which is Base *Sepolia*'s Tap hook, not mainnet's --
-# so it would have indexed nothing, forever, with no error to say why.
-# Sepolia already has its own Aqua/router/hook trio deployed and its own
-# SEPOLIA_GRAPH_URL wired in networks.ts with nothing feeding it; the
-# Tap data source belongs in a second manifest targeting `base-sepolia`
-# with that trio's real addresses, not bolted onto this one.
+  - kind: ethereum
+    name: TapBoneDry
+    network: base
+    source:
+      address: "0xaC7bCA41EA8Fce76651684943Db2c38003c98088"
+      abi: Tap
+      startBlock: 51213977
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/tap.ts
+      entities: [MakerRefusal, Maker, Protocol]
+      abis:
+        - name: Tap
+          file: ./abis/Tap.json
+      eventHandlers:
+        - event: MakerSkipped(indexed address,indexed bytes32,indexed address,uint256,bytes4)
+          handler: handleMakerSkipped
