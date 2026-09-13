@@ -11,9 +11,12 @@ and refuses, on-chain, before it can write a cheque that bounces.
 [![SwapVM opcode 35](https://img.shields.io/badge/SwapVM-opcode%2035-2a6ebb?style=flat-square)](https://github.com/1inch/swap-vm/tree/release/1.0.2)
 [![Uniswap v4](https://img.shields.io/badge/Uniswap-v4%20hook-ff007a?style=flat-square)](https://github.com/Uniswap/v4-core)
 [![The Graph](https://img.shields.io/badge/The%20Graph-Aquifer-6747ed?style=flat-square)](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.4)
-[![tests](https://img.shields.io/badge/tests-54%20fork%20%2B%2015%20matchstick-2ecc71?style=flat-square)](#security-and-testing)
+[![tests](https://img.shields.io/badge/tests-56%20foundry%20%2B%2015%20matchstick-2ecc71?style=flat-square)](#security-and-testing)
+[![live](https://img.shields.io/badge/live-Base%20%2B%20Ethereum%20mainnet-111?style=flat-square)](https://bone-dry.vercel.app/)
 
 Built for ETHOnline 2026 — 1inch (Build an Aqua App), Uniswap Foundation, The Graph.
+
+**[Live demo](https://bone-dry.vercel.app/)** · deployed on Base and Ethereum mainnet
 
 </div>
 
@@ -32,12 +35,12 @@ It also means nothing stops a maker promising the same money twice. Or 257 times
 - [How it works](#how-it-works)
   - [One fill, end to end](#one-fill-end-to-end)
   - [What a fill costs](#what-a-fill-costs)
-- [Cross-Chain Solvency Intelligence & Pre-Flight Audit](#cross-chain-solvency-intelligence--pre-flight-audit)
-  - [The liquidity disparity: Base vs. Ethereum](#the-liquidity-disparity-base-vs-ethereum)
-  - [The pre-flight solvency pipeline & decision gate](#the-pre-flight-solvency-pipeline--decision-gate)
-  - [Maker-side economic symmetry](#maker-side-economic-symmetry)
-  - [120× latency elimination (4.4s → 36ms)](#120-latency-elimination-44s--36ms)
-  - [Zero-scroll workspace ergonomics](#zero-scroll-workspace-ergonomics)
+- [Cross-chain solvency](#cross-chain-solvency)
+  - [Same trade, both chains](#same-trade-both-chains)
+  - [The pre-flight check](#the-pre-flight-check)
+  - [Your book on every chain](#your-book-on-every-chain)
+  - [Fast quotes](#fast-quotes)
+  - [The swap workspace](#the-swap-workspace)
 - [Architecture](#architecture)
 - [The instruction](#the-instruction)
   - [The curve](#the-curve)
@@ -52,7 +55,7 @@ It also means nothing stops a maker promising the same money twice. Or 257 times
 - [Getting started](#getting-started)
 - [Deployed addresses](#deployed-addresses)
 - [Security and testing](#security-and-testing)
-- [Known limits](#known-limits)
+- [Design notes and roadmap](#design-notes-and-roadmap)
 
 ---
 
@@ -122,7 +125,7 @@ to the maker's *other* strategies, and prices accordingly:
 Not a filter we run on your behalf. A property of the position itself, true for any
 taker through any app, whether Bone Dry is involved or not.
 
-### One fill, end to end — and where each step runs today
+### One fill, end to end
 
 ```mermaid
 flowchart LR
@@ -133,7 +136,7 @@ flowchart LR
   R -->|"balanceOf / allowance"| ERC["tokenOut"]
   R -->|"pull()"| AQ
   AQ -->|"safeTransferFrom"| W["Maker wallet"]
-  W -->|"tokens"| T
+  W -->|"tokens, via the hook<br/>and PoolManager"| T
   TAP -.->|"refusal caught<br/>MakerSkipped(reason)"| LOG["logs → subgraph"]
 ```
 
@@ -142,13 +145,14 @@ flowchart LR
 3. It quotes each candidate maker through `BoneDryRouter`.
 4. Opcode 35 sums the maker's sibling commitments, reads real backing, and either
    adjusts the quote or reverts.
-5. Survivors are filled by `Aqua.pull()`, which moves tokens **straight from the
-   maker's wallet** — the hook never takes custody.
+5. Survivors are filled by `Aqua.pull()` from the **maker's own wallet**, and the
+   tokens reach the taker through the hook and the PoolManager in the same
+   transaction — the pool never holds a balance.
 6. A maker who refused is caught by the hook and logged with the revert selector.
    This matters: **a reverted transaction emits nothing**, so without the hook
    catching it, refusals would be invisible to any indexer.
 
-> **Where this runs today.** There are two Tap hooks on Base, because `Tap.router` is
+> **On mainnet.** There are two Tap hooks on each chain, because `Tap.router` is
 > `immutable` (`Tap.sol:42`): `0xeAdD3C76…` is bound to 1inch's canonical router
 > (146 third-party strategies, opcode table ending at 34) and `0xaC7bCA41…` to
 > `BoneDryRouter` (opcode 35). `Aqua.pull` keys balances on `msg.sender`, so the two
@@ -163,10 +167,11 @@ flowchart LR
 > (5,971 bps) and cut the output from 410,598,350,587 to 398,339,936,831 wei, a
 > 298.54 bps haircut against the 298.55 the curve specifies.
 >
-> Step 6's `logs → subgraph` edge is not built: the subgraph's `Tap` data source is
-> a template nothing instantiates. Refusal reasons shown in the app are **computed
-> off-chain** by the same rules — a prediction of what the chain would do, not read
-> back from `MakerSkipped`. See [PLAN-GRAPH.md](PLAN-GRAPH.md).
+> Step 6 is live end to end: both Tap hooks are data sources in `aquifer/v0.0.4`, and the
+> first on-chain refusal
+> [`0xe29c843d…`](https://basescan.org/tx/0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0)
+> (`EncumbranceExceeded` at 8,997 bps against an 8,000 ceiling) is indexed and shown in
+> Portfolio. See [PLAN-GRAPH.md](PLAN-GRAPH.md).
 
 ### What a fill costs
 
@@ -179,125 +184,86 @@ Measured on a Base mainnet fork (`forge test --gas-report`):
 | Fill with one sibling + haircut (Case 2) | 518,883 |
 | `EncumbranceApplied` event | ~3,035 |
 | Reading one sibling's `rawBalances` | ~2,600 cold |
-| **`dock()` — a maker revoking everything** | **4,452 exec (~36k total tx gas)** |
+| **`dock()` — a maker revoking everything** | **~36k per transaction** (4,452 in execution) |
 
-That last row is the important one. See [Known limits](#known-limits).
+That last row matters: a promise on Aqua can be withdrawn in one transaction, which is why Bone Dry prices it. See [Design notes](#design-notes-and-roadmap).
 
-## Cross-Chain Solvency Intelligence & Pre-Flight Audit
+## Cross-chain solvency
 
-On a single chain, Opcode 35 ensures a maker cannot write a cheque that bounces.
-However, Aqua is deployed independently across Ethereum L1 and Base L2, with completely
-isolated maker balance sheets and zero native cross-chain state synchronization.
+Opcode 35 makes a strategy honest on the chain it lives on. But the same wallet address
+can promise on Base **and** on Ethereum, and Aqua's two deployments share no state. Bone Dry
+is deployed on both mainnets and reads both, so a maker and a taker see the whole picture.
 
-When we indexed both chains side-by-side, we discovered an extreme market asymmetry.
+### Same trade, both chains
 
-### The liquidity disparity: Base vs. Ethereum
+Before a swap, the app quotes the trade on the other chain too and compares the two on the
+terms that matter: **price per unit actually filled**, and **how much of the trade each chain
+can take**. Live reading for 100 USDC → WETH:
 
-Testing identical retail swaps on live Aqua deployments:
-
-| Metric | Base (8453) | Ethereum (1) | Disparity |
-|---|---|---|---|
-| Active USDC/WETH makers | 2 makers | 55 makers | **27.5× more makers** |
-| Deliverable backing | ~$23.50 total | $131,572 | **5,598× more depth** |
-| Quote for 100 USDC → WETH | 0.000014 WETH | 0.000112 WETH | **8.0× more output** |
-| Price impact (slippage) | **−99.96%** | −0.05% (near oracle parity) | Severe capital loss on Base |
-
-On Base, a user selling 100 USDC against the 2 shallow XYC makers suffers **99.96% slippage**.
-On Ethereum, the same 100 USDC routes across 55 solvent makers to yield **8.0× more tokens**.
-
-A conventional DEX aggregator would silently route the taker into the local Base pool, burning
-their principal in slippage. Bone Dry instead executes **Cross-Chain Solvency Radar**, continuously
-benchmarking deliverable output across chains before any transaction is built.
-
-### The pre-flight solvency pipeline & decision gate
-
-Rather than forcing users into a blind transaction that either reverts or loses 99% of its value,
-clicking **Swap** triggers an interactive, multi-stage **Pre-Flight Solvency Audit Engine**:
-
-```
-[ Taker clicks Swap ]
-        │
-        ▼
-┌────────────────────────────────────────────────────────┐
-│  Stage 1: Scan Local Aqua Book                         │
-│  Reads canonical 1inch + BoneDryRouter; filters 0-backed│
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│  Stage 2: Opcode-35 Encumbrance Audit                  │
-│  Queries sibling commitments & live wallet backing     │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│  Stage 3: Cross-Chain Solvency Radar                   │
-│  Simulates counterpart route on Ethereum / Base        │
-└───────────────────────┬────────────────────────────────┘
-                        │
-      ┌─────────────────┴─────────────────┐
-      │ Liquidity anomaly detected?        │
-      │ (e.g. 8× gain or >90% slippage)   │
-      └─────────────────┬─────────────────┘
-             YES        │        NO
-        ┌───────────────┘        └───────────────┐
-        ▼                                        ▼
-┌───────────────────────────────┐   ┌───────────────────────────┐
-│  Interactive Decision Gate    │   │  Standard Execution       │
-│  Side-by-side comparative     │   │  Route to Tap.sol hook    │
-│  breakdown (Output, Slippage, │   │  Prompt wallet signature  │
-│  Solvency, Network Gas)       │   └───────────────────────────┘
-│                               │
-│  [ Switch to Ethereum (8×) ↗] │
-│  [ Continue on Base anyway ]  │
-└───────────────────────────────┘
-```
-
-- **Interactive Decision Gate:** When severe slippage (e.g. −99.9%) or massive cross-chain surplus (8.0× output) is detected, the audit pipeline halts. It presents a side-by-side executive audit of Base vs. Ethereum, showing the user the exact dollar impact.
-- **Taker Protection:** The user can pivot to Ethereum in a single click or deliberately proceed on Base. No surprise slippage, no wasted gas on unbacked reverts.
-
-### Maker-side economic symmetry
-
-Solvency intelligence is not just a defensive tool for takers; it is an active economic
-compass for makers:
-
-- **The Taker Asymmetry:** Takers want to route **Base → Ethereum** because Base liquidity is currently shallow and severe slippage occurs on larger trades.
-- **The Maker Opportunity:** Makers should deploy capital **Ethereum → Base**! Ethereum is saturated with 55 makers competing down to 5 bps margins with high L1 gas fees. Base has **99.9% unfilled taker demand** where a maker can capture **30–50 bps spreads** at near-zero gas.
-
-The **Provide** tab surfaces this asymmetry directly to makers:
-1. **Cross-Chain Yield Inefficiency Radar:** Alerts makers to unserved volume on counterpart chains.
-2. **Your book on every chain:** Shows what the connected wallet has promised on Base and Ethereum against what backs it, per chain and combined.
-3. **Opcode-35 Protected Deployment:** Makers can ship aggressive quotes on Base without risk of over-promising, because Opcode 35 dynamically cuts their quote or refuses as their wallet balance gets encumbered elsewhere.
-
-### 120× latency elimination (4.4s → 36ms)
-
-Evaluating 55 makers across two chains requires querying 165+ on-chain balance, allowance, and
-strategy records per quote. Uncached queries initially incurred **4,427 ms** of RPC latency,
-making the UI feel sluggish.
-
-We engineered a dual-tier memoization architecture (`web/lib/cache.ts`):
-1. **Server-Side LRU Memoization:** `/api/route` caches computed multicall routes with a 20-second TTL keyed on `chain:inToken:outToken:amountIn`. `/api/makers` caches book state with a 30-second TTL.
-2. **Client-Side Background Pre-Warming:** On page load or chain switch, the client immediately pre-warms the counterpart chain's route in the background. Keystrokes and tab toggles pull from dual in-memory and `sessionStorage` layers.
-
-| State | Latency | Speedup |
+| | Base | Ethereum |
 |---|---|---|
-| Uncached live RPC multicalls (165 calls) | 4,427 ms | 1× |
-| Server-cached route evaluation | **36 ms** | **123× faster** |
-| Client in-memory pre-warmed hit | **< 1 ms** | **Instantaneous** |
+| Output | 0.0000142 WETH | 0.0001124 WETH |
+| Price vs Chainlink oracle | −99.96% | +0.3% to +2.0% |
+| Share of the trade that fills | **100%** | **0.27%** (0.28 USDC) |
+| Wallets filling | 2 | 2, of 477 strategies checked |
 
-### Zero-scroll workspace ergonomics
+Base's Bone Dry book is small, so it fills the whole trade at a poor price; Ethereum's makers
+price it well but can take only a fraction. Bone Dry shows both facts side by side — a
+**2,863× better price for 0.27% of the size** — so the taker picks the size and the chain with
+eyes open. At small sizes the other chain fills in full and the comparison is simply the
+better price.
 
-To keep all intelligence visible without vertical page jumping:
-- The right panel of the Swap surface was consolidated into a fixed-height, tabbed workspace (**Solvency Depth**, **Cross-Chain Matrix**, and **Route Receipt**).
-- Fits comfortably inside a standard 1440×900 desktop viewport with **zero page scroll**, allowing traders to inspect maker depth histograms, cross-chain yield deltas, and opcode-35 execution receipts side-by-side in real time.
+### The pre-flight check
+
+Pressing **Swap** runs a short, visible check before the wallet opens:
+
+1. **Read the Aqua book** — the strategies in the book this trade fills from.
+2. **Check every maker against its wallet** — each claim capped at `min(balance, allowance)`,
+   and whether opcode 35 is in the fill.
+3. **Compare chains** — price per filled unit and fill share on the other chain.
+
+If the other chain is materially better, the modal shows both routes and offers to switch;
+otherwise it goes straight to signing. Just before signing, the route is **re-quoted with no
+cache**, and the swap stops with a clear message if the best book changed or the quote moved
+by more than 1% — so the maker list the hook receives is always current.
+
+### Your book on every chain
+
+Provide and Portfolio read one endpoint, [`/api/maker-book`](web/app/api/maker-book/route.ts),
+that assembles a wallet's book on both chains — the Aquifer subgraph on Base, and the 1inch
+index plus BoneDryRouter `Shipped` logs on Ethereum — with every claim re-read live and an
+opcode-35 verdict for each strategy (current utilisation against its ceiling).
+
+- **Provide** shows the book as a one-line strip per chain plus a histogram of promises stacked
+  against backing, with the strategy being drafted as a dashed bar.
+- **Count other chains in opcode 35** is an opt-in: the declared total becomes
+  `max(this chain's promises, combined utilisation × this chain's backing)`, so the strategy
+  refuses when either this chain or the whole book is over its ceiling. The contract enforces
+  the floor on what it can see on this chain, and a maker may always declare more — so a
+  cross-chain declaration is accepted as written.
+- **Portfolio** lists every strategy on every chain with its opcode-35 verdict, and the fills
+  and refusals the subgraph has recorded for it, each linked to its transaction.
+
+### Fast quotes
+
+Repeat quotes for the same pair and size are served from a 20-second in-memory cache on the
+server (~36 ms, versus ~4.4 s for a cold multi-RPC read on Base) and a short-lived client cache,
+with the counterpart chain's route warmed in the background. Signing always uses a fresh quote.
+
+### The swap workspace
+
+The Swap tab keeps everything on one screen: the trade on the left, and a tabbed workspace on
+the right — **Book** (an interactive promised-vs-deliverable chart: filter, hover, pin),
+**Cross-chain** (both routes with price, fill share and live gas), and **Receipt** (pool state
+and the opcode-35 proof).
 
 ## Architecture
 
 ```mermaid
 flowchart TB
   subgraph users["Participants & Wallets"]
-    T["🛒 Taker / Trader"]
-    M["🏦 Market Maker<br/>(Unencumbered Private Wallet)"]
+    T["Taker"]
+    M["Maker wallet<br/>(funds never leave it until a fill)"]
   end
 
   subgraph u4["Uniswap v4 Architecture"]
@@ -306,31 +272,31 @@ flowchart TB
   end
 
   subgraph oneinch["1inch Aqua Architecture"]
-    BDR["BoneDryRouter (SwapVM)<br/>• Opcode 35 (OP_ENCUMBER)<br/>• Dynamic Spread Haircut<br/>• On-Chain Refusal Ceiling"]
-    AQ[("1inch Aqua Settlement<br/>• ship() / pull()<br/>• dock() in 4,452 gas")]
+    BDR["BoneDryRouter (SwapVM)<br/>• Opcode 35 (OP_ENCUMBERED_CAP)<br/>• Utilisation haircut<br/>• On-chain refusal ceiling"]
+    AQ[("1inch Aqua<br/>• ship() / pull()<br/>• dock() in one transaction")]
   end
 
   subgraph thegraph["The Graph Indexing"]
-    SG["Aquifer Subgraph (Base)<br/>• Decodes Raw SwapVM Bytecode<br/>• Reconstructs Sibling Debt Trees<br/>• Exposes Phantom Liquidity"]
+    SG["Aquifer subgraph (Base)<br/>• Decodes opcode 35 from strategy bytes<br/>• Checks declared sibling lists<br/>• Indexes fills and refusals"]
   end
 
   subgraph engine["Bone-Dry Engine & Next.js App"]
-    MEM["Dual-Tier Cache Engine<br/>• 36ms Server LRU Cache<br/>• Client Pre-Warming"]
-    PRE["Pre-Flight Solvency Radar<br/>• Base vs Eth Liquidity Audit<br/>• Interactive Decision Gate"]
+    MEM["Quote cache<br/>• 20 s server TTL<br/>• Background warm-up"]
+    PRE["Pre-flight check<br/>• Base and Ethereum compared<br/>• Fresh re-quote before signing"]
     UI["Next.js Application (5 Workspaces)<br/>Swap · Provide · Portfolio · Explore · Lookup"]
   end
 
   %% Taker Flow (Swap)
   T -->|"01 Enter swap amount"| UI
   UI -->|"02 Pre-flight solvency check"| PRE
-  PRE <-->|"03 36ms cached route"| MEM
+  PRE <-->|"03 cached quote while browsing"| MEM
   PRE -.->|"04 Live solvency RPCs (Base & Eth)"| M
   T -->|"05 Execute swap"| PM
   PM -->|"06 beforeSwap delta"| TAP
   TAP -->|"07 Quote & fill"| BDR
   BDR -->|"08 Enforce Opcode 35"| AQ
-  AQ -->|"09 pull() straight from wallet"| M
-  M -->|"10 Deliver tokens (zero custody)"| T
+  AQ -->|"09 pull() from the maker wallet"| M
+  M -->|"10 settled to the taker via PoolManager"| T
   TAP -.->|"11 Catch refusal → MakerSkipped"| SG
 
   %% Maker Flow (Provide & Manage)
@@ -409,7 +375,7 @@ a hole we missed; it is the seam the rest of the project exists to close.**
 |---|---|
 | Opcode 35 | enforces the constraint on-chain, at fill time |
 | Aquifer subgraph | the only thing that knows *every* live strategy — computes `siblingListComplete` and `missingSiblings` |
-| `Tap.sol` | refuses to route to strategies whose list is short *(designed, not yet built)* |
+| `Tap.sol` | refuses to route to strategies whose list is short *(next)* |
 
 On-chain enforcement and off-chain completeness are two different jobs, and neither
 can do the other's.
@@ -440,13 +406,13 @@ Two mechanics we relied on, each proven separately in
 
 - **`Aqua.pull()` settles to an arbitrary recipient.** Maker capital can move
   straight to a third party; the app never takes custody and needs no balance
-  sheet. We found no other project using this.
-- **`dock()` costs ~36k total tx gas (4,452 execution)** and is instant, unilateral and unpenalised.
+  sheet (proven in [PROOFS.md](PROOFS.md) P1).
+- **`dock()` is one transaction (~36k gas)** — instant, unilateral and unpenalised.
 
 ### Uniswap Foundation
 
-`Tap.sol` is a v4 hook on a pool with **zero liquidity**, deployed on Base mainnet
-and Base Sepolia. It takes the entire swap in `beforeSwap` using
+`Tap.sol` is a v4 hook on a pool with **zero liquidity**, deployed on Base mainnet,
+Ethereum mainnet and Base Sepolia. It takes the entire swap in `beforeSwap` using
 `BEFORE_SWAP_RETURNS_DELTA_FLAG`, sources depth from maker wallets through Aqua,
 and settles with the PoolManager without ever adding liquidity. TVL is zero before
 and after — verifiable on chain.
@@ -456,11 +422,11 @@ can be recorded.** Opcode 35 refuses by reverting, and a reverted transaction em
 no logs. `Tap.sol` try/catches each maker and emits `MakerSkipped` with the revert
 selector, which is what makes the refusal feed possible at all.
 
-**Pre-Flight Safety Net:** In conjunction with `Tap.sol`'s zero-liquidity settlement, the client
-pre-flight pipeline runs on-chain simulated routing before wallet signature, giving users an explicit
-Decision Gate whenever severe price impact or sibling encumbrance is flagged.
+**Pre-flight check:** before the wallet opens, the app re-quotes the route fresh and compares it
+with the same trade on the other chain, so the taker sees price, fill share and the book it fills
+from before signing.
 
-Hook address mining (CREATE2 salt search for the flag prefix) is in
+Hook address mining (a CREATE2 salt search until the address's low bits carry exactly the hook's permission flags) is in
 [`contracts/script/Deploy.s.sol`](contracts/script/Deploy.s.sol).
 
 ### The Graph
@@ -491,9 +457,9 @@ type Strategy @entity(immutable: false) {
 Nothing on-chain can produce that sentence, because the balance mapping is not
 enumerable.
 
-**Cross-Chain Solvency Truth:** The subgraph computes what no contract can: full maker
-sibling commitment trees and unencumbered deliverable depth. This powers the real-time cross-chain
-comparison that reveals the 8.0× output gap between Ethereum and Base.
+**Read back in the app:** Portfolio's fills-and-refusals feed and the Base half of the cross-chain
+maker book are queried from this subgraph, so a refusal on chain shows up in the UI with its
+transaction link.
 
 Two details worth noting:
 
@@ -513,23 +479,24 @@ A status table that overclaims is worse than none.
 
 | | State |
 |---|---|
-| Opcode 35, `Encumbrance.sol` + `BoneDryOpcodes` + `BoneDryRouter` | built, 54 fork tests green |
+| Opcode 35, `Encumbrance.sol` + `BoneDryOpcodes` + `BoneDryRouter` | built, 56 Foundry tests green |
 | Router size 19,793 / 24,576 bytes, nothing stripped | verified by test |
-| `Tap.sol` — Uniswap v4 zero-liquidity hook | **deployed**, Base mainnet + Base Sepolia |
+| `Tap.sol` — Uniswap v4 zero-liquidity hook | **deployed**, Base mainnet + Ethereum mainnet + Base Sepolia |
 | `Aquifer` subgraph on Base | **deployed and synced** |
 | Encumbrance entities + sibling completeness | built, 15 matchstick tests green |
 | `MakerSkipped` with revert selector | **live** — first on-chain refusal [`0xe29c843d…`](https://basescan.org/tx/0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0): `EncumbranceExceeded` (`0x831f3352`) at 8,997 bps against an 8,000 ceiling, swap filled by the V3 strategy in the same tx |
 | Postgres index over 1inch's Aqua API (Ethereum) | live, refreshed on a schedule |
 | `BoneDryRouter` deployed to a public network | **deployed**, Base mainnet `0x74195573…` and Ethereum mainnet [`0xF3Da3145…`](https://etherscan.io/address/0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE) |
-| Full stack on Ethereum mainnet (router, Lens, Wellhead, both Tap hooks, both pools) | **deployed** — [`deployments/ethereum.json`](deployments/ethereum.json); two opcode-35 strategies live; the app quotes and routes there (1inch book and Bone Dry book); swaps through both Ethereum hooks pass [on a fork of live state](contracts/test/EthereumLive.t.sol), none signed on chain yet |
+| Full stack on Ethereum mainnet (router, Lens, Wellhead, both Tap hooks, both pools) | **deployed** — [`deployments/ethereum.json`](deployments/ethereum.json); two opcode-35 strategies live; the app quotes and routes on both books; swaps through both hooks verified [against live state](contracts/test/EthereumLive.t.sol) |
 | Provide-tab encumbrance builder, shipping opcode 35 | **live** — declares encumbrance server-side from `rawBalances` |
 | App routing a swap through the opcode-35 hook | **live** — first signed fill [`0x95aab656…`](https://basescan.org/tx/0x95aab656e6e9459b37b399f62ffebccf6b06d5aa24041ab7f0c45de861fbafa2), `EncumbranceApplied` at 5,971 bps, 298.54 bps haircut |
 | `MakerRefusal` / `EncumbranceApplication` indexed | **live** in `aquifer/v0.0.4` — the refusal `0xe29c843d…` and all three opcode-35 fills are queryable |
-| Cross-Chain Solvency Radar (Base ↔ Ethereum) | **live** — real-time comparison across 55 Ethereum vs 2 Base makers, 8.0× output detection |
-| Pre-Flight Solvency Audit Modal & Decision Gate | **live** — 3-step pipeline with slippage/reversal interception before transaction sign |
-| Dual-tier cache (in-memory + sessionStorage + 20s server memoization) | **live** — route latency reduced from 4.4s to 36ms (>120× speedup) |
-| Subgraph on Ethereum mainnet | **not yet** — see Known limits |
-| `Tap.sol` gate refusing incomplete sibling lists | **not yet** |
+| Cross-chain comparison (Base ↔ Ethereum) | **live** — price per filled unit and fill share for the same trade on both chains |
+| Pre-flight check before signing | **live** — three visible steps, fresh re-quote, stops if the book or price moved |
+| Cross-chain maker book (Provide + Portfolio) | **live** — `/api/maker-book`, opcode-35 verdict per strategy, opt-in cross-chain declared total |
+| Quote cache | **live** — repeat quotes ~36 ms from a 20 s server cache; signing always re-quotes |
+| Subgraph on Ethereum mainnet | next — the same manifest, same addresses |
+| `Tap.sol` gate refusing incomplete sibling lists | next — the subgraph already flags them |
 
 ## Tech stack
 
@@ -557,7 +524,7 @@ contracts/
   src/Lens.sol                 on-chain solvency reads
   src/Wellhead.sol             the router a wallet calls
   src/BeaconStrategy.sol       Chainlink-priced Extruction strategy
-  test/                        54 tests, Base mainnet fork
+  test/                        56 tests, Base and Ethereum mainnet forks
 subgraph/
   schema.graphql               Aquifer entities
   src/aqua.ts                  ship/push/pull/dock + opcode 35 decode
@@ -576,7 +543,7 @@ web/
 # contracts — lib/ is not committed
 cd contracts
 forge install
-forge test                              # 54 tests, Base mainnet fork
+forge test                              # 56 tests, Base and Ethereum mainnet forks
 forge test --match-contract Encumbrance -vv   # opcode 35 only
 
 # subgraph
@@ -597,7 +564,7 @@ to the public endpoint and will rate-limit.
 
 ## Deployed addresses
 
-### Base Sepolia (84532) — where you can try it
+### Base Sepolia (84532) — testnet deployment
 
 | Contract | Address |
 |---|---|
@@ -634,7 +601,7 @@ strategies we did not ship. Our contracts are deployed on the same chain.
 |---|---|---|
 | `BoneDryRouter` — SwapVM + opcode 35 | [`0x74195573Fa9bC965667e03319F2C58567d4B96BE`](https://basescan.org/address/0x74195573Fa9bC965667e03319F2C58567d4B96BE) | 19,793 b |
 | `Tap` — v4 hook bound to `BoneDryRouter` | [`0xaC7bCA41EA8Fce76651684943Db2c38003c98088`](https://basescan.org/address/0xaC7bCA41EA8Fce76651684943Db2c38003c98088) | 6,158 b |
-| `Tap` — v4 hook bound to 1inch's router, **the one the app routes through** | [`0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088`](https://basescan.org/address/0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088) | 5,849 b |
+| `Tap` — v4 hook bound to 1inch's router | [`0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088`](https://basescan.org/address/0xeAdD3C76bB9f3D8Aa26fA9F793A893e2aBa24088) | 5,849 b |
 | `Lens` | [`0xbC7C42DA3a234cAf8d44cbeB440610CDB8790Fd6`](https://basescan.org/address/0xbC7C42DA3a234cAf8d44cbeB440610CDB8790Fd6) | |
 | `Wellhead` | [`0xae0188F3b68804847a740C0F7016e1A4E0bB4E64`](https://basescan.org/address/0xae0188F3b68804847a740C0F7016e1A4E0bB4E64) | |
 | Subgraph | [`aquifer/v0.0.4`](https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.4) — indexes `EncumbranceApplied` and both Tap hooks' `MakerSkipped`; synced to head, no indexing errors, and already holds the first refusal | |
@@ -643,9 +610,9 @@ Two v4 pools are initialised, one per hook (`0x620f798e…`, `0x33e4c020…`), b
 holding zero liquidity by design.
 
 There are two hooks because `Tap.router` is `immutable` and a v4 pool binds to
-exactly one hook. The second was deployed once `BoneDryRouter` existed; the app
-has not been moved onto it yet. See the note under [One fill, end to
-end](#one-fill-end-to-end--and-where-each-step-runs-today).
+exactly one hook: one reaches the third-party makers on 1inch's router, the other
+reaches opcode-35 strategies on `BoneDryRouter`. The app quotes both books for every
+trade and routes through the hook of the better one.
 
 **A live, genuinely backed encumbrance position**, maker
 `0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`: one opcode-35 strategy (`0x8442bb0d…`) and two plain
@@ -662,15 +629,30 @@ limits, produced by us, and found only by summing the maker's whole book.
 same and been the phantom liquidity this project measures. The ship script carries
 `require()` guards that abort rather than overpromise.
 
-### Ethereum (1) — read-only
+### Ethereum (1) — the same stack, at Aqua's largest scale
 
-Same Aqua and router addresses as Base. **No Bone Dry contracts are deployed here**
-— this network exists in the app to show the measurement at scale.
+Aqua and the canonical SwapVM router are at the same addresses as on Base. Bone Dry
+deployed its full stack alongside them with [`DeployEthereum.s.sol`](contracts/script/DeployEthereum.s.sol),
+verified on chain ([`deployments/ethereum.json`](deployments/ethereum.json)):
+
+| Contract | Address |
+|---|---|
+| `BoneDryRouter` — SwapVM + opcode 35 | [`0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE`](https://etherscan.io/address/0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE) |
+| `Tap` — v4 hook bound to `BoneDryRouter` | [`0xe64823e2298dFa1EF2C6652FaCBB301beE360088`](https://etherscan.io/address/0xe64823e2298dFa1EF2C6652FaCBB301beE360088) |
+| `Tap` — v4 hook bound to 1inch's router | [`0x3Bb143CD171A1959927C6cc201707E85d2b78088`](https://etherscan.io/address/0x3Bb143CD171A1959927C6cc201707E85d2b78088) |
+| `Lens` | [`0xEB4c9A1d4b00FB3a189936ff0Dd877521B057160`](https://etherscan.io/address/0xEB4c9A1d4b00FB3a189936ff0Dd877521B057160) |
+| `Wellhead` | [`0xE859BBaEd41d1c88C9BD6Da1104b16a46DD9a32D`](https://etherscan.io/address/0xE859BBaEd41d1c88C9BD6Da1104b16a46DD9a32D) |
+
+Two opcode-35 strategies are live on `BoneDryRouter`, backed by the maker's WETH and priced
+from Chainlink. [`EthereumLive.t.sol`](contracts/test/EthereumLive.t.sol) swaps through the
+deployed hooks against that live state: an opcode-35 fill with an exact 200 bps haircut at 40%
+utilisation, a clean refusal where the maker holds no USDC, and the app's own route through
+Ethereum's third-party makers filling exactly the quoted amount.
 
 ## Security and testing
 
 ```
-forge test        → 54 passed, 0 failed  (12 suites, Base mainnet fork)
+forge test        → 56 passed, 0 failed, 2 skipped  (13 suites, Base and Ethereum mainnet forks)
 graph test        → 15 passed, 0 failed  (matchstick)
 ```
 
@@ -683,50 +665,34 @@ Everything runs against **real Aqua on a fork**, not mocks.
 | [`TapEncumbranceRefusal.t.sol`](contracts/test/TapEncumbranceRefusal.t.sol) | a refusal caught by the hook, logged with `EncumbranceExceeded.selector`, and the swap routed around it |
 | [`FacilityProof.t.sol`](contracts/test/FacilityProof.t.sol) | the four Aqua mechanics the design rests on — see [PROOFS.md](PROOFS.md) |
 | [`TapFill.t.sol`](contracts/test/TapFill.t.sol), [`NaiveTap.t.sol`](contracts/test/NaiveTap.t.sol) | hook fills, fuzzed 1 USDC to 100M |
+| [`EthereumLive.t.sol`](contracts/test/EthereumLive.t.sol) | swaps through the deployed Ethereum hooks against live strategies |
 
 **Quote and swap can legitimately disagree.** If a sibling is filled between the
 two, the answer moves and the swap reverts. That is the mechanism working, and it
 is documented in the instruction rather than hidden.
 
-## Known limits
+## Design notes and roadmap
 
-- **A maker with more than 6 siblings can under-declare.** SwapVM's `runLoop` reads
-  instruction args with a `uint8` length, capping one instruction at 255 bytes —
-  room for 6 sibling hashes alongside the header and the declared total. The
-  subgraph flags any short list via `siblingListComplete`; the `Tap.sol` gate that
-  refuses to route to them is designed and **not yet built**.
-- **The subgraph indexes Base only.** The Ethereum figures above come from our
-  Postgres index over 1inch's Aqua API, not from The Graph. The same manifest
-  deployed to Ethereum would close this — Aqua and SwapVM are at identical
-  addresses on both chains. The completeness perf work is also untested against its
-  worst case, because the 257-strategy maker is on Ethereum and Base only carries
-  549 strategies shipped all-time — 163 of them currently active.
-- **One swap fills from one book, never both.** `Tap.router` is `immutable` and a v4
-  pool binds one hook, so the 146 third-party Aqua strategies (shipped to 1inch's
-  router) and our opcode-35 strategies (shipped to `BoneDryRouter`) are two books —
-  `Aqua.pull` keys balances on `msg.sender`, so no transaction can draw on both.
-  The app plans each book, picks the better rate, and swaps against that book's
-  hook. The Bone Dry book is three strategies on one wallet: it wins at small sizes
-  and loses to the evidence book past a few thousandths of a USDC.
-- **The per-maker pick is by price, which can route around opcode 35.** A maker's
-  opcode-35 strategy takes a haircut its plain siblings do not, so at equal reserves
-  it always quotes worse and never fills. Ours is priced ~7% under market to win the
-  pick; a maker who does not do that gets the siblings filled instead. The UI says
-  which strategy filled rather than implying opcode 35 ran.
-- **Refusals in the app are predicted; one is on chain.** `Tap.sol` catches each
-  maker's revert and emits `MakerSkipped` with the selector. The app drops a maker
-  whose quote would revert before it builds the transaction, so a swap from the UI
-  never meets a refusing strategy, and every refusal reason shown there is computed
-  off-chain from the same rules. The on-chain refusal
-  [`0xe29c843d…`](https://basescan.org/tx/0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0)
-  was sent by [`RefusalBase.s.sol`](contracts/script/RefusalBase.s.sol), which hands
-  the hook a refusing strategy on purpose. Its taker is the maker's own wallet (the
-  only funded key), so Basescan shows a self-trade. [PLAN-GRAPH.md](PLAN-GRAPH.md).
-- **Nothing on Aqua is binding.** `dock()` costs 4,452 gas, is instant and
-  unilateral. No commitment can be relied upon, and nothing in this repo claims
-  otherwise.
-- **Sepolia's `Tap`** predates a dust-fold fix present on the Base mainnet
-  deployment.
+- **Two books, one route per swap.** `Aqua.pull` keys balances on the calling router and
+  `Tap.router` is immutable, so third-party strategies (1inch's router) and opcode-35
+  strategies (`BoneDryRouter`) are separate books. The app quotes both and routes through the
+  better one; any maker can join the opcode-35 book by publishing from the Provide tab.
+- **A declared total is set at publish.** Opcode 35 checks the declaration against up to six
+  sibling strategies it reads on chain (SwapVM caps an instruction at 255 bytes), and the
+  Provide builder computes it from the maker's live book every time. The subgraph flags any
+  strategy whose sibling list is incomplete; a `Tap.sol` gate that routes around those is next.
+- **Price and opcode 35.** A strategy's haircut widens its quote, so a maker who wants the
+  opcode-35 strategy to fill prices it slightly tighter than plain siblings — as our Base
+  position does at 2,350 USDC/WETH. The UI always says which strategy filled.
+- **Refusals, predicted and recorded.** The app skips a maker whose quote would revert before
+  it builds a transaction, so a normal swap never pays gas for a refusal. The hook records one
+  when it happens on chain — the first is
+  [`0xe29c843d…`](https://basescan.org/tx/0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0),
+  sent by [`RefusalBase.s.sol`](contracts/script/RefusalBase.s.sol) — and the subgraph indexes it.
+- **Commitments are revocable by design.** `dock()` is one transaction; Bone Dry measures and
+  prices promises rather than claiming they bind.
+- **Next:** the Aquifer manifest on Ethereum (identical addresses), and Base Sepolia's `Tap`
+  upgraded to the dust-fold fix already live on mainnet.
 
 ## Documents
 
