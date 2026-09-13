@@ -548,13 +548,18 @@ is documented in the instruction rather than hidden.
   addresses on both chains. The completeness perf work is also untested against its
   worst case, because the 257-strategy maker is on Ethereum and Base only carries
   549 strategies shipped all-time — 163 of them currently active.
-- **The app routes through the hook that cannot reach opcode 35.** `Tap.router` is
-  `immutable` and a v4 pool binds one hook, so the 146 third-party Aqua strategies
-  (shipped to 1inch's router) and our opcode-35 strategies (shipped to
-  `BoneDryRouter`) are two books that no single transaction can fill from —
-  `Aqua.pull` keys balances on `msg.sender`. The app currently routes the first.
-  Closing this is a routing change, not a contract change: both hooks and both
-  pools are already live. [PLAN-TWO-BOOKS.md](PLAN-TWO-BOOKS.md).
+- **One swap fills from one book, never both.** `Tap.router` is `immutable` and a v4
+  pool binds one hook, so the 146 third-party Aqua strategies (shipped to 1inch's
+  router) and our opcode-35 strategies (shipped to `BoneDryRouter`) are two books —
+  `Aqua.pull` keys balances on `msg.sender`, so no transaction can draw on both.
+  The app plans each book, picks the better rate, and swaps against that book's
+  hook. The Bone Dry book is three strategies on one wallet: it wins at small sizes
+  and loses to the evidence book past a few thousandths of a USDC.
+- **The per-maker pick is by price, which can route around opcode 35.** A maker's
+  opcode-35 strategy takes a haircut its plain siblings do not, so at equal reserves
+  it always quotes worse and never fills. Ours is priced ~7% under market to win the
+  pick; a maker who does not do that gets the siblings filled instead. The UI says
+  which strategy filled rather than implying opcode 35 ran.
 - **Refusals are predicted, not yet read back.** `Tap.sol` catches each maker's
   revert and emits `MakerSkipped` with the selector, which is the only way a
   refusal can be observed at all. Nothing consumes it yet: the subgraph's `Tap`
