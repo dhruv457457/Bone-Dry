@@ -75,7 +75,14 @@ export async function indexStrategies(
   // out. So: newest first, a fixed page budget, and `scannedFrom` on the result
   // so the caller can say which window it actually saw. The subgraph is the
   // answer to this; this is what you get without one.
-  const floor = opts?.fromBlock ?? n.aquaGenesis;
+  // BoneDryRouter cannot have strategies from before it existed. On Ethereum that
+  // turns a 14-page scan back to Aqua's genesis into one page from the router's
+  // deploy block, which is the difference between a 36s quote and a usable one.
+  const appGenesis =
+    n.boneDryRouter && n.boneDryGenesis !== undefined && app.toLowerCase() === n.boneDryRouter.toLowerCase()
+      ? n.boneDryGenesis
+      : n.aquaGenesis;
+  const floor = opts?.fromBlock ?? appGenesis;
 
   const shipped: Strategy[] = [];
   const docked = new Set<string>();

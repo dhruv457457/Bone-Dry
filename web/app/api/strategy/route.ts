@@ -6,6 +6,7 @@ import { addressParam, amountParam, uintParam, distinct, BadInput } from "@/lib/
 import { j, fail } from "@/lib/json";
 import { aquaAbi } from "@/lib/chain";
 import { makerBook } from "@/lib/graph";
+import { makerBookAcrossChains } from "@/lib/makerBook";
 import { buildEncumbranceInstruction, MAX_INSTRUCTION_SIBLINGS } from "@/lib/encumbrance";
 
 export const dynamic = "force-dynamic";
@@ -122,11 +123,24 @@ export async function POST(req: Request) {
       type Sib = { hash: Hex; app: Address };
       let siblings: Sib[] = [];
       const book = await makerBook(n, maker);
+      const outLower = tokenOut.toLowerCase();
       if (book !== null) {
-        const outLower = tokenOut.toLowerCase();
         siblings = book.strategies
           .filter((st) => st.tokens.some((t) => t.toLowerCase() === outLower))
           .map((st) => ({ hash: st.strategyHash as Hex, app: st.app as Address }));
+      } else if (!n.graphUrl) {
+        // No subgraph on this chain (Ethereum): the cross-chain book reads the 1inch
+        // index plus BoneDryRouter's Shipped logs, with every claim re-read live.
+        // Trusting the client's list here would declare 0 for a maker whose siblings
+        // the client simply could not see.
+        const cross = await makerBookAcrossChains(maker);
+        const here = cross.chains.find((c) => c.chainId === n.id);
+        if (!here || !here.available) {
+          throw new BadInput(`could not read your existing strategies on ${n.label}; nothing was built`);
+        }
+        siblings = here.strategies
+          .filter((st) => st.sides.some((sd) => sd.token.toLowerCase() === outLower))
+          .map((st) => ({ hash: st.strategyHash, app: st.app }));
       } else if (Array.isArray(body.siblingHashes)) {
         for (let i = 0; i < body.siblingHashes.length; i++) {
           const h = body.siblingHashes[i];
@@ -180,6 +194,47 @@ export async function POST(req: Request) {
           }
         }
       }
+    }
+
+    // Cross-chain declaration, opt-in. The contract reads only this chain, but it
+    // floors the declared total rather than capping it, so a maker may declare more
+    // than it can sample. Declaring combined utilisation times this chain's backing
+    // makes opcode 35's own ratio (declared / backing here) equal the book's ratio
+    // across every chain -- and max() keeps it from ever dropping below what this
+    // chain alone already owes. It is a snapshot: strategies are immutable, so a
+    // later change on another chain is not seen until the maker ships again.
+    let crossChain: null | {
+      localDeclared: string;
+      combinedPromised: string;
+      combinedBacking: string;
+      localBacking: string;
+      chains: number[];
+    } = null;
+    if (maxUtilBps !== undefined && body.crossChain === true) {
+      const book = await makerBookAcrossChains(maker);
+      const here = book.chains.find((c) => c.chainId === n.id);
+      const t = here?.tokens.find((x) => x.token.toLowerCase() === tokenOut.toLowerCase());
+      const combined = t ? book.combined.find((x) => x.symbol === t.symbol && x.decimals === t.decimals) : undefined;
+      if (!t || !combined) {
+        throw new BadInput("could not read your book on the other chains for this token; publish without cross-chain counting");
+      }
+      const localBacking = BigInt(t.backing);
+      const combinedPromised = BigInt(combined.promised);
+      const combinedBacking = BigInt(combined.backing);
+      const scaled =
+        combinedBacking === 0n
+          ? combinedPromised > 0n
+            ? localBacking + 1n
+            : 0n
+          : (combinedPromised * localBacking + combinedBacking - 1n) / combinedBacking;
+      crossChain = {
+        localDeclared: declaredTotalEncumbrance.toString(),
+        combinedPromised: combinedPromised.toString(),
+        combinedBacking: combinedBacking.toString(),
+        localBacking: localBacking.toString(),
+        chains: combined.chains,
+      };
+      if (scaled > declaredTotalEncumbrance) declaredTotalEncumbrance = scaled;
     }
 
     // Salt is a uint64. Random by default for xyc so two makers shipping in the same
@@ -253,6 +308,7 @@ export async function POST(req: Request) {
         declaredTotalEncumbrance: declaredTotalEncumbrance.toString(),
         siblingHashes: sampledSiblingHashes,
         allSiblingCount: allSiblingHashes.length,
+        crossChain,
       }),
       note: "Sign and send this as a transaction from the maker's own wallet. It only records a claim in Aqua — no funds move.",
     });

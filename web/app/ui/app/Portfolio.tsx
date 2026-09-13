@@ -8,10 +8,13 @@ import { Bar, Shim, covColor } from "./bits";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr } from "@/lib/format";
 import type { ExposureResponse, HistoryResponse } from "../types";
-import { publicClientFor, type Network, type NetworkId } from "@/lib/networks";
+import { NETWORKS, publicClientFor, type Network, type NetworkId } from "@/lib/networks";
 import { tokensForChain } from "@/lib/tokenList";
+import { useMakerBook, CoverageCard, ActivityList } from "./MakerBook";
+import { TokenIcon } from "../TokenIcon";
+import type { BookStrategy } from "@/lib/makerBook";
 
-const STRAT_COLS = "minmax(180px,1.3fr) minmax(150px,1fr) minmax(150px,1fr) 130px 170px";
+const STRAT_COLS = "minmax(200px,1.4fr) minmax(130px,1fr) minmax(150px,1fr) 100px 170px";
 
 const AQUA_DOCK_ABI = [
   {
@@ -86,6 +89,7 @@ export function Portfolio({
   const { writeContractAsync } = useWriteContract();
 
   const setDockFor = (h: string, st: DockState) => setDock((d) => ({ ...d, [h]: st }));
+  const makerBook = useMakerBook(address, reload);
   /** Symbol and decimals for a token this chain's list knows; an unlisted token
    *  shows its address and assumes 18, and says so by showing the address. */
   const tokenMeta = (addr: string) => {
@@ -179,20 +183,47 @@ export function Portfolio({
     );
   }
 
-  const positions = exp?.positions ?? [];
   const strategies = exp?.strategies ?? [];
-  const covered = exp?.fullyCoveredCount ?? 0;
   const total = exp?.totalPositions ?? 0;
-  const worst = positions.reduce((acc, p) => {
-    const claimed = BigInt(p.claimed);
-    const cov = claimed === 0n ? 100 : Number((BigInt(p.held) * 10000n) / claimed) / 100;
-    return Math.min(acc, cov);
-  }, 100);
-  // The subgraph's own decoded count when it answered (exact); the RPC-scanned
-  // ship/dock log count when it did not (a real count too, just from a
-  // different source — see strategyHistoryFor's own doc comment on why it
-  // cannot show token pairs the way the subgraph can).
-  const liveStrategies = exp ? strategies.length : hist?.strategies.rows.filter((r) => r.active).length;
+
+  // One list of strategies, every chain. The book carries each strategy's chain,
+  // opcode-35 verdict and activity; when it has not answered, this chain's
+  // exposure rows stand in so Dock still works.
+  type Row = {
+    chainId: NetworkId;
+    strategyHash: string;
+    app: string;
+    book: string;
+    sides: { token: string; symbol: string; decimals: number; claim: string }[];
+    st?: BookStrategy;
+  };
+  const rows: Row[] = makerBook.book
+    ? makerBook.book.chains.flatMap((c) =>
+        c.strategies.map((st) => ({
+          chainId: c.chainId,
+          strategyHash: st.strategyHash,
+          app: st.app,
+          book: st.book,
+          sides: st.sides,
+          st,
+        }))
+      )
+    : strategies.map((st) => ({
+        chainId,
+        strategyHash: st.strategyHash,
+        app: st.app,
+        book: "",
+        sides: st.sides.map((sd) => ({ token: sd.token, symbol: sd.symbol, decimals: sd.decimals, claim: sd.claimed })),
+      }));
+  rows.sort((a, b) => (a.chainId === chainId ? 0 : 1) - (b.chainId === chainId ? 0 : 1));
+
+  const activity = rows
+    .flatMap((r) => (r.st?.activity ?? []).map((a) => ({ ...a, strategyHash: r.strategyHash })))
+    .sort((a, b) => b.blockNumber - a.blockNumber);
+  const withOp35 = rows.filter((r) => r.st?.opcode35).length;
+  const refusingNow = rows.filter((r) => r.st?.opcode35?.refusesNow).length;
+  const refusals = activity.filter((a) => a.kind === "refusal").length;
+  const fills = activity.length - refusals;
 
   return (
     <div className={`${s.stack} ${s.in}`}>
@@ -216,7 +247,7 @@ export function Portfolio({
         </div>
       </div>
 
-      {err ? (
+      {err && rows.length === 0 && !makerBook.loading ? (
         <section className={`${s.card} ${s.cardPad}`}>
           <p className={s.blockTag} style={{ color: "var(--short)" }}>
             {err}
@@ -225,13 +256,13 @@ export function Portfolio({
             Your exposure could not be read on {net.label}.
           </p>
         </section>
-      ) : !exp ? (
+      ) : !exp && rows.length === 0 ? (
         <section className={`${s.card} ${s.cardPad}`}>
           {["70%", "88%", "62%", "80%"].map((w, i) => (
             <Shim key={w} w={w} delay={`${i * 0.08}s`} />
           ))}
         </section>
-      ) : total === 0 ? (
+      ) : rows.length === 0 && (exp ? total === 0 : Boolean(makerBook.book)) ? (
         <section className={`${s.card} ${s.cardPad}`} style={{ maxWidth: "62ch" }}>
           <p className={s.blockTag}>Valid wallet · 0 strategies</p>
           <h3 className={s.display} style={{ fontSize: 26, margin: "0 0 10px" }}>
@@ -246,220 +277,199 @@ export function Portfolio({
         </section>
       ) : (
         <>
-          <div className={s.stats}>
+          {/* One line to read first: how many strategies, how many are guarded, what happened. */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {[
-              { label: "Tokens fully covered", value: `${covered}/${total}`, sub: "claimed ≤ held", short: false },
-              {
-                label: "Tokens short",
-                value: String(total - covered),
-                sub: total - covered ? "promised more than held" : "nothing is short",
-                short: total - covered > 0,
-              },
-              {
-                label: "Worst coverage",
-                value: `${Math.round(worst)}%`,
-                sub: "lowest of your tokens",
-                short: worst < 100,
-              },
-              {
-                label: "Live strategies",
-                value: liveStrategies === undefined ? "—" : String(liveStrategies),
-                sub: hist ? "from the registry" : "reading…",
-                short: false,
-              },
-            ].map((st) => (
-              <div className={s.stat} key={st.label}>
-                <p className={s.labelSm} style={{ margin: "0 0 8px", letterSpacing: ".14em" }}>
-                  {st.label}
-                </p>
-                <p className={s.statFig} style={{ color: st.short ? "var(--short)" : "var(--ink)" }}>
-                  {st.value}
-                </p>
-                <p className={s.statSub}>{st.sub}</p>
-              </div>
+              { k: "live strategies", v: rows.length, warn: false },
+              { k: "use opcode 35", v: withOp35, warn: false },
+              { k: "refuse now", v: refusingNow, warn: refusingNow > 0 },
+              { k: "opcode-35 fills", v: fills, warn: false },
+              { k: "refusals recorded", v: refusals, warn: refusals > 0 },
+            ].map((c) => (
+              <span
+                key={c.k}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "baseline",
+                  gap: 6,
+                  padding: "5px 12px",
+                  borderRadius: 999,
+                  border: "1px solid var(--rule)",
+                  background: "var(--surface)",
+                }}
+              >
+                <strong className={s.num} style={{ fontSize: 15, color: c.warn ? "var(--warn-ink)" : "var(--ink)" }}>
+                  {makerBook.book || c.k === "live strategies" ? c.v : "…"}
+                </strong>
+                <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>{c.k}</span>
+              </span>
             ))}
           </div>
 
-          {/* Live positions spans the page. It sat as the FIRST child of .cols,
-              whose grid is 380px | 1fr, so a 680px-minimum table landed in the
-              380px slot: Backed, Coverage and Dock were all behind a horizontal
-              scrollbar while the two narrow cards got the wide column. */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div className={s.pfPair}>
+            <CoverageCard book={makerBook.book} loading={makerBook.loading} error={makerBook.error} chainId={chainId} />
+
             <section className={`${s.card} ${s.cardClip}`}>
-              <div className={s.cardHead}>
-                <h2 className={`${s.display} ${s.h3}`}>Live positions</h2>
-                <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
-                  {strategies.length} published
-                  {strategies.length > 0
-                    ? ` · ${strategies.filter((st) => st.sides.some((sd) => !sd.covered)).length} unbacked`
-                    : ""}
-                </span>
+              <div className={s.cardHead} style={{ padding: "12px 18px" }}>
+                <h2 className={`${s.display} ${s.h3}`} style={{ margin: 0 }}>
+                  What happened to your strategies
+                </h2>
+                <span className={s.labelSm}>Aquifer subgraph</span>
               </div>
-              {strategies.length === 0 ? (
-                <p style={{ margin: 0, padding: "18px 20px", fontSize: 14, color: "var(--ink3)" }}>
-                  No active strategy has a decoded pair on this network yet.
-                </p>
+              {makerBook.loading && !makerBook.book ? (
+                <div style={{ padding: 18 }}>
+                  <Shim w="80%" />
+                  <Shim w="64%" delay=".08s" />
+                </div>
               ) : (
-                <div className={s.scroller}>
-                  <div style={{ minWidth: 680 }}>
-                    <div
-                      className={s.thead}
-                      style={{ display: "grid", gridTemplateColumns: STRAT_COLS, padding: "10px 20px" }}
-                    >
-                      <span>Pair</span>
-                      <span className={s.right}>Claimed</span>
-                      <span className={s.right}>Backed</span>
-                      <span className={s.right}>Coverage</span>
-                      <span className={s.right}>Action</span>
-                    </div>
-                    {strategies.map((st) => {
-                      const pair = st.sides.map((sd) => sd.symbol).join(" / ") || "—";
-                      const worstSide = st.sides.reduce((acc, sd) => {
-                        const claimed = BigInt(sd.claimed);
-                        const cov = claimed === 0n ? 100 : Number((BigInt(sd.backed) * 10000n) / claimed) / 100;
-                        return Math.min(acc, cov);
-                      }, 100);
-                      const short = st.sides.some((sd) => !sd.covered);
-                      return (
-                        <div
-                          className={`${s.trow} ${short ? s.trowShort : ""}`}
-                          style={{ display: "grid", gridTemplateColumns: STRAT_COLS, padding: "14px 20px" }}
-                          key={st.strategyHash}
-                        >
-                          <div style={{ minWidth: 0, paddingRight: 14 }}>
-                            <span style={{ display: "block", fontSize: 14.5 }}>{pair}</span>
+                <ActivityList items={activity} explorer={net.explorer} limit={4} />
+              )}
+            </section>
+          </div>
+
+          <section className={`${s.card} ${s.cardClip}`}>
+            <div className={s.cardHead} style={{ padding: "12px 20px" }}>
+              <h2 className={`${s.display} ${s.h3}`} style={{ margin: 0 }}>
+                Your strategies
+              </h2>
+              <span className={s.labelSm}>claims read live · backing is shared by every strategy on a token</span>
+            </div>
+            {rows.length === 0 ? (
+              <p style={{ margin: 0, padding: "18px 20px", fontSize: 14, color: "var(--ink3)" }}>
+                No active strategy has a decoded pair yet.
+              </p>
+            ) : (
+              <div className={s.scroller}>
+                <div style={{ minWidth: 760 }}>
+                  <div className={s.thead} style={{ display: "grid", gridTemplateColumns: STRAT_COLS, padding: "9px 20px" }}>
+                    <span>Strategy</span>
+                    <span className={s.right}>Promises</span>
+                    <span className={s.right}>Opcode 35</span>
+                    <span className={s.right}>Last event</span>
+                    <span className={s.right}>Action</span>
+                  </div>
+                  {rows.map((r) => {
+                    const here = r.chainId === chainId;
+                    const last = r.st?.activity[0];
+                    return (
+                      <div
+                        className={`${s.trow} ${r.st?.opcode35?.refusesNow ? s.trowShort : ""}`}
+                        style={{ display: "grid", gridTemplateColumns: STRAT_COLS, padding: "12px 20px", alignItems: "center" }}
+                        key={`${r.chainId}-${r.strategyHash}`}
+                      >
+                        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ display: "inline-flex", flexShrink: 0 }}>
+                            {r.sides.map((sd, i) => (
+                              <span key={sd.token} style={{ marginLeft: i ? -6 : 0 }}>
+                                <TokenIcon chainId={r.chainId} address={sd.token as Address} symbol={sd.symbol} size={20} />
+                              </span>
+                            ))}
+                          </span>
+                          <div style={{ minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 14 }}>{r.sides.map((sd) => sd.symbol).join(" / ")}</span>
                             <span className={s.mono} style={{ display: "inline-flex", alignItems: "center", fontSize: 9.5, color: "var(--ink3)" }}>
-                              {shortAddr(st.strategyHash)}
-                              <CopyButton value={st.strategyHash} size={10} />
+                              {shortAddr(r.strategyHash)}
+                              <CopyButton value={r.strategyHash} size={10} />
+                              {r.book ? ` · ${r.book}` : ""}
+                              {here ? "" : ` · ${NETWORKS[r.chainId].label}`}
                             </span>
                           </div>
-                          <div style={{ paddingRight: 16 }}>
-                            {st.sides.map((sd) => (
-                              <span
-                                key={sd.token}
-                                className={`${s.num} ${s.right}`}
-                                style={{ display: "block", color: "var(--ink3)" }}
-                              >
-                                {units(sd.claimed, sd.decimals, 2)} {sd.symbol}
+                        </div>
+                        <div>
+                          {r.sides.map((sd) => (
+                            <span key={sd.token} className={`${s.num} ${s.right}`} style={{ display: "block", fontSize: 12.5 }}>
+                              {units(sd.claim, sd.decimals, sd.decimals > 6 ? 6 : 2)} {sd.symbol}
+                            </span>
+                          ))}
+                        </div>
+                        <Opcode35Cell st={r.st} loading={makerBook.loading} />
+                        <div style={{ textAlign: "right" }}>
+                          {last ? (
+                            <a
+                              className={s.mono}
+                              href={`${NETWORKS[r.chainId].explorer}/tx/${last.txHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ fontSize: 11, color: last.kind === "refusal" ? "var(--warn-ink)" : "var(--ink2)" }}
+                            >
+                              {last.kind === "refusal" ? "refused" : "filled"} ↗
+                              <span style={{ display: "block", fontSize: 9.5, color: "var(--ink3)" }}>
+                                {new Date(last.timestamp * 1000).toISOString().slice(5, 16).replace("T", " ")}
                               </span>
-                            ))}
-                          </div>
-                          <div style={{ paddingRight: 16 }}>
-                            {st.sides.map((sd) => (
-                              <span key={sd.token} className={`${s.numBig} ${s.right}`} style={{ display: "block" }}>
-                                {units(sd.backed, sd.decimals, 2)} {sd.symbol}
-                              </span>
-                            ))}
-                          </div>
-                          <Bar pct={Math.min(100, worstSide)} width={54} labelWidth={40} />
+                            </a>
+                          ) : (
+                            <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
+                              none yet
+                            </span>
+                          )}
+                        </div>
+                        {here ? (
                           <DockCell
-                            state={dock[st.strategyHash] ?? { k: "idle" }}
+                            state={dock[r.strategyHash] ?? { k: "idle" }}
                             disabled={Boolean(wrongChain)}
                             explorer={net.explorer}
-                            appLink={`${net.explorer}/address/${st.app}`}
-                            onAsk={() => setDockFor(st.strategyHash, { k: "confirm" })}
-                            onCancel={() => setDockFor(st.strategyHash, { k: "idle" })}
+                            appLink={`${net.explorer}/address/${r.app}`}
+                            onAsk={() => setDockFor(r.strategyHash, { k: "confirm" })}
+                            onCancel={() => setDockFor(r.strategyHash, { k: "idle" })}
                             onConfirm={() =>
                               runDock(
-                                st.strategyHash as Hex,
-                                st.app as Address,
-                                st.sides.map((sd) => sd.token as Address)
+                                r.strategyHash as Hex,
+                                r.app as Address,
+                                r.sides.map((sd) => sd.token as Address)
                               )
                             }
                           />
-                        </div>
-                      );
-                    })}
-                  </div>
+                        ) : (
+                          <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)", textAlign: "right" }}>
+                            dock on {NETWORKS[r.chainId].label}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </section>
+              </div>
+            )}
+          </section>
 
-            <div className={s.pfPair}>
-              <section className={`${s.card} ${s.cardClip}`}>
-                <div className={s.cardHead} style={{ padding: "16px 18px" }}>
-                  <h2 className={`${s.display} ${s.h3}`}>Holdings against claims</h2>
-                  <span className={s.labelSm}>
-                    {total - covered} short
-                  </span>
-                </div>
-                {positions.map((p) => {
-                  const claimed = BigInt(p.claimed);
-                  const cov = claimed === 0n ? 100 : Number((BigInt(p.held) * 10000n) / claimed) / 100;
-                  return (
-                    <div style={{ padding: "13px 18px", borderBottom: "1px solid var(--hair)" }} key={p.token}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          marginBottom: 8,
-                          gap: 10,
-                        }}
-                      >
-                        <span style={{ fontSize: 14 }}>{p.symbol}</span>
-                        <Bar pct={Math.min(100, cov)} width={70} labelWidth={40} />
-                      </div>
-                      <div
-                        className={s.mono}
-                        style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "var(--ink3)" }}
-                      >
-                        <span>claimed {units(p.claimed, p.decimals, 2)}</span>
-                        <span>held {units(p.held, p.decimals, 2)}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
-
-              <section className={`${s.card} ${s.cardClip}`}>
-                <div className={s.cardHead} style={{ padding: "16px 18px" }}>
-                  {/* These rows are this wallet's swaps as a TAKER (Wellhead.Swapped by
-                      swapper), not fills against its strategies -- "Recent fills"
-                      described something else. */}
-                  <h2 className={`${s.display} ${s.h3}`}>Your recent swaps</h2>
-                  <span className={s.labelSm}>from chain</span>
-                </div>
-                {!hist ? (
-                  <div style={{ padding: 18 }}>
-                    <Shim w="80%" />
-                    <Shim w="64%" delay=".08s" />
-                  </div>
-                ) : hist.swaps.rows.length === 0 ? (
-                  <p style={{ margin: 0, padding: "18px", fontSize: 13.5, color: "var(--ink3)" }}>
-                    {hist.swaps.available === false
-                      ? (hist.swaps.reason ?? "fills are not indexed on this network")
-                      : "No swaps from this wallet yet."}
-                  </p>
-                ) : (
-                  hist.swaps.rows.slice(0, 6).map((f) => (
-                    <div
-                      style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr)", gap: 10, padding: "13px 18px", borderBottom: "1px solid var(--hair)", alignItems: "start" }}
-                      key={f.txHash}
-                    >
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ink)", marginTop: 7 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink2)" }}>
-                          {/* Each side in its own token's decimals. Hardcoding 18 printed
-                              0.001 USDC as 0.000000000000001. */}
-                          Swapped {units(f.amountIn, tokenMeta(f.tokenIn).decimals, 6)} {tokenMeta(f.tokenIn).symbol} →{" "}
-                          {units(f.amountOut, tokenMeta(f.tokenOut).decimals, 8)} {tokenMeta(f.tokenOut).symbol}
-                        </p>
-                        <p className={s.mono} style={{ margin: "3px 0 0", fontSize: 10, color: "var(--ink3)", display: "inline-flex", alignItems: "center" }}>
-                          <a href={`${net.explorer}/tx/${f.txHash}`} target="_blank" rel="noreferrer">
-                            {shortAddr(f.txHash)} ↗
-                          </a>
-                          <CopyButton value={f.txHash} title="Copy tx hash" />
-                          <span style={{ margin: "0 4px" }}>·</span>
-                          <span>block {f.blockNumber}</span>
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </section>
+          <section className={`${s.card} ${s.cardClip}`}>
+            <div className={s.cardHead} style={{ padding: "12px 18px" }}>
+              {/* This wallet's swaps as a TAKER (Wellhead.Swapped by swapper), not
+                  fills against its strategies. */}
+              <h2 className={`${s.display} ${s.h3}`} style={{ margin: 0 }}>
+                Your swaps
+              </h2>
+              <span className={s.labelSm}>as a taker · from chain</span>
             </div>
-          </div>
+            {!hist ? (
+              <div style={{ padding: 18 }}>
+                <Shim w="60%" />
+              </div>
+            ) : hist.swaps.rows.length === 0 ? (
+              <p style={{ margin: 0, padding: "14px 18px", fontSize: 13.5, color: "var(--ink3)" }}>
+                {hist.swaps.available === false
+                  ? (hist.swaps.reason ?? "fills are not indexed on this network")
+                  : "No swaps from this wallet yet."}
+              </p>
+            ) : (
+              hist.swaps.rows.slice(0, 3).map((f) => (
+                <div
+                  style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "11px 18px", borderBottom: "1px solid var(--hair)", flexWrap: "wrap" }}
+                  key={f.txHash}
+                >
+                  <span style={{ fontSize: 13.5, color: "var(--ink2)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <TokenIcon chainId={chainId} address={f.tokenIn as Address} symbol={tokenMeta(f.tokenIn).symbol} size={16} />
+                    {units(f.amountIn, tokenMeta(f.tokenIn).decimals, 6)} {tokenMeta(f.tokenIn).symbol} →
+                    <TokenIcon chainId={chainId} address={f.tokenOut as Address} symbol={tokenMeta(f.tokenOut).symbol} size={16} />
+                    {units(f.amountOut, tokenMeta(f.tokenOut).decimals, 8)} {tokenMeta(f.tokenOut).symbol}
+                  </span>
+                  <a className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }} href={`${net.explorer}/tx/${f.txHash}`} target="_blank" rel="noreferrer">
+                    {shortAddr(f.txHash)} ↗ · block {f.blockNumber}
+                  </a>
+                </div>
+              ))
+            )}
+          </section>
         </>
       )}
     </div>
@@ -526,6 +536,31 @@ function DockCell({
       <a className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }} href={appLink} target="_blank" rel="noreferrer">
         app ↗
       </a>
+    </div>
+  );
+}
+
+/** The opcode-35 verdict for one strategy, as the contract would compute it now. */
+function Opcode35Cell({ st, loading }: { st?: BookStrategy; loading: boolean }) {
+  const note = { fontSize: 10, color: "var(--ink3)", display: "block", textAlign: "right" as const };
+  if (!st) return <span className={s.mono} style={note}>{loading ? "reading…" : "—"}</span>;
+  const o = st.opcode35;
+  if (!o) {
+    return (
+      <span className={s.mono} style={note}>
+        plain · {st.book}
+      </span>
+    );
+  }
+  const util = o.utilBps === null ? "no backing" : `${(o.utilBps / 100).toFixed(1)}%`;
+  return (
+    <div style={{ textAlign: "right" }}>
+      <span className={s.num} style={{ fontSize: 12.5, color: o.refusesNow ? "var(--warn-ink)" : "var(--ink)" }}>
+        {util} / {o.maxUtilBps / 100}%
+      </span>
+      <span className={s.mono} style={{ ...note, color: o.refusesNow ? "var(--warn-ink)" : "var(--ink3)" }}>
+        {o.refusesNow ? "refuses now" : `fills · ${o.widenBps} bps widen`} · {o.symbol}
+      </span>
     </div>
   );
 }

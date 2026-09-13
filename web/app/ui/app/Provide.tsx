@@ -5,8 +5,10 @@ import { useSendTransaction, useSwitchChain, useWriteContract } from "wagmi";
 import { keccak256, erc20Abi, maxUint256, type Address, type Hex } from "viem";
 import s from "../app.module.css";
 import { TokenIcon } from "../TokenIcon";
+import { IconBook, IconShape, IconShield, IconSplit } from "./Icons";
 import { CopyButton } from "../CopyButton";
 import { DepthChart, type RangePreset } from "./DepthChart";
+import { useMakerBook, BookStrip, BookHistogram, bookRows } from "./MakerBook";
 import { units, short as shortAddr, toRaw } from "@/lib/format";
 import type { ExposureResponse } from "../types";
 import { publicClientFor, type Network, BEACON_STRATEGY_ADDRESS } from "@/lib/networks";
@@ -54,7 +56,10 @@ export function Provide({
   // Encumbrance Strategy parameters
   const [maxUtilBps, setMaxUtilBps] = useState(8000); // 80% default
   const [widenBps, setWidenBps] = useState(500); // 500 bps = 5% default
-  const [graphMode, setGraphMode] = useState<"depth" | "curve" | "dual">("curve");
+  const [graphMode, setGraphMode] = useState<"book" | "depth" | "curve" | "dual">("book");
+  // Opt-in: count the maker's promises on other chains in the declared total.
+  const [crossChain, setCrossChain] = useState(false);
+  const [bookReload, setBookReload] = useState(0);
   const [hoverUtil, setHoverUtil] = useState<number | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
@@ -122,6 +127,8 @@ export function Provide({
       active = false;
     };
   }, [pricing, oracleAvailable, net]);
+
+  const makerBook = useMakerBook(address, bookReload);
 
   // Read maker's live exposure from /api/exposure
   const [exposure, setExposure] = useState<ExposureResponse | null>(null);
@@ -374,9 +381,22 @@ export function Provide({
   // would report the single worst position on the network as merely "full" — on
   // the one screen whose entire subject is over-promising. The chart still plots
   // against a 0-100 axis, so clamp there, at the drawing, not here at the number.
+  // With cross-chain counting on, the number opcode 35 will be given is not this
+  // chain's promises but max(those, combined utilisation x this chain's backing) --
+  // the same figure /api/strategy declares -- so the curve shows that one.
+  const combinedOut = useMemo(
+    () => (makerBook.book ? bookRows(makerBook.book, tokenOut.symbol, tokenOut.decimals).combined : null),
+    [makerBook.book, tokenOut.symbol, tokenOut.decimals]
+  );
+  const declaredOut = useMemo(() => {
+    if (!crossChain || !combinedOut || backingOut === null || combinedOut.backing === 0n) return alreadyPromisedOut;
+    const scaled = (combinedOut.promised * backingOut + combinedOut.backing - 1n) / combinedOut.backing;
+    return scaled > alreadyPromisedOut ? scaled : alreadyPromisedOut;
+  }, [crossChain, combinedOut, backingOut, alreadyPromisedOut]);
+
   const currentUtilPct =
     backingOut && backingOut > 0n
-      ? Number((alreadyPromisedOut * 10000n) / backingOut) / 100
+      ? Number((declaredOut * 10000n) / backingOut) / 100
       : 0;
   const utilPlotPct = Math.min(100, currentUtilPct);
 
@@ -403,6 +423,7 @@ export function Provide({
           maxUtilBps,
           widenBps,
           siblingHashes: liveSiblings.map((s) => s.strategyHash),
+          crossChain,
         }),
       });
 
@@ -432,6 +453,7 @@ export function Provide({
       onShipped();
       await reloadBalances();
       await fetchExposure();
+      setBookReload((k) => k + 1);
     } catch (e) {
       if (forChain === net.id) {
         setError(describe(e));
@@ -588,6 +610,21 @@ export function Provide({
         )}
       </div>
 
+      {/* What this wallet has already promised, on every chain we read. Replaces a
+          banner of competitor and fee figures that nothing in the app measured. */}
+      <div style={{ marginBottom: 12 }}>
+        <BookStrip
+          book={makerBook.book}
+          loading={makerBook.loading}
+          error={makerBook.error}
+          token={tokenOut}
+          chainId={net.id}
+          crossChain={crossChain}
+          onToggleCrossChain={setCrossChain}
+          maxUtilBps={maxUtilBps}
+        />
+      </div>
+
       <div className={`${s.cols} ${s.colsBuild}`}>
         {/* ── Control Column (Left: All Inputs & Publish Action) ─────────────────────────────── */}
         <div className={s.colNarrow} style={{ gap: 10 }}>
@@ -628,7 +665,7 @@ export function Provide({
               <div>
                 <div style={{ fontSize: 11, color: "var(--ink3)" }}>Aqua Allowance</div>
                 <div className={s.mono} style={{ fontSize: 12, color: allowanceBounded ? "var(--short)" : "var(--ink2)" }}>
-                  {isBackingLoading ? "…" : allowanceOut === null ? "—" : units(allowanceOut, tokenOut.decimals, 4)} {tokenOut.symbol}
+                  {isBackingLoading ? "…" : allowanceOut === null ? "—" : allowanceOut >= maxUint256 / 2n ? "unlimited" : `${units(allowanceOut, tokenOut.decimals, 4)} ${tokenOut.symbol}`}
                 </div>
               </div>
               <div>
@@ -895,6 +932,7 @@ export function Provide({
                 </div>
               </div>
             </div>
+
           </section>
 
           {/* 3. The Limits & Publish */}
@@ -1128,14 +1166,18 @@ export function Provide({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
                   <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
-                    {graphMode === "depth"
+                    {graphMode === "book"
+                      ? `Your ${tokenOut.symbol} promises against your backing`
+                      : graphMode === "depth"
                       ? "Illustrative Liquidity Shape"
                       : graphMode === "curve"
                       ? "Solvency Haircut & On-Chain Refusal Curve"
                       : "Dual View: Liquidity Shape & Solvency Response"}
                   </h2>
                   <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
-                    {graphMode === "depth"
+                    {graphMode === "book"
+                      ? "Every live strategy stacked in turn, read from chain. The bar that crosses the dashed line is where the book stops being deliverable; the dashed bar is this draft."
+                      : graphMode === "depth"
                       ? "Illustrative liquidity schematic across price ticks with active range highlight and spot reference."
                       : graphMode === "curve"
                       ? "Progressive haircut slope with dual on-chain refusal boundaries: order floor & utilization cliff."
@@ -1143,15 +1185,23 @@ export function Provide({
                   </p>
                 </div>
 
-                {/* 3-Way Graph Mode Toggle */}
+                {/* Graph Mode Toggle */}
                 <div className={s.seg}>
+                  <button
+                    type="button"
+                    onClick={() => setGraphMode("book")}
+                    className={`${s.segBtn} ${graphMode === "book" ? s.segBtnOn : ""}`}
+                    title="Your live strategies stacked against your backing"
+                  >
+                    <IconBook /> Your book
+                  </button>
                   <button
                     type="button"
                     onClick={() => setGraphMode("depth")}
                     className={`${s.segBtn} ${graphMode === "depth" ? s.segBtnOn : ""}`}
                     title="View illustrative liquidity depth curve"
                   >
-                    ✦ Liquidity Shape
+                    <IconShape /> Shape (illustrative)
                   </button>
                   <button
                     type="button"
@@ -1159,7 +1209,7 @@ export function Provide({
                     className={`${s.segBtn} ${graphMode === "curve" ? s.segBtnOn : ""}`}
                     title="View solvency haircut and dual refusal boundaries"
                   >
-                    🛡 Solvency Curve
+                    <IconShield /> Solvency curve
                   </button>
                   <button
                     type="button"
@@ -1167,7 +1217,7 @@ export function Provide({
                     className={`${s.segBtn} ${graphMode === "dual" ? s.segBtnOn : ""}`}
                     title="View both charts simultaneously"
                   >
-                    ◫ Dual View
+                    <IconSplit /> Both
                   </button>
                 </div>
               </div>
@@ -1237,6 +1287,25 @@ export function Provide({
                 </div>
               )}
             </div>
+
+            {graphMode === "book" && (
+              <div style={{ padding: "18px 22px" }}>
+                <BookHistogram
+                  book={makerBook.book}
+                  chainId={net.id}
+                  symbol={tokenOut.symbol}
+                  decimals={tokenOut.decimals}
+                  draft={rawClaimOut}
+                  includeOtherChains={crossChain}
+                  maxUtilBps={maxUtilBps}
+                />
+                {!makerBook.book ? (
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--ink3)" }}>
+                    {makerBook.loading ? "Reading your book…" : "Connect a wallet to see your own book here."}
+                  </p>
+                ) : null}
+              </div>
+            )}
 
             {/* Graph 1: Continuous AMM Liquidity Depth Curve */}
             {(graphMode === "depth" || graphMode === "dual") && (

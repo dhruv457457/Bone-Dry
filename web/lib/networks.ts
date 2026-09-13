@@ -36,8 +36,11 @@ export type Network = {
   rpcFallbacks: string[];
   aqua: Address;
   router: Address;
-  /** Opcode-35 encumbrance-aware router. Only deployed on Base and Base Sepolia. */
+  /** Opcode-35 encumbrance-aware router. Deployed on Base, Base Sepolia and Ethereum. */
   boneDryRouter?: Address;
+  /** Block BoneDryRouter was deployed at, where no subgraph of ours indexes it:
+   *  Shipped logs for our router are scanned from here, and nothing earlier can exist. */
+  boneDryGenesis?: bigint;
   /** The v4 hook bound to `boneDryRouter`. `Tap.router` is immutable, so reaching
    *  opcode 35 means routing through this hook and its own pool — the `hook`
    *  field above is welded to 1inch's canonical router and cannot. */
@@ -102,7 +105,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     wellhead: (process.env.NEXT_PUBLIC_WELLHEAD_ADDRESS ?? "") as Address | "",
     graphUrl:
       process.env.GRAPH_URL ??
-      "https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.3",
+      "https://api.studio.thegraph.com/query/1758723/aquifer/v0.0.4",
     aquaGenesis: 48_839_900n,
     aquaIsOurs: false,
     oracleFeeds: {
@@ -154,7 +157,7 @@ export const NETWORKS: Record<NetworkId, Network> = {
     id: 1,
     key: "ethereum",
     label: "Ethereum",
-    purpose: "Real Aqua makers, at real scale. Read-only — no Bone Dry hook here.",
+    purpose: "Real Aqua makers at real scale, plus Bone Dry's router, hooks and two opcode-35 strategies.",
     testnet: false,
     explorer: "https://etherscan.io",
     // QuikNode's paid Build plan first -- this is the fix for the actual
@@ -199,14 +202,15 @@ export const NETWORKS: Record<NetworkId, Network> = {
     poolManager: "0x000000000004444c5dc75cB358380D2e3dE08A90",
     usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     weth: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    // No hook, no lens, no wellhead: this submission does not deploy Bone Dry
-    // to Ethereum. Every route that already handles Base's pre-deploy state
-    // (empty hook, "not initialized" pool, read-only banner) handles this the
-    // same way, for the same reason -- it is not a special case, it is the
-    // same case twice.
-    hook: "",
-    lens: "",
-    wellhead: "",
+    // Deployed 2026-09-13 by contracts/script/DeployEthereum.s.sol, verified on chain
+    // (deployments/ethereum.json). `hook` is the Tap bound to 1inch's router, where
+    // Ethereum's existing makers live; `boneDryHook` is bound to BoneDryRouter.
+    hook: "0x3Bb143CD171A1959927C6cc201707E85d2b78088",
+    lens: "0xEB4c9A1d4b00FB3a189936ff0Dd877521B057160",
+    wellhead: "0xE859BBaEd41d1c88C9BD6Da1104b16a46DD9a32D",
+    boneDryRouter: "0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE",
+    boneDryHook: "0xe64823e2298dFa1EF2C6652FaCBB301beE360088",
+    boneDryGenesis: 25_967_575n,
     // No subgraph in our own schema indexes Ethereum. A third-party one
     // exists and is real (verified: 113,162 strategies against this exact
     // router, live-queried), but its entities do not match ours
@@ -265,11 +269,10 @@ export function appsOf(n: Network): AquaApp[] {
 
 export const DEFAULT_NETWORK: NetworkId = 8453;
 
-/** Networks a user can switch to. Ethereum (read-only measurement) and Base
- *  Sepolia stay fully configured -- every API route still serves them -- but they
- *  are hidden from the switcher for the submission, where Base mainnet is the
- *  product. Add an id back here to re-enable one; nothing else needs to change. */
-export const ENABLED_NETWORKS: NetworkId[] = [8453];
+/** Networks a user can switch to: the two mainnets Bone Dry is deployed on. Base
+ *  Sepolia stays fully configured -- every API route still serves it -- but is
+ *  hidden from the switcher for the submission. Add an id back here to re-enable it. */
+export const ENABLED_NETWORKS: NetworkId[] = [8453, 1];
 
 export function isEnabledNetwork(id: number): id is NetworkId {
   return (ENABLED_NETWORKS as number[]).includes(id);
