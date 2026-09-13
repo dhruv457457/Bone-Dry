@@ -151,8 +151,11 @@ flowchart LR
 > The app plans both books, ranks them by the rate a taker actually gets, and builds
 > the swap against the hook that can fill the winner. At small sizes the Bone Dry
 > book wins and steps 3–4 run through opcode 35; at larger sizes its shallow reserves
-> price out and the evidence book wins. No signed fill has yet landed through
-> opcode 35.
+> price out and the evidence book wins. First signed fill through opcode 35:
+> [`0x95aab656…`](https://basescan.org/tx/0x95aab656e6e9459b37b399f62ffebccf6b06d5aa24041ab7f0c45de861fbafa2)
+> — `EncumbranceApplied` read 23.0e12 of sibling commitments against 38.5e12 backing
+> (5,971 bps) and cut the output from 410,598,350,587 to 398,339,936,831 wei, a
+> 298.54 bps haircut against the 298.55 the curve specifies.
 >
 > Step 6's `logs → subgraph` edge is not built: the subgraph's `Tap` data source is
 > a template nothing instantiates. Refusal reasons shown in the app are **computed
@@ -370,7 +373,7 @@ A status table that overclaims is worse than none.
 | Postgres index over 1inch's Aqua API (Ethereum) | live, refreshed on a schedule |
 | `BoneDryRouter` deployed to a public network | **deployed**, Base mainnet `0x74195573…` |
 | Provide-tab encumbrance builder, shipping opcode 35 | **live** — declares encumbrance server-side from `rawBalances` |
-| App routing a swap through the opcode-35 hook | **built** — the router plans both books and routes to the hook that can fill; first signed fill pending |
+| App routing a swap through the opcode-35 hook | **live** — first signed fill [`0x95aab656…`](https://basescan.org/tx/0x95aab656e6e9459b37b399f62ffebccf6b06d5aa24041ab7f0c45de861fbafa2), `EncumbranceApplied` at 5,971 bps, 298.54 bps haircut |
 | `MakerRefusal` / `EncumbranceApplication` indexed | **not yet** — see [PLAN-GRAPH.md](PLAN-GRAPH.md) |
 | Subgraph on Ethereum mainnet | **not yet** — see Known limits |
 | `Tap.sol` gate refusing incomplete sibling lists | **not yet** |

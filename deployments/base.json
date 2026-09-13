@@ -133,5 +133,27 @@
       "checkedAt": "2026-09-13"
     },
     "note": "Priced ~7% under market so it out-prices its plain siblings after its own ~3% haircut; at equal reserves the opcode-35 strategy lost every per-maker pick and never filled (tx 0xba04ad84 pulled from a sibling). The whole live book -- two siblings plus this -- fits inside min(balance, allowance)."
+  },
+  "firstEncumberedFill": {
+    "tx": "0x95aab656e6e9459b37b399f62ffebccf6b06d5aa24041ab7f0c45de861fbafa2",
+    "block": 51242689,
+    "strategyHash": "0x8442bb0dca83e43a6d0a4cfa12d98454673b8e692bc1557e58fc232ee296c33e",
+    "encumbranceApplied": {
+      "encumbered": "23017121539368",
+      "backing": "38542392957239",
+      "utilBps": 5971,
+      "isExactIn": true,
+      "amountOutBefore": "410598350587",
+      "amountOutAfter": "398339936831",
+      "haircutBps": "298.54",
+      "expectedBps": "298.55"
+    },
+    "takerIn": "1000 (0.001 USDC)",
+    "note": "First signed fill through opcode 35 on mainnet, routed by the app through the Tap hook bound to BoneDryRouter. Haircut matches widenBps x util to 0.01 bps."
+  },
+  "firstHookFill": {
+    "tx": "0x16d1e8d0bf791402d2cca3c67c5d9988f993d03b23e6f39f2cc9a431272089ee",
+    "block": 51241978,
+    "note": "First app swap to complete on Base: zero-liquidity v4 pool, tapLegacy filling in beforeSwap, Aqua.pull from the maker's wallet (evidence book)."
   }
 }
