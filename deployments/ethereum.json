@@ -1,0 +1,119 @@
+{
+  "chainId": 1,
+  "network": "ethereum",
+  "note": "Ethereum mainnet. Aqua and the canonical SwapVM router are 1inch's own deployments, at the same addresses as on Base. Bone Dry deploys the same five contracts as Base in one script (contracts/script/DeployEthereum.s.sol): BoneDryRouter (SwapVM with opcode 35 at index 35), Lens, Wellhead, and two Tap hooks -- tapLegacy bound to 1inch's router, where Ethereum's existing third-party makers live, and tap bound to BoneDryRouter, where opcode 35 runs. Tap.router is immutable, so each book needs its own hook and its own zero-liquidity pool.",
+  "aqua": "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a",
+  "swapVmRouter": "0x111111338c5091E8440b67B168bAe16a668AC0De",
+  "boneDryRouter": "0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE",
+  "boneDryRouterTx": "0x4a2615e0bd1dfba0fa4ca0c4d7cb521219ee05618743ee1263732939e4ef5d1c",
+  "lens": "0xEB4c9A1d4b00FB3a189936ff0Dd877521B057160",
+  "lensTx": "0x3e42b0c2d8a822202f81246ae73798cfe15b1540d06584d8c83b141b40466788",
+  "wellhead": "0xE859BBaEd41d1c88C9BD6Da1104b16a46DD9a32D",
+  "wellheadTx": "0xf804e177df494999309a6b521a745355d63bff8c163bd4f756a1dbc4789b9bb2",
+  "tapLegacy": "0x3Bb143CD171A1959927C6cc201707E85d2b78088",
+  "tapLegacyTx": "0x680f2f4dfc0c7ead5e01b985c73886264b85db5c48ffd7723d9954e89bfcc79e",
+  "tap": "0xe64823e2298dFa1EF2C6652FaCBB301beE360088",
+  "tapTx": "0x6fef78832dffdc1b3b85a3048d5fb30de2b4f8647fe1e7b207b152b280d3310c",
+  "poolIdLegacy": "0xcc9201610d02c972d66e010e9000820ed55c5ba8bc8c9887075122c6d25c236d",
+  "poolInitLegacyTx": "0x5746dd388c8a8fee1fa6f2918e4298e2291d231870f68ca07bc62ef5a1989dc7",
+  "poolId": "0xe00cc5dceb782a8dcd5e5bfdbf63e6cc1c0ddbf82e2d2e3e159ed0bdd273ef90",
+  "poolInitTx": "0x30e32ee823177d3ddb8c41a1469a69eec0e3eaf01eb9fd7124791a5663ecdc94",
+  "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+  "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "deployer": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+  "blocks": [
+    25967575,
+    25967586
+  ],
+  "gas": {
+    "used": 8505972,
+    "paidEth": "0.000402575164824347",
+    "avgGwei": "0.048"
+  },
+  "verified": {
+    "boneDryRouterBytes": 19793,
+    "tapBytes": 6158,
+    "tapLegacyRouter": "0x111111338c5091E8440b67B168bAe16a668AC0De",
+    "tapRouter": "0xF3Da3145B208ebfA94fAd073Ba9C03d6e8746FFE",
+    "tapLens": "0xEB4c9A1d4b00FB3a189936ff0Dd877521B057160",
+    "tapPoolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "wellheadPoolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "lensAqua": "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a",
+    "routerOwner": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+    "poolsInitialized": true,
+    "currencyOrder": "USDC is currency0 on Ethereum (0xA0b8.. < 0xC02a..), the reverse of Base",
+    "checkedAt": "2026-09-13"
+  },
+  "status": "contracts live; two opcode-35 strategies live; the app quotes, routes and shows the maker book on Ethereum; swaps through both Ethereum hooks verified on a fork of live state, none signed on chain yet (no USDC taker)",
+  "strategies": {
+    "script": "contracts/script/ShipEthereum.s.sol",
+    "wrapTx": "0x48500e79fbd0467cd4bfb1b14c6ad7618bdd7f2b211c5216492474b07b52af3c",
+    "approveTx": "0x64af4c6e3f75a36375494cc43ccffa8d1814aefb7c8412ee2044a9692ca96cb5",
+    "A": {
+      "strategyHash": "0xf45fd232d6e78e2ccffd1fde959ecadf9983eec7084f1662f2e48e640452ae11",
+      "shipTx": "0x5f2006e6a763602f5fb0a83e82874c215b37b8c3ef1dad49d421cd4ec9f983de",
+      "weth": "40000000000000",
+      "usdc": "98974",
+      "declaredTotalEncumbrance": "0",
+      "siblings": [],
+      "maxUtilBps": 8000,
+      "widenBps": 500
+    },
+    "B": {
+      "strategyHash": "0x0809ca840aba51ebffbdf80cdffb867b6beeecb91ac366e3fda5ef9a7abce3a5",
+      "shipTx": "0x4a3f355cc37111e3092cd372f08a72088ca5a01219a8829aefe3e2c6be7c7279",
+      "weth": "40000000000000",
+      "usdc": "94025",
+      "declaredTotalEncumbrance": "40000000000000",
+      "siblings": [
+        "0xf45fd232d6e78e2ccffd1fde959ecadf9983eec7084f1662f2e48e640452ae11"
+      ],
+      "maxUtilBps": 8000,
+      "widenBps": 500
+    },
+    "blocks": [
+      25967772,
+      25967779
+    ],
+    "pricedFrom": "Chainlink ETH/USD 2474.37 at ship; B priced 5% tighter so it wins the pick after its 2% haircut",
+    "backingWeth": "100000000000000",
+    "note": "Both strategies carry opcode 35 because the wallet holds no USDC on Ethereum: the USDC direction refuses on chain (EncumbranceZeroBacking) instead of advertising USDC it cannot pay. Book 0.00008 WETH against 0.0001 WETH backing."
+  },
+  "forkVerifiedSwap": {
+    "test": "contracts/test/EthereumLive.t.sol",
+    "kind": "fork simulation against live Ethereum state; only the taker's 0.02 USDC is dealt",
+    "usdcToWeth": {
+      "sold": "20000",
+      "gotWeth": "7438925248577",
+      "B": {
+        "utilBps": 4000,
+        "amountOutBefore": "3845229512136",
+        "amountOutAfter": "3768324921894",
+        "haircutBps": "200"
+      },
+      "A": {
+        "utilBps": 0,
+        "backingAfterB": "96231675078106",
+        "amountOut": "3670600326683"
+      }
+    },
+    "wethToUsdc": "reverts: both strategies refuse EncumbranceZeroBacking",
+    "checkedAt": "2026-09-13",
+    "appRouteThroughTapLegacy": {
+      "test": "test_replayAppRoute_throughLegacyHook (ROUTE_HOOKDATA/ROUTE_AMOUNT from /api/route?chain=1)",
+      "book": "1inch evidence book: third-party makers",
+      "sold": "19996",
+      "gotWeth": "8127529286789",
+      "matchedQuote": true
+    }
+  },
+  "app": {
+    "wired": true,
+    "networksTs": "hook=tapLegacy, boneDryHook=tap, lens, wellhead, boneDryRouter, boneDryGenesis 25967575",
+    "switcher": "Base and Ethereum enabled; Base Sepolia hidden",
+    "makerBook": "Ethereum strategies = 1inch Postgres index + BoneDryRouter Shipped logs from boneDryGenesis, claims read live",
+    "quoteLatency": "cold USDC->WETH quote 10-13s (was 36s before scanning Bone Dry logs from the router's own deploy block)",
+    "checkedAt": "2026-09-13"
+  }
+}

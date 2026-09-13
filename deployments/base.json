@@ -155,5 +155,30 @@
     "tx": "0x16d1e8d0bf791402d2cca3c67c5d9988f993d03b23e6f39f2cc9a431272089ee",
     "block": 51241978,
     "note": "First app swap to complete on Base: zero-liquidity v4 pool, tapLegacy filling in beforeSwap, Aqua.pull from the maker's wallet (evidence book)."
+  },
+  "firstRefusal": {
+    "tx": "0xe29c843d5f09e4a27eeea4d54e1926a72453bc75a51f1896c34648a3359794d0",
+    "block": 51245897,
+    "shipTx": "0x7a0a7a2d152c1f2b3f12618e60b935f1471bc6c14b613e17b4552035a8cbaa9a",
+    "approveTx": "0xe79ee70f0d163ae6943390032129c582feace473f13f65a4f5b9b9fe05aaa981",
+    "refusingStrategy": "0xe2beacc259399fb789e543dfa1bc2384646ac25f6068212f5074f55e9243af22",
+    "fillingStrategy": "0x8442bb0dca83e43a6d0a4cfa12d98454673b8e692bc1557e58fc232ee296c33e",
+    "makerSkipped": {
+      "count": 2,
+      "wanted": "301",
+      "reason": "0x831f3352",
+      "reasonName": "EncumbranceExceeded"
+    },
+    "filled": 2,
+    "encumbranceApplied": 2,
+    "takerIn": "2000 (0.002 USDC)",
+    "swappedAmountOut": "718983006729",
+    "declaredBookWeth": "34318781602537",
+    "backingWeth": "38144053020408",
+    "utilBps": 8997,
+    "maxUtilBps": 8000,
+    "selfTrade": true,
+    "script": "contracts/script/RefusalBase.s.sol",
+    "note": "First on-chain refusal. The refusing strategy declares the maker's real live WETH book (sampled on-chain, so it cannot under-declare) at 89.97% of min(balance, allowance) against an 80% ceiling; the book plus it still fits inside backing, so the refusal is policy, not insolvency. Tap asked it twice (its own slice, then the sweep) and both times caught EncumbranceExceeded and emitted MakerSkipped; the V3 strategy filled the whole input. The taker is the maker wallet (the only funded key), so Wellhead was called with minOut 0: the swapper's balance delta nets to zero, while Swapped reports the real 7.19e11 WETH fill."
   }
 }
