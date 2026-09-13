@@ -491,12 +491,17 @@ exactly one hook. The second was deployed once `BoneDryRouter` existed; the app
 has not been moved onto it yet. See the note under [One fill, end to
 end](#one-fill-end-to-end--and-where-each-step-runs-today).
 
-**Three live encumbrance strategies**, maker
-`0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`, repriced to market on 2026-09-12: 0.029558 USDC :
-0.0000117 WETH each (2,526 USDC/WETH against a Chainlink read of 2,526), promising 0.0887 USDC and
-0.0000351 WETH in total against a wallet holding 0.2276 and 0.0000389 — sibling encumbrance at
-6,011 bps, under the 8,000 refusal line with the widening curve already active. The first set,
-shipped at an implied 5,833, is left live as a real example of a maker quoting well above market.
+**A live, genuinely backed encumbrance position**, maker
+`0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f`: one opcode-35 strategy (`0x8442bb0d…`) and two plain
+siblings, promising 0.0000347 WETH in total against 0.0000385 held — 90% of backing, sibling
+utilisation 5,971 bps under the 8,000 refusal line. The opcode-35 strategy is priced about 7% under
+market (2,350 USDC/WETH) so it still out-prices its siblings after its own ~3% haircut; at equal
+reserves it lost every price pick and never filled.
+
+Earlier sets are docked, and one of them is worth reading about: leaving the first set live beside
+the second overpromised this maker **1.83×**, and its encumbrance strategy declared 23.4e12 of
+sibling commitments against a true 59.0e12. It is the exact incomplete-sibling-list failure in Known
+limits, produced by us, and found only by summing the maker's whole book.
 `ship()` transfers nothing, so an unbacked position would have cost exactly the
 same and been the phantom liquidity this project measures. The ship script carries
 `require()` guards that abort rather than overpromise.

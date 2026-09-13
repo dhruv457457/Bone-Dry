@@ -55,11 +55,11 @@
       "utilBpsAtShip": 6165,
       "checkedAt": "2026-09-12"
     },
-    "note": "Superseded by encumbranceStrategy below. Priced at 5,833 USDC/WETH against a market of ~2,526 -- for an XYC strategy the shipped amounts ARE the reserves, so they are the price. Left live deliberately: it is a real maker quoting 2.3x above market, which is the kind of position this project measures."
+    "note": "Superseded by encumbranceStrategy below. Priced at 5,833 USDC/WETH against a market of ~2,526 -- for an XYC strategy the shipped amounts ARE the reserves, so they are the price. Left live deliberately: it is a real maker quoting 2.3x above market, which is the kind of position this project measures.",
+    "status": "all three docked 2026-09-13 (V3): leaving them live overpromised our own maker 1.83x"
   },
-  "encumbranceStrategy": {
+  "encumbranceStrategyV2": {
     "maker": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
-    "strategyHash": "0xa330b560041689b2821313993310521e82ad5a54767d23756a2de9ae20766c64",
     "strategyTx": "0x5499cf19976e8b5cc9e86ab10fa1e6d2ab153a4112d705c319ac8e9b5ea04f7a",
     "siblingHashes": [
       "0x77f372202e853d401b0af9c977881510f530ed68512594595179747e19964df4",
@@ -96,6 +96,42 @@
       "quotedVsOracleSmallSize": "96.7-99.8%",
       "checkedAt": "2026-09-12"
     },
-    "note": "Repriced set. 0.029558 USDC : 0.0000117 WETH implies 2,526.32 against a Chainlink read of 2,526.33. Sized so the position is constrained rather than idle -- two siblings owe 0.0000234 WETH against 0.0000389 backing, 6,011 bps, under the 8,000 refusal line with the widening curve active. Reserves are small because the maker's whole WETH inventory is 0.0000389 WETH, so the XYC curve degrades past a few thousandths of a USDC; that is the position being honest about its size, not a misprice."
+    "note": "Repriced set. 0.029558 USDC : 0.0000117 WETH implies 2,526.32 against a Chainlink read of 2,526.33. Sized so the position is constrained rather than idle -- two siblings owe 0.0000234 WETH against 0.0000389 backing, 6,011 bps, under the 8,000 refusal line with the widening curve active. Reserves are small because the maker's whole WETH inventory is 0.0000389 WETH, so the XYC curve degrades past a few thousandths of a USDC; that is the position being honest about its size, not a misprice.",
+    "status": "docked 2026-09-13 (V3). Its two siblings stay live and back the V3 strategy.",
+    "strategyHash_docked": "0xa330b560041689b2821313993310521e82ad5a54767d23756a2de9ae20766c64"
+  },
+  "encumbranceStrategy": {
+    "maker": "0x60b9FcAFCdDeAEd79b5B5486c036Fe03BE8B075f",
+    "strategyHash": "0x8442bb0dca83e43a6d0a4cfa12d98454673b8e692bc1557e58fc232ee296c33e",
+    "strategyTx": "0x5a4adbfa2b13b24aeca2f79d9f5cba98b79fe5a6ca482883bf0d6cb61b3e0147",
+    "dockTxs": [
+      "0x40c89da5acd45dec708411a2ab061f5a409e8d27e515b67a49668bac9cd1d61c",
+      "0x50f14148685f85453e83f9161c7c70ff7e744e593817bce937c32d3936cf301b",
+      "0xec1f158f50d9eedd1bf4f7527f6f737490ad615174ef9480b08734bb3f9c4507",
+      "0x5e2e41ef81a529472897fb66fb7468f3d5efeb925192b8e813208022cceb7fb8"
+    ],
+    "block": 51242524,
+    "siblingHashes": [
+      "0x77f372202e853d401b0af9c977881510f530ed68512594595179747e19964df4",
+      "0x931d3894767bfcc791e1195ea6b7fe358b9544a03a5be319e3b4fef03d7310c2"
+    ],
+    "declaredTotalEncumbrance": "23017121539368",
+    "maxUtilBps": 8000,
+    "widenBps": 500,
+    "perStrategy": {
+      "usdc": "27495",
+      "weth": "11700000000000"
+    },
+    "impliedPriceUsdcPerWeth": "2350",
+    "verified": {
+      "liveBookWeth": "34717121539368",
+      "walletWeth": "38542392957239",
+      "backed": true,
+      "bookOfBackingPct": "90.0",
+      "utilBpsAtShip": 5971,
+      "quoteFor1000UsdcUnits": "398339936831",
+      "checkedAt": "2026-09-13"
+    },
+    "note": "Priced ~7% under market so it out-prices its plain siblings after its own ~3% haircut; at equal reserves the opcode-35 strategy lost every per-maker pick and never filled (tx 0xba04ad84 pulled from a sibling). The whole live book -- two siblings plus this -- fits inside min(balance, allowance)."
   }
 }
