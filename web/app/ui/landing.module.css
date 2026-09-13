@@ -468,6 +468,20 @@
 .lava .bit { fill: #d64e2b; }
 .lava .bitHot { fill: #f0932b; }
 .terra .crater { stroke: #5a3724; stroke-width: 3.2; }
+/* The blast and the lake. Same flat fills as the eruption; the white-hot centres
+   are the only new colour, and they are what makes a column read as heat. Every
+   piece starts hidden -- the timeline sets them off -- so a reader on reduced
+   motion sees the calm scene, not a detonation frozen mid-air. */
+.lava .blastHot { fill: #fff1c9; }
+.blastFlash { fill: #f7d24a; opacity: 0; }
+.blastRing { fill: none; stroke: #e2673f; stroke-width: 5; opacity: 0; }
+.lava [data-blast-column], .lava [data-blast-cap], .lava [data-bomb], .lava [data-drop], .lake [data-bubble] { opacity: 0; }
+.lake { stroke: none; opacity: 0; }
+.lake .lakeBody { fill: #d64e2b; }
+.lake .lakeGlow, .lava .lakeGlow { fill: #f0932b; opacity: 0.85; }
+.lake .lakeCrust { fill: none; stroke: #7a2a14; stroke-width: 4; stroke-linecap: round; opacity: 0.55; }
+.lake .blastHot { fill: #fff1c9; }
+.lava [data-splash-ring] { opacity: 0; }
 /* The rope is the promise, and it is the only thing in the drawing still named.
    Figures were cut into the mountains for a while; two numbers on two peaks
    turned the scene into a chart and took the strain out of it. */
@@ -640,3 +654,16 @@
 .receiptFig { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: clamp(24px, 2.6vw, 34px); letter-spacing: -0.04em; color: var(--red-bright); }
 .receiptSay { font-size: 14px; line-height: 1.4; color: rgba(251, 250, 246, 0.75); }
 .receiptTx { font-family: var(--mono); font-size: 11px; color: rgba(251, 250, 246, 0.5); margin-top: auto; }
+/* Across chains: copy left, the live figures right, same rhythm as the doors below. */
+.xchain {
+  margin-top: clamp(44px, 7vh, 76px);
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: clamp(22px, 4vw, 60px);
+  align-items: center;
+  border-top: 1px solid var(--ink);
+  padding-top: 18px;
+}
+.xchainH { margin: 8px 0 0; font-size: clamp(22px, 2.4vw, 32px); letter-spacing: -0.02em; line-height: 1.12; }
+.xchainNote { margin: 10px 0 0; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+@media (max-width: 860px) { .xchain { grid-template-columns: 1fr; } }

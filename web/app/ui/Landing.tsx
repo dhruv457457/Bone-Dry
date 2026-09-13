@@ -357,6 +357,43 @@ export default function Landing() {
           </li>
         </ol>
 
+        {/* Cross-chain solvency. Stated at exactly the strength it has: the book is
+            added up across chains by the index, and a maker can opt in to declare
+            the combined figure. Opcode 35 cannot read another chain, so nothing
+            here says it enforces across chains. The panel is our own maker, read
+            from /api/maker-book on 13 September 2026. */}
+        <div className={s.xchain} data-proof>
+          <div>
+            <span className="label">Across chains</span>
+            <h3 className={s.xchainH}>One wallet, promises on two chains.</h3>
+            <p className={s.fixP}>
+              The same address can promise on Base and on Ethereum, and each chain
+              on its own can look fine. Bone Dry adds the book up across both. A
+              maker can opt in to count the other chain in opcode 35: the declared
+              total becomes the combined share times this chain&apos;s backing, so the
+              strategy refuses when either this chain or the whole book is over the
+              line. The contract cannot read another chain; it only rejects a
+              declaration below what it can see here, so declaring more is always
+              accepted. It is fixed at publish.
+            </p>
+          </div>
+          <div className={s.panel}>
+            <div className={s.panelRow}>
+              <span>Base alone</span>
+              <span>41.5% of USDC promised</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>Ethereum</span>
+              <span className={s.gone}>promised, none held</span>
+            </div>
+            <div className={s.panelRow}>
+              <span>both chains</span>
+              <span className={s.gone}>126% promised</span>
+            </div>
+            <p className={s.xchainNote}>our maker, read live on 13 Sep 2026</p>
+          </div>
+        </div>
+
         <div className={s.receipts} data-proof>
           <span className="label">On mainnet, not a mock</span>
           <div className={s.receiptRow}>
@@ -469,8 +506,8 @@ export default function Landing() {
             <h3 className={s.doingH}>Ship a promise that polices itself</h3>
             <p className={s.doingP}>
               Your quote widens as your other strategies eat the same wallet,
-              then refuses outright. The index is what tells you your own list
-              is short.
+              then refuses outright, and it can count what you have promised on
+              the other chain too.
             </p>
             <Link className={s.doingCta} href="/app">Become a maker &rarr;</Link>
           </div>

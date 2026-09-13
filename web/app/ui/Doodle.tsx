@@ -120,6 +120,88 @@ function Eruption() {
   );
 }
 
+/** The blast at one summit, drawn for the left crater (mouth at 178, 462) and
+ *  mirrored for the right. Hidden at rest; the timeline sets it off at the same
+ *  beat the arms tear. A flash, a column of lava thrown straight up, a cap that
+ *  boils out over the top of it, a shock ring along the ground, and bombs lobbed
+ *  out of the crater -- the shape of a detonation, in the drawing's own flat fills. */
+function Blast() {
+  return (
+    <>
+      <circle className={s.blastFlash} data-blast-flash cx="178" cy="440" r="62" />
+      <ellipse className={s.blastRing} data-blast-ring cx="178" cy="458" rx="74" ry="16" />
+      <g data-blast-column>
+        <path
+          className={s.plume}
+          d="M 156 466 C 146 404, 170 360, 158 300 C 152 270, 164 250, 178 244 C 194 250, 206 270, 200 300 C 188 360, 212 404, 202 466 Z"
+        />
+        <path
+          className={s.core}
+          d="M 169 466 C 164 406, 182 362, 172 306 C 170 286, 176 270, 178 266 C 182 270, 189 286, 186 306 C 178 362, 194 406, 189 466 Z"
+        />
+        <path className={s.blastHot} d="M 176 460 C 174 420, 182 380, 178 330 C 176 360, 184 420, 181 460 Z" />
+      </g>
+      <g data-blast-cap>
+        <ellipse className={s.plume} cx="178" cy="258" rx="50" ry="13" />
+        <circle className={s.plume} data-boil cx="146" cy="236" r="30" />
+        <circle className={s.plume} data-boil cx="210" cy="234" r="32" />
+        <circle className={s.plume} data-boil cx="178" cy="206" r="36" />
+        <circle className={s.core} data-boil cx="160" cy="218" r="22" />
+        <circle className={s.core} data-boil cx="198" cy="214" r="23" />
+        <circle className={s.blastHot} data-boil cx="178" cy="224" r="15" />
+        <circle className={s.blastHot} data-boil cx="190" cy="198" r="9" />
+      </g>
+      <circle className={s.core} data-bomb="-150,-190" cx="178" cy="452" r="8" />
+      <circle className={s.plume} data-bomb="-80,-240" cx="178" cy="452" r="6" />
+      <circle className={s.core} data-bomb="-210,-120" cx="178" cy="452" r="5" />
+      <circle className={s.plume} data-bomb="120,-210" cx="178" cy="452" r="7" />
+      <circle className={s.core} data-bomb="60,-260" cx="178" cy="452" r="5" />
+      <circle className={s.plume} data-bomb="190,-150" cx="178" cy="452" r="6" />
+    </>
+  );
+}
+
+/** Surface of the lava lake that fills the gorge. Everything below it is lava, so
+ *  the fill runs far off the foot of the drawing: the scene rides up the screen as
+ *  the load comes on, and a lake with a bottom edge would show paper under it. */
+const LAKE_Y = 772;
+
+function LavaLake() {
+  return (
+    <g className={s.lake} data-lake>
+      <path
+        className={s.lakeBody}
+        d="M -900 776 C -600 764, -300 784, 0 772 C 300 760, 600 786, 900 772 C 1200 760, 1500 784, 1800 772 C 2000 764, 2200 780, 2340 774 L 2340 2600 L -900 2600 Z"
+      />
+      <path
+        className={s.lakeGlow}
+        data-lake-wave
+        d="M -900 786 C -700 776, -500 794, -300 784 C -100 774, 100 796, 300 784 C 500 774, 700 796, 900 784 C 1100 774, 1300 796, 1500 784 C 1700 774, 1900 796, 2100 784 C 2200 780, 2280 788, 2340 786 L 2340 812 L -900 812 Z"
+      />
+      <path className={s.lakeCrust} d="M 420 800 C 470 796, 520 802, 560 798" />
+      <path className={s.lakeCrust} d="M 820 806 C 870 800, 930 808, 980 802" />
+      <path className={s.lakeCrust} d="M 640 824 C 690 818, 740 826, 790 820" />
+      <circle className={s.blastHot} data-bubble cx="690" cy="788" r="7" />
+      <circle className={s.blastHot} data-bubble cx="742" cy="792" r="5" />
+      <circle className={s.blastHot} data-bubble cx="716" cy="784" r="9" />
+    </g>
+  );
+}
+
+/** Lava thrown up where he goes in. */
+function Splash() {
+  return (
+    <g className={s.lava} data-splash>
+      <circle className={s.core} data-drop="-70,-120" cx="720" cy={LAKE_Y} r="9" />
+      <circle className={s.plume} data-drop="-30,-170" cx="720" cy={LAKE_Y} r="7" />
+      <circle className={s.blastHot} data-drop="10,-150" cx="720" cy={LAKE_Y} r="6" />
+      <circle className={s.plume} data-drop="50,-130" cx="720" cy={LAKE_Y} r="8" />
+      <circle className={s.core} data-drop="90,-90" cx="720" cy={LAKE_Y} r="6" />
+      <ellipse className={s.lakeGlow} data-splash-ring cx="720" cy={LAKE_Y + 4} rx="60" ry="10" />
+    </g>
+  );
+}
+
 export default function Doodle() {
   const root = useRef<SVGSVGElement>(null);
 
@@ -194,6 +276,34 @@ export default function Doodle() {
             delay: (i % 6) * 0.31,
           },
         ));
+      });
+
+      // The cap never settles: each lobe swells on its own clock, so it churns
+      // instead of pulsing as one shape.
+      gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-boil]")).forEach((el, i) => {
+        loops.push(gsap.to(el, {
+          scale: 1.12,
+          transformOrigin: "50% 50%",
+          duration: 0.5 + (i % 3) * 0.18,
+          ease: "sine.inOut",
+          yoyo: true,
+          repeat: -1,
+          delay: (i % 4) * 0.12,
+        }));
+      });
+      // The lake's glow drifts, so the surface reads as liquid.
+      loops.push(gsap.to("[data-lake-wave]", { x: 120, duration: 3.2, ease: "sine.inOut", yoyo: true, repeat: -1 }));
+      // Bubbles where he went in: rise a little, pop, start again.
+      gsap.utils.toArray<SVGElement>(svg.querySelectorAll("[data-bubble]")).forEach((el, i) => {
+        loops.push(gsap.fromTo(el, { scale: 0.4, y: 6 }, {
+          scale: 1.1,
+          y: -8,
+          transformOrigin: "50% 50%",
+          duration: 0.9 + i * 0.25,
+          ease: "power1.out",
+          repeat: -1,
+          delay: i * 0.3,
+        }));
       });
 
       // How hard the whole thing is buzzing. The scroll writes the amplitude and
@@ -285,7 +395,7 @@ export default function Doodle() {
         // dragged down as the load comes on, before anything gives
         .to(
           "[data-body], [data-aura]",
-          { y: 30, duration: SNAP, ease: "none" },
+          { y: 20, duration: SNAP, ease: "none" },
           0,
         )
         // and burning harder the worse it gets
@@ -366,23 +476,89 @@ export default function Doodle() {
         // He is the last thing to go, and he goes downwards — the whole length of
         // the empty paper under the hero, and only fading once he is well into
         // it. Falling out of frame is the point; blinking out is not.
-        .to(
-          "[data-body]",
-          { y: 620, rotation: 12, duration: 0.4, ease: "power2.in" },
-          SNAP,
-        )
-        .to(
-          "[data-body]",
-          { opacity: 0, duration: 0.14, ease: "none" },
-          SNAP + 0.31,
-        )
+
+        // ── the lake ─────────────────────────────────────────────────────
+        // It rises into the gorge as the ground opens, so there is somewhere for
+        // him to go when the rope takes his arms. Hidden at rest: the hero's first
+        // screen is the man and the rope, not the ending.
+        .fromTo("[data-lake]", { y: 150, opacity: 0 }, { y: 0, opacity: 1, duration: SNAP - 0.2, ease: "power1.out" }, 0.2)
+
+        // ── the blast ────────────────────────────────────────────────────
+        // Both summits detonate on the beat the arms give. The flash is over almost
+        // before it starts, the column is thrown up hard and fast, the cap boils out
+        // over it a moment later and keeps climbing, and a ring runs out along the
+        // ground. svgOrigin pins each piece to the crater mouth it comes out of.
+        // ── the fall ─────────────────────────────────────────────────────
+        // A beat of recoil as the arms go, then straight down into the lake. Below
+        // the surface he is clipped away, so he sinks rather than fades.
+        .to("[data-lava-clip]", { attr: { height: 3000 + LAKE_Y }, duration: 0.001, ease: "none" }, SNAP)
+        .to("[data-body]", { y: -26, rotation: 4, duration: 0.07, ease: "power2.out" }, SNAP)
+        .to("[data-body]", { y: 470, rotation: 14, duration: 0.3, ease: "power2.in" }, SNAP + 0.07)
+        .fromTo("[data-splash-ring]", { scale: 0.3, opacity: 0 }, { scale: 2.2, opacity: 1, svgOrigin: `720 ${LAKE_Y + 4}`, duration: 0.1, ease: "power2.out" }, SNAP + 0.13)
+        .to("[data-splash-ring]", { opacity: 0, duration: 0.14, ease: "none" }, SNAP + 0.23)
+        .fromTo("[data-bubble]", { opacity: 0 }, { opacity: 1, duration: 0.06, stagger: 0.03 }, SNAP + 0.3)
+
         .to("[data-cliff-l]", { x: -620, duration: 0.4, ease: "none" }, SNAP)
         .to("[data-cliff-r]", { x: 620, duration: 0.4, ease: "none" }, SNAP)
         // The ground does not just walk away, it goes up. Both craters blow at
         // the same beat the arms give, scaled from the crater mouth so the
         // column grows upward instead of ballooning in every direction.
-        .to("[data-lava-l]", { scale: 2.4, svgOrigin: "178 470", duration: 0.4, ease: "power2.out" }, SNAP)
-        .to("[data-lava-r]", { scale: 2.4, svgOrigin: "1262 470", duration: 0.4, ease: "power2.out" }, SNAP);
+        .to("[data-lava-l]", { scale: 1.6, svgOrigin: "178 470", duration: 0.4, ease: "power2.out" }, SNAP)
+        .to("[data-lava-r]", { scale: 1.6, svgOrigin: "1262 470", duration: 0.4, ease: "power2.out" }, SNAP);
+
+      // Bombs from the craters and drops from the splash: up and out, then down.
+      // The offsets live on each element (data-bomb / data-drop = "dx,dy"), so a
+      // mirrored crater throws its bombs the mirrored way without a second table.
+      const arc = (sel: string, at: number) =>
+        gsap.utils.toArray<SVGElement>(svg.querySelectorAll(sel)).forEach((el, i) => {
+          const [dx, dy] = (el.getAttribute(sel.slice(1, -1)) ?? "0,0").split(",").map(Number);
+          tl.fromTo(el, { x: 0, y: 0, opacity: 0 }, { x: dx * 0.6, y: dy, opacity: 1, duration: 0.1, ease: "power2.out" }, at + (i % 3) * 0.012)
+            .to(el, { x: dx, y: dy + 260, opacity: 0, duration: 0.2, ease: "power2.in" }, at + 0.1 + (i % 3) * 0.012);
+        });
+      arc("[data-bomb]", SNAP + 0.02);
+      arc("[data-drop]", SNAP + 0.13);
+
+      // Both summits detonate on the beat the arms give: a flash that is over almost
+      // before it starts, a column thrown up hard, a cap that boils out over it and
+      // keeps climbing, and a ring along the ground.
+      //
+      // Scaled by writing each piece's own transform attribute about a point in its
+      // own coordinates (the crater mouth is 178, 466 in Blast's local space, for both
+      // summits). GSAP's svgOrigin/transformOrigin went through the moving, mirrored
+      // parent groups and left the column floating ~240 units above its crater.
+      const scaleAbout = (
+        sel: string,
+        ox: number,
+        oy: number,
+        steps: { at: number; dur: number; ease: string; sx: number; sy: number; y?: number; opacity?: number }[],
+        from: { sx: number; sy: number; y: number; opacity: number },
+      ) =>
+        gsap.utils.toArray<SVGElement>(svg.querySelectorAll(sel)).forEach((el) => {
+          const st = { ...from };
+          const paint = () => {
+            el.setAttribute("transform", `translate(${ox} ${oy + st.y}) scale(${st.sx} ${st.sy}) translate(${-ox} ${-oy})`);
+            el.style.opacity = String(st.opacity);
+          };
+          paint();
+          steps.forEach((k) => {
+            tl.to(st, { sx: k.sx, sy: k.sy, y: k.y ?? st.y, opacity: k.opacity ?? 1, duration: k.dur, ease: k.ease, onUpdate: paint }, k.at);
+          });
+        });
+      scaleAbout("[data-blast-flash]", 178, 440, [
+        { at: SNAP, dur: 0.04, ease: "power4.out", sx: 3.2, sy: 3.2, opacity: 1 },
+        { at: SNAP + 0.04, dur: 0.12, ease: "power2.in", sx: 3.2, sy: 3.2, opacity: 0 },
+      ], { sx: 0, sy: 0, y: 0, opacity: 0 });
+      scaleAbout("[data-blast-ring]", 178, 458, [
+        { at: SNAP, dur: 0.06, ease: "power2.out", sx: 3.6, sy: 3.6, opacity: 0.9 },
+        { at: SNAP + 0.06, dur: 0.16, ease: "power1.out", sx: 5, sy: 5, opacity: 0 },
+      ], { sx: 0.2, sy: 0.2, y: 0, opacity: 0 });
+      scaleAbout("[data-blast-column]", 178, 466, [
+        { at: SNAP + 0.01, dur: 0.12, ease: "power4.out", sx: 1, sy: 1, opacity: 1 },
+      ], { sx: 1, sy: 0, y: 0, opacity: 0 });
+      scaleAbout("[data-blast-cap]", 178, 258, [
+        { at: SNAP + 0.08, dur: 0.12, ease: "back.out(1.8)", sx: 1, sy: 1, y: 0, opacity: 1 },
+        { at: SNAP + 0.2, dur: 0.24, ease: "none", sx: 1.3, sy: 1.3, y: -26, opacity: 1 },
+      ], { sx: 0, sy: 0, y: 0, opacity: 0 });
     }, svg);
 
     // The white band over the dark section. The drawing is a sticky layer that
@@ -435,6 +611,14 @@ export default function Doodle() {
           about the point he stands on rather than hiding it. At phone width the
           drawing is otherwise a quarter of an inch tall, which is the same as
           not shipping it. */}
+      <defs>
+        {/* Everything of him below the lava's surface is cut away, so he sinks
+            into it. Unclipped until the fall: the timeline pulls the bottom edge
+            up to the surface on the beat the rope breaks. */}
+        <clipPath id="bd-lava-clip" clipPathUnits="userSpaceOnUse">
+          <rect data-lava-clip x="-3000" y="-3000" width="7440" height="6000" />
+        </clipPath>
+      </defs>
       <g className={s.scene}>
         {/* ── the rope ───────────────────────────────────────────────────── */}
         <g className={s.rope} data-rope data-shake>
@@ -482,6 +666,11 @@ export default function Doodle() {
             <Eruption />
           </g>
         </g>
+        <g className={s.lava} data-cliff-l data-blast-l>
+          <g transform="translate(0,-8)">
+            <Blast />
+          </g>
+        </g>
 
         {/* Mirror of the left about x = 720. Same rule: the lip (1138, 601) and the
           inner face below it are untouched, because ROPE.rightTaut ends at
@@ -519,6 +708,17 @@ export default function Doodle() {
             </g>
           </g>
         </g>
+        <g className={s.lava} data-cliff-r data-blast-r>
+          <g transform="translate(1440,-8) scale(-1,1)">
+            <Blast />
+          </g>
+        </g>
+
+        {/* ── the lava lake ────────────────────────────────────────────────── */}
+        {/* After the cliffs, so it floods the foot of both faces (their fill is
+            translucent, and a lake behind them tinted the rock red), and before
+            him, so he is drawn over it until the clip takes him under. */}
+        <LavaLake />
 
         {/* ── the one holding it ─────────────────────────────────────────── */}
         {/* Arms first so the torso, which is paper-filled, covers the sockets they
@@ -565,6 +765,7 @@ export default function Doodle() {
               <circle className={s.solid} cx="922" cy="622" r="19" />
             </g>
 
+            <g clipPath="url(#bd-lava-clip)">
             <g data-body>
               <Tubes parts={LEGS} />
               {/* What is left at the shoulder once the rope has taken the rest.
@@ -629,8 +830,11 @@ export default function Doodle() {
                 <ellipse cx="720" cy="458" rx="7" ry="9" />
               </g>
             </g>
+            </g>
           </g>
         </g>
+
+        <Splash />
       </g>
     </svg>
   );
