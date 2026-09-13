@@ -427,7 +427,17 @@ can find, nothing else on Aqua does.
 
 **SwapVM usage is structural, not decorative.** Remove opcode 35 and there is no
 encumbrance read, no curve, and no refusal — just a stock quote. The instruction
-lives in the opcode table, not behind the `Extruction` escape hatch.
+lives natively in the opcode table, not behind the `Extruction` escape hatch.
+
+**Extruction (`0x20`) for external oracle pricing:** Alongside opcode 35's inward-looking
+solvency checks, we also deployed [`BeaconStrategy.sol`](contracts/src/BeaconStrategy.sol)
+on Base Sepolia ([`0x1cAD1eCa…`](https://sepolia.basescan.org/address/0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7)).
+It implements SwapVM's official `Extruction` opcode (`0x20`), allowing a strategy to delegate
+pricing to an external contract mid-swap that reads Chainlink oracle feeds in real time minus a
+configurable spread — proven live on-chain with swap tx
+[`0x80963933…`](https://sepolia.basescan.org/tx/0x8096393361f006fa3f1d054c7b2262295c3e6551fa11075787941064d3d2f252).
+Together, Opcode 35 and Extruction demonstrate the full breadth of SwapVM extension: native
+inward balance constraints and dynamic external price feeds.
 
 **Cross-Chain Solvency Navigation:** 1inch Aqua contracts live independently on Ethereum L1
 and Base L2, with completely decoupled maker balance sheets. Bone Dry is the first application
@@ -606,6 +616,7 @@ to the public endpoint and will rate-limit.
 | `Tap` (v4 hook) | [`0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088`](https://sepolia.basescan.org/address/0xD5Bca5F5Df642E7cfDbA692FE8C3851c89238088) |
 | `Lens` | [`0xA3ce77230A06302e3De32A3816f46C293c9D291F`](https://sepolia.basescan.org/address/0xA3ce77230A06302e3De32A3816f46C293c9D291F) |
 | `Wellhead` | [`0x0A54ac0705Aeab8AB29F48899d2B347D7235a531`](https://sepolia.basescan.org/address/0x0A54ac0705Aeab8AB29F48899d2B347D7235a531) |
+| `BeaconStrategy` (Extruction `0x20`) | [`0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7`](https://sepolia.basescan.org/address/0x1cAD1eCa368940F91b43B25Db0e3E9B32B46fFe7) |
 
 Aqua and the SwapVM router here are **our own deployments, built unmodified from
 1inch's sources** — 1inch have never deployed Aqua to a testnet. The router is built
@@ -698,6 +709,7 @@ Everything runs against **real Aqua on a fork**, not mocks.
 | [`TapEncumbranceRefusal.t.sol`](contracts/test/TapEncumbranceRefusal.t.sol) | a refusal caught by the hook, logged with `EncumbranceExceeded.selector`, and the swap routed around it |
 | [`FacilityProof.t.sol`](contracts/test/FacilityProof.t.sol) | the four Aqua mechanics the design rests on — see [PROOFS.md](PROOFS.md) |
 | [`TapFill.t.sol`](contracts/test/TapFill.t.sol), [`NaiveTap.t.sol`](contracts/test/NaiveTap.t.sol) | hook fills, fuzzed 1 USDC to 100M |
+| [`BeaconStrategy.t.sol`](contracts/test/BeaconStrategy.t.sol) | SwapVM Extruction (0x20): dynamic Chainlink oracle pricing mid-swap minus spread, staleness gating |
 | [`EthereumLive.t.sol`](contracts/test/EthereumLive.t.sol) | swaps through the deployed Ethereum hooks against live strategies |
 
 **Quote and swap can legitimately disagree.** If a sibling is filled between the
