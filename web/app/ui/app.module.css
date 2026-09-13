@@ -999,3 +999,7 @@
 .receiptTop { display: grid; grid-template-columns: minmax(200px, 0.75fr) 1.5fr; gap: 14px; align-items: stretch; }
 .receiptTop > * { min-width: 0; }
 @media (max-width: 720px) { .receiptTop { grid-template-columns: 1fr; } }
+
+/* Portfolio: holdings and swaps side by side under the full-width positions table. */
+.pfPair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+@media (max-width: 900px) { .pfPair { grid-template-columns: 1fr; } }

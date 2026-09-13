@@ -9,8 +9,9 @@ import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr } from "@/lib/format";
 import type { ExposureResponse, HistoryResponse } from "../types";
 import { publicClientFor, type Network, type NetworkId } from "@/lib/networks";
+import { tokensForChain } from "@/lib/tokenList";
 
-const STRAT_COLS = "minmax(150px,1fr) 190px 190px 100px 128px";
+const STRAT_COLS = "minmax(180px,1.3fr) minmax(150px,1fr) minmax(150px,1fr) 130px 170px";
 
 const AQUA_DOCK_ABI = [
   {
@@ -85,6 +86,13 @@ export function Portfolio({
   const { writeContractAsync } = useWriteContract();
 
   const setDockFor = (h: string, st: DockState) => setDock((d) => ({ ...d, [h]: st }));
+  /** Symbol and decimals for a token this chain's list knows; an unlisted token
+   *  shows its address and assumes 18, and says so by showing the address. */
+  const tokenMeta = (addr: string) => {
+    const t = tokensForChain(chainId).find((x) => x.address.toLowerCase() === addr.toLowerCase());
+    return t ? { symbol: t.symbol, decimals: t.decimals } : { symbol: shortAddr(addr), decimals: 18 };
+  };
+
 
   const runDock = async (strategyHash: Hex, app: Address, tokens: Address[]) => {
     if (!address) return;
@@ -272,8 +280,12 @@ export function Portfolio({
             ))}
           </div>
 
-          <div className={s.cols}>
-            <section className={`${s.colWide} ${s.card} ${s.cardClip}`}>
+          {/* Live positions spans the page. It sat as the FIRST child of .cols,
+              whose grid is 380px | 1fr, so a 680px-minimum table landed in the
+              380px slot: Backed, Coverage and Dock were all behind a horizontal
+              scrollbar while the two narrow cards got the wide column. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            <section className={`${s.card} ${s.cardClip}`}>
               <div className={s.cardHead}>
                 <h2 className={`${s.display} ${s.h3}`}>Live positions</h2>
                 <span className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }}>
@@ -363,7 +375,7 @@ export function Portfolio({
               )}
             </section>
 
-            <div className={s.colNarrow}>
+            <div className={s.pfPair}>
               <section className={`${s.card} ${s.cardClip}`}>
                 <div className={s.cardHead} style={{ padding: "16px 18px" }}>
                   <h2 className={`${s.display} ${s.h3}`}>Holdings against claims</h2>
@@ -400,9 +412,12 @@ export function Portfolio({
                 })}
               </section>
 
-              <section className={`${s.card} ${s.cardClip}`} style={{ marginTop: 22 }}>
+              <section className={`${s.card} ${s.cardClip}`}>
                 <div className={s.cardHead} style={{ padding: "16px 18px" }}>
-                  <h2 className={`${s.display} ${s.h3}`}>Recent fills</h2>
+                  {/* These rows are this wallet's swaps as a TAKER (Wellhead.Swapped by
+                      swapper), not fills against its strategies -- "Recent fills"
+                      described something else. */}
+                  <h2 className={`${s.display} ${s.h3}`}>Your recent swaps</h2>
                   <span className={s.labelSm}>from chain</span>
                 </div>
                 {!hist ? (
@@ -414,7 +429,7 @@ export function Portfolio({
                   <p style={{ margin: 0, padding: "18px", fontSize: 13.5, color: "var(--ink3)" }}>
                     {hist.swaps.available === false
                       ? (hist.swaps.reason ?? "fills are not indexed on this network")
-                      : "No fills against your strategies yet."}
+                      : "No swaps from this wallet yet."}
                   </p>
                 ) : (
                   hist.swaps.rows.slice(0, 6).map((f) => (
@@ -425,7 +440,10 @@ export function Portfolio({
                       <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ink)", marginTop: 7 }} />
                       <div style={{ minWidth: 0 }}>
                         <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink2)" }}>
-                          Filled {units(f.amountIn, 18, 4)} → {units(f.amountOut, 18, 4)}
+                          {/* Each side in its own token's decimals. Hardcoding 18 printed
+                              0.001 USDC as 0.000000000000001. */}
+                          Swapped {units(f.amountIn, tokenMeta(f.tokenIn).decimals, 6)} {tokenMeta(f.tokenIn).symbol} →{" "}
+                          {units(f.amountOut, tokenMeta(f.tokenOut).decimals, 8)} {tokenMeta(f.tokenOut).symbol}
                         </p>
                         <p className={s.mono} style={{ margin: "3px 0 0", fontSize: 10, color: "var(--ink3)", display: "inline-flex", alignItems: "center" }}>
                           <a href={`${net.explorer}/tx/${f.txHash}`} target="_blank" rel="noreferrer">
