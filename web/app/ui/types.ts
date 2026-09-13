@@ -28,6 +28,8 @@ export type RouteResponse = {
   hook?: `0x${string}` | null;
   bookLabel?: string;
   encumbranceAware?: boolean;
+  /** True only when a strategy that fills this trade contains opcode 35. */
+  opcode35Filled?: boolean;
   /** Books that did not win, so the losing one is visible rather than erased. */
   alternatives?: {
     app: `0x${string}`;

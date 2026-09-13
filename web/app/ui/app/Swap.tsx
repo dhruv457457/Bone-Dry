@@ -320,7 +320,7 @@ export function Swap({
     if (route && quoted) {
       steps.push({
         label: "Route found",
-        detail: `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.encumbranceAware ? " · opcode 35" : ""}`,
+        detail: `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.opcode35Filled ? " · opcode 35" : ""}`,
         tone: "done",
       });
       steps.push({
@@ -345,7 +345,7 @@ export function Swap({
       ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
       : "…";
     const routeDetail = route
-      ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.encumbranceAware ? " · opcode 35" : ""}`
+      ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.opcode35Filled ? " · opcode 35" : ""}`
       : "…";
     return [
       {

@@ -6,6 +6,8 @@ import { strategiesFromGraph, indexStateOf } from "@/lib/graph";
 import { depthFromIndex } from "@/lib/indexedDepth";
 import { addressParam, amountParam, distinct, BadInput } from "@/lib/validate";
 import { j, fail, chainFailure } from "@/lib/json";
+import { findEncumbranceInProgram } from "@/lib/encumbrance";
+import { decodeAbiParameters, parseAbiParameters, type Hex } from "viem";
 
 export const dynamic = "force-dynamic";
 
@@ -189,6 +191,24 @@ export async function GET(req: Request) {
     // improvements over 10,000 bps because the baseline came out near zero.
     const single = await planLikeTap(n, candidates.slice(0, 1), filled, tokenIn, tokenOut, book.app);
 
+    // Whether any strategy that actually FILLS carries opcode 35. The book being
+    // encumbrance-aware is not enough: the first signed fill through the Bone Dry
+    // book (tx 0xba04ad84) pulled from a plain XYC sibling, because the opcode-35
+    // strategy shares its siblings' reserves and then applies its haircut, so it
+    // quotes ~3% worse and loses the per-maker pick. The UI said "opcode 35
+    // active" on a fill that never touched it.
+    const opcode35Filled = slices.some((sl) => {
+      try {
+        const [order] = decodeAbiParameters(
+          parseAbiParameters("(address maker, uint256 traits, bytes data)"),
+          sl.strategy as Hex
+        );
+        return findEncumbranceInProgram(order.data) !== null;
+      } catch {
+        return false;
+      }
+    });
+
     const improvementBps =
       single.amountOut > 0n ? ((plan.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
@@ -201,6 +221,8 @@ export async function GET(req: Request) {
       hook: book.hook || null,
       bookLabel: book.label,
       encumbranceAware: book.encumbranceAware,
+      /** True only when a filling strategy's program contains opcode 35. */
+      opcode35Filled,
       /** The books that did not win, so a losing one is visible rather than erased. */
       alternatives,
       tokenIn: { ...TOKENS[tokenIn.toLowerCase()], address: tokenIn },

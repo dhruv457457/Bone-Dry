@@ -89,7 +89,7 @@ export function RouteInspector({
           {route.bookLabel && route.alternatives && route.alternatives.length > 0 ? (
             <p className={s.mono} style={{ margin: "6px 0 0", fontSize: 10.5, color: "var(--ink3)" }}>
               filling from the <strong style={{ color: "var(--ink2)" }}>{route.bookLabel}</strong> book
-              {route.encumbranceAware ? " · opcode 35 active" : ""}
+              {route.opcode35Filled ? " · opcode 35 in this fill" : route.encumbranceAware ? " · filled by a plain sibling, not the opcode-35 strategy" : ""}
               {route.alternatives.map((alt) => {
                 const rate = (out: string, filled: string) => {
                   const f = BigInt(filled || "0");
