@@ -682,6 +682,7 @@ export default function Desk({
               chainId={chainId}
               net={net}
               address={address}
+              wrongChain={wrongChain}
               onProvide={() => setTab("provide")}
               onExplore={() => setTab("explore")}
               onLookup={() => setTab("lookup")}

@@ -264,7 +264,12 @@ async function strategyPositions(
           address: n.aqua,
           abi: aquaAbi,
           functionName: "rawBalances",
-          args: [maker, n.router, st.strategyHash, t],
+          // Under the strategy's OWN app. Aqua keys balances by app, so reading a
+          // BoneDryRouter strategy under n.router returned 0 -- every opcode-35
+          // strategy showed nothing claimed, and the Provide page and Portfolio
+          // undercounted a maker's commitments by exactly the strategies this
+          // project ships.
+          args: [maker, (st.app || n.router) as Address, st.strategyHash, t],
         }) as const
     )
   );

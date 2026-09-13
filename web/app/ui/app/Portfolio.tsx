@@ -1,14 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWriteContract } from "wagmi";
+import type { Address, Hex } from "viem";
 import s from "../app.module.css";
 import { Bar, Shim, covColor } from "./bits";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr } from "@/lib/format";
 import type { ExposureResponse, HistoryResponse } from "../types";
-import type { Network, NetworkId } from "@/lib/networks";
+import { publicClientFor, type Network, type NetworkId } from "@/lib/networks";
 
-const STRAT_COLS = "minmax(150px,1fr) 200px 200px 110px 90px";
+const STRAT_COLS = "minmax(150px,1fr) 190px 190px 100px 128px";
+
+const AQUA_DOCK_ABI = [
+  {
+    type: "function",
+    name: "dock",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "app", type: "address" },
+      { name: "strategyHash", type: "bytes32" },
+      { name: "tokens", type: "address[]" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+type DockState =
+  | { k: "idle" }
+  | { k: "confirm" }
+  | { k: "checking" }
+  | { k: "signing" }
+  | { k: "mining"; hash: Hex }
+  | { k: "done"; hash: Hex }
+  | { k: "error"; why: string };
 
 /**
  * Your own exposure, claimed against held.
@@ -27,14 +52,17 @@ const STRAT_COLS = "minmax(150px,1fr) 200px 200px 110px 90px";
  *   strategy's own token pair at index time, and /api/exposure now reads
  *   each one's live claim the same way the router checks it before routing.
  *   That is `exp.strategies` below, and it is real.
- * - "Cancel": there is no dock/cancel transaction wired anywhere in this app
- *   yet, so this does not offer one. A button that read "Cancel" and did
- *   nothing would be worse than not having it.
+ * - "Cancel": now real, as Dock. Aqua's dock() zeroes every token of a strategy
+ *   and marks it docked -- instant, unilateral, and permanent: that exact
+ *   strategyHash can never be shipped again (StrategiesMustBeImmutable). So it
+ *   asks twice, simulates before the wallet opens, and says it cannot be undone.
+ *   Nothing moves: dock releases a promise; it holds no funds.
  */
 export function Portfolio({
   chainId,
   net,
   address,
+  wrongChain,
   onProvide,
   onExplore,
   onLookup,
@@ -43,6 +71,7 @@ export function Portfolio({
   chainId: NetworkId;
   net: Network;
   address?: string;
+  wrongChain?: boolean;
   onProvide: () => void;
   onExplore: () => void;
   onLookup: () => void;
@@ -51,6 +80,49 @@ export function Portfolio({
   const [exp, setExp] = useState<ExposureResponse | null>(null);
   const [hist, setHist] = useState<HistoryResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [dock, setDock] = useState<Record<string, DockState>>({});
+  const { writeContractAsync } = useWriteContract();
+
+  const setDockFor = (h: string, st: DockState) => setDock((d) => ({ ...d, [h]: st }));
+
+  const runDock = async (strategyHash: Hex, app: Address, tokens: Address[]) => {
+    if (!address) return;
+    const rpc = publicClientFor(net);
+    try {
+      // dock() must close EVERY token the strategy holds or it reverts
+      // DockingShouldCloseAllTokens. Simulating first means a wrong token list,
+      // or a strategy that is not this wallet's, fails here by name -- not as an
+      // opaque revert after a signature.
+      setDockFor(strategyHash, { k: "checking" });
+      await rpc.simulateContract({
+        account: address as Address,
+        address: net.aqua,
+        abi: AQUA_DOCK_ABI,
+        functionName: "dock",
+        args: [app, strategyHash, tokens],
+      });
+      setDockFor(strategyHash, { k: "signing" });
+      const hash = await writeContractAsync({
+        chainId,
+        address: net.aqua,
+        abi: AQUA_DOCK_ABI,
+        functionName: "dock",
+        args: [app, strategyHash, tokens],
+      });
+      setDockFor(strategyHash, { k: "mining", hash });
+      const receipt = await rpc.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("dock reverted on chain");
+      setDockFor(strategyHash, { k: "done", hash });
+      setReload((n) => n + 1);
+    } catch (e) {
+      const msg = (e as { shortMessage?: string }).shortMessage ?? (e as Error).message ?? String(e);
+      setDockFor(strategyHash, {
+        k: "error",
+        why: /User rejected|denied/i.test(msg) ? "Rejected in wallet" : msg.slice(0, 140),
+      });
+    }
+  };
 
   useEffect(() => {
     if (!address) {
@@ -77,7 +149,7 @@ export function Portfolio({
     return () => {
       live = false;
     };
-  }, [address, chainId]);
+  }, [address, chainId, reload]);
 
   if (!address) {
     return (
@@ -226,7 +298,7 @@ export function Portfolio({
                       <span className={s.right}>Claimed</span>
                       <span className={s.right}>Backed</span>
                       <span className={s.right}>Coverage</span>
-                      <span className={s.right}>Strategy</span>
+                      <span className={s.right}>Action</span>
                     </div>
                     {strategies.map((st) => {
                       const pair = st.sides.map((sd) => sd.symbol).join(" / ") || "—";
@@ -268,15 +340,21 @@ export function Portfolio({
                             ))}
                           </div>
                           <Bar pct={Math.min(100, worstSide)} width={54} labelWidth={40} />
-                          <a
-                            className={`${s.mono} ${s.right}`}
-                            style={{ fontSize: 11, color: "var(--ink3)" }}
-                            href={`${net.explorer}/address/${st.app}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            app ↗
-                          </a>
+                          <DockCell
+                            state={dock[st.strategyHash] ?? { k: "idle" }}
+                            disabled={Boolean(wrongChain)}
+                            explorer={net.explorer}
+                            appLink={`${net.explorer}/address/${st.app}`}
+                            onAsk={() => setDockFor(st.strategyHash, { k: "confirm" })}
+                            onCancel={() => setDockFor(st.strategyHash, { k: "idle" })}
+                            onConfirm={() =>
+                              runDock(
+                                st.strategyHash as Hex,
+                                st.app as Address,
+                                st.sides.map((sd) => sd.token as Address)
+                              )
+                            }
+                          />
                         </div>
                       );
                     })}
@@ -366,6 +444,70 @@ export function Portfolio({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function DockCell({
+  state,
+  disabled,
+  explorer,
+  appLink,
+  onAsk,
+  onCancel,
+  onConfirm,
+}: {
+  state: DockState;
+  disabled: boolean;
+  explorer: string;
+  appLink: string;
+  onAsk: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const note = { fontSize: 10.5, color: "var(--ink3)", display: "block", textAlign: "right" as const };
+  if (state.k === "confirm") {
+    return (
+      <div style={{ textAlign: "right" }}>
+        <span className={s.mono} style={{ ...note, color: "var(--short)", marginBottom: 4 }}>
+          permanent · cannot be re-shipped
+        </span>
+        <button className={`${s.btn} ${s.btnXs}`} style={{ color: "var(--short)" }} onClick={onConfirm}>
+          Dock it
+        </button>{" "}
+        <button className={`${s.btn} ${s.btnXs}`} onClick={onCancel}>
+          Keep
+        </button>
+      </div>
+    );
+  }
+  if (state.k === "checking") return <span className={s.mono} style={note}>simulating…</span>;
+  if (state.k === "signing") return <span className={s.mono} style={note}>confirm in wallet…</span>;
+  if (state.k === "mining" || state.k === "done") {
+    return (
+      <a className={s.mono} style={note} href={`${explorer}/tx/${state.hash}`} target="_blank" rel="noreferrer">
+        {state.k === "mining" ? "docking…" : "docked"} ↗
+      </a>
+    );
+  }
+  return (
+    <div style={{ textAlign: "right" }}>
+      {state.k === "error" ? (
+        <span className={s.mono} style={{ ...note, color: "var(--short)", marginBottom: 4 }} title={state.why}>
+          {state.why}
+        </span>
+      ) : null}
+      <button
+        className={`${s.btn} ${s.btnXs}`}
+        onClick={onAsk}
+        disabled={disabled}
+        title={disabled ? "Switch your wallet to this network to dock" : "Release this promise"}
+      >
+        Dock
+      </button>{" "}
+      <a className={s.mono} style={{ fontSize: 10.5, color: "var(--ink3)" }} href={appLink} target="_blank" rel="noreferrer">
+        app ↗
+      </a>
     </div>
   );
 }
