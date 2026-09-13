@@ -295,31 +295,49 @@ To keep all intelligence visible without vertical page jumping:
 
 ```mermaid
 flowchart TB
-  subgraph chain["On chain"]
-    AQ["Aqua<br/>(1inch, unmodified)"]
-    BDR["BoneDryRouter<br/>AquaOpcodes + opcode 35"]
-    TAP["Tap.sol<br/>Uniswap v4 hook"]
-    LENS["Lens.sol"]
+  subgraph users["Participants & Wallets"]
+    T["🛒 Taker / Trader"]
+    M["🏦 Market Maker<br/>(Unencumbered Private Wallet)"]
   end
-  subgraph index["Indexing & Cache"]
-    SG["Aquifer subgraph<br/>(Base)"]
-    PG[("Postgres<br/>cross-chain")]
-    MEM["Dual-Tier Cache<br/>(36ms route memoization)"]
+
+  subgraph u4["Uniswap v4 Architecture"]
+    PM["Uniswap v4 PoolManager<br/>(Zero-Liquidity Pool)"]
+    TAP["Tap.sol v4 Hook<br/>(BEFORE_SWAP_RETURNS_DELTA)<br/>• Atomic Revert Try/Catch<br/>• Cascading Liquidity"]
   end
-  subgraph app["Next.js Application"]
-    API["/api/* (makers, route, strategy)"]
-    UI["Swap · Provide · Portfolio · Explore"]
-    PRE["Pre-Flight Solvency Modal<br/>(Pipeline & Decision Gate)"]
+
+  subgraph oneinch["1inch Aqua Architecture"]
+    BDR["BoneDryRouter (SwapVM)<br/>• Opcode 35 (OP_ENCUMBER)<br/>• Dynamic Spread Haircut<br/>• On-Chain Refusal Ceiling"]
+    AQ[("1inch Aqua Settlement<br/>• ship() / pull()<br/>• dock() in 4,452 gas")]
   end
-  AQ -->|"Shipped / Pushed / Pulled / Docked"| SG
-  BDR -->|"EncumbranceApplied"| SG
-  TAP -->|"MakerSkipped(reason)"| SG
-  SG --> API
-  PG --> API
-  MEM <--> API
-  API --> UI
-  UI --> PRE
-  UI -.->|"live reads at quote time"| chain
+
+  subgraph thegraph["The Graph Indexing"]
+    SG["Aquifer Subgraph (Base & L1)<br/>• Decodes Raw SwapVM Bytecode<br/>• Reconstructs Sibling Debt Trees<br/>• Exposes Phantom Liquidity"]
+  end
+
+  subgraph engine["Bone-Dry Engine & Next.js App"]
+    MEM["Dual-Tier Cache Engine<br/>• 36ms Server LRU Cache<br/>• Client Pre-Warming"]
+    PRE["Pre-Flight Solvency Radar<br/>• Base vs Eth Liquidity Audit<br/>• Interactive Decision Gate"]
+    UI["Next.js Application (5 Workspaces)<br/>Swap · Provide · Portfolio · Explore · Lookup"]
+  end
+
+  %% Taker Flow (Swap)
+  T -->|"01 Enter swap amount"| UI
+  UI -->|"02 Pre-flight solvency check"| PRE
+  PRE <-->|"03 36ms cached route"| MEM
+  PRE -.->|"04 Live solvency RPCs (Base & Eth)"| M
+  T -->|"05 Execute swap"| PM
+  PM -->|"06 beforeSwap delta"| TAP
+  TAP -->|"07 Quote & fill"| BDR
+  BDR -->|"08 Enforce Opcode 35"| AQ
+  AQ -->|"09 pull() straight from wallet"| M
+  M -->|"10 Deliver tokens (zero custody)"| T
+  TAP -.->|"11 Catch refusal → MakerSkipped"| SG
+
+  %% Maker Flow (Provide & Manage)
+  M -->|"Ship strategy (Opcode 35)"| AQ
+  M -->|"Instant revocation (dock)"| AQ
+  AQ -->|"Shipped event (raw bytecode)"| SG
+  SG -->|"Live maker sibling graph"| UI
 ```
 
 **The rule the app follows:** anything that decides whether a transaction will
