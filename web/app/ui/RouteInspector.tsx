@@ -58,108 +58,99 @@ export function RouteInspector({
 
   const filledCount = solvency.solventCount + solvency.clampedCount;
 
+  // A "+N bps beat" next to a price far below the oracle is a true number that
+  // misleads: it beats the deepest single maker on a book that is itself bad. So
+  // the badge is only shown when no filled slice is more than 1% under the oracle.
+  const worstDev = (route.slices ?? []).reduce<number | null>((w, sl) => {
+    const d = (sl as { oracleDeviationBps?: number | string | null }).oracleDeviationBps;
+    if (d == null) return w;
+    const n = Number(d);
+    return w === null || n < w ? n : w;
+  }, null);
+  const priceOk = worstDev === null || worstDev > -100;
+
+  const badge = (text: string, tone: "ink" | "warn" | "mute" = "mute", title?: string) => (
+    <span
+      className={s.mono}
+      title={title}
+      style={{
+        fontSize: 10.5,
+        letterSpacing: ".05em",
+        color: tone === "warn" ? "var(--warn-ink)" : tone === "ink" ? "var(--ink)" : "var(--ink2)",
+        background: "var(--sunk)",
+        border: `1px solid ${tone === "warn" ? "var(--warn-line)" : "var(--rule)"}`,
+        borderRadius: 999,
+        padding: "3px 9px",
+        whiteSpace: "nowrap",
+        fontWeight: tone === "ink" ? 600 : 400,
+      }}
+    >
+      {text}
+    </span>
+  );
+
+  const alt = route.alternatives?.[0];
+  const rate = (out: string, filled: string) => {
+    const f = BigInt(filled || "0");
+    return f === 0n ? null : Number((BigInt(out) * 1_000_000n) / f) / 1_000_000;
+  };
+  const altNote = alt
+    ? (() => {
+        const mine = rate(route.amountOut, route.amountFilled);
+        const theirs = rate(alt.amountOut, alt.amountFilled);
+        return mine !== null && theirs !== null && theirs > 0
+          ? `${(mine / theirs).toFixed(1)}× the ${alt.bookLabel} book's rate`
+          : `${alt.bookLabel} book: ${alt.fillable ? "nothing better" : alt.reason ?? "not fillable"}`;
+      })()
+    : null;
+
   return (
     <section className={`${s.card} ${s.cardClip}`} style={{ marginBottom: 24 }}>
-      <div
-        className={s.cardHead}
-        style={{ padding: "18px 22px", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <h2 className={`${s.display} ${s.h2}`} style={{ marginBottom: 3 }}>
-            Route &amp; Solvency Breakdown
+      <div className={s.cardHead} style={{ padding: "14px 20px", flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h2 className={`${s.display} ${s.h3}`} style={{ margin: 0 }}>
+            Your route
           </h2>
-          <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink3)" }}>
-            {solvency.summaryText}
-          </p>
-
-          {/* Which book this plan fills from, and what the other one offered.
-              Aqua keys balances by app and a v4 pool binds one hook, so these
-              cannot be combined — one is chosen. Choosing silently is the thing
-              this project argues against, so the comparison is shown. */}
-          {/* §2.1 -- restored. Deleted with the receipt's ROUTED THROUGH panel on
-              the claim that this card still said it; it did not. "1 of 1 wallets"
-              read as opcode 35 filtering makers out, and this sentence is why it
-              no longer does. */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {badge(`${filledCount} filling`, "ink")}
+            {solvency.clampedCount > 0 ? badge(`${solvency.clampedCount} clamped to what they hold`) : null}
+            {solvency.ghostCount > 0 ? badge(`${solvency.ghostCount} skipped`, "warn") : null}
+            {solvency.unfillableCount > 0 ? badge(`${solvency.unfillableCount} can't pay`, "warn") : null}
+            {priceOk && solvency.improvementBps > 0
+              ? badge(`+${solvency.improvementBps} bps vs one maker`, "mute", "Better than routing the whole trade to the deepest single maker.")
+              : null}
+          </div>
+        </div>
+        {/* Which book filled, whether opcode 35 ran, and what the other book
+            offered -- on one line. The §2.1 disclosure stays, as a tooltip on
+            "our N strategies", so it is one hover away rather than a paragraph. */}
+        <p className={s.mono} style={{ margin: 0, fontSize: 11, color: "var(--ink3)", lineHeight: 1.5 }}>
+          {route.bookLabel ? (
+            <>
+              <strong style={{ color: "var(--ink2)" }}>{route.bookLabel}</strong> book
+            </>
+          ) : (
+            "book"
+          )}
           {route.encumbranceAware ? (
-            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--ink2)", lineHeight: 1.5, maxWidth: "80ch" }}>
-              <strong>Bone Dry book · {route.makersConsidered} strateg{route.makersConsidered === 1 ? "y" : "ies"}, all published by us.</strong>{" "}
-              Where opcode 35 runs — a demonstration of the constraint, not a market.
-            </p>
+            <>
+              {" "}
+              ·{" "}
+              <span
+                title="Every strategy in the Bone Dry book is published by us. It is where opcode 35 runs: a demonstration of the constraint, not a market."
+                style={{ textDecoration: "underline dotted", cursor: "help" }}
+              >
+                our {route.makersConsidered} strategies
+              </span>
+            </>
           ) : null}
-          {route.bookLabel && route.alternatives && route.alternatives.length > 0 ? (
-            <p className={s.mono} style={{ margin: "6px 0 0", fontSize: 10.5, color: "var(--ink3)" }}>
-              filling from the <strong style={{ color: "var(--ink2)" }}>{route.bookLabel}</strong> book
-              {route.opcode35Filled ? " · opcode 35 in this fill" : route.encumbranceAware ? " · filled by a plain sibling, not the opcode-35 strategy" : ""}
-              {route.alternatives.map((alt) => {
-                const rate = (out: string, filled: string) => {
-                  const f = BigInt(filled || "0");
-                  if (f === 0n) return null;
-                  return Number(BigInt(out) * 1_000_000n / f) / 1_000_000;
-                };
-                const mine = rate(route.amountOut, route.amountFilled);
-                const theirs = rate(alt.amountOut, alt.amountFilled);
-                const worse =
-                  mine !== null && theirs !== null && theirs > 0
-                    ? ` · ${(mine / theirs).toFixed(1)}x better rate than the ${alt.bookLabel} book`
-                    : ` · ${alt.bookLabel} book: ${alt.fillable ? "nothing better" : alt.reason ?? "not fillable"}`;
-                return <span key={alt.app}>{worse}</span>;
-              })}
-            </p>
-          ) : null}
-
-        </div>
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {solvency.improvementBps > 0 && (
-            <span
-              className={s.mono}
-              style={{
-                fontSize: 11,
-                letterSpacing: ".06em",
-                color: "var(--ink)",
-                background: "var(--sunk)",
-                border: "1px solid var(--rule)",
-                padding: "5px 10px",
-                whiteSpace: "nowrap",
-                fontWeight: 600,
-              }}
-            >
-              +{solvency.improvementBps} BPS BEAT
-            </span>
-          )}
-          {solvency.ghostCount > 0 && (
-            <span
-              className={s.mono}
-              style={{
-                fontSize: 11,
-                letterSpacing: ".06em",
-                color: "var(--ink2)",
-                background: "var(--sunk)",
-                border: "1px solid var(--rule)",
-                padding: "5px 10px",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {solvency.ghostCount} SKIPPED (SAVE)
-            </span>
-          )}
-          {solvency.clampedCount > 0 && (
-            <span
-              className={s.mono}
-              style={{
-                fontSize: 11,
-                letterSpacing: ".06em",
-                color: "var(--ink2)",
-                background: "var(--sunk)",
-                border: "1px solid var(--rule)",
-                padding: "5px 10px",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {solvency.clampedCount} CLAMPED TO DEPTH
-            </span>
-          )}
-        </div>
+          {route.opcode35Filled
+            ? " · opcode 35 in this fill"
+            : route.encumbranceAware
+              ? " · filled by a plain strategy, not opcode 35"
+              : ""}
+          {altNote ? ` · ${altNote}` : ""}
+        </p>
       </div>
 
       <div

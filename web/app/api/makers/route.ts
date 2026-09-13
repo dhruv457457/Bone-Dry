@@ -9,6 +9,13 @@ import { j, fail, chainFailure } from "@/lib/json";
 
 export const dynamic = "force-dynamic";
 
+type MakersCacheEntry = {
+  data: Record<string, unknown>;
+  at: number;
+};
+const makersServerCache = new Map<string, MakersCacheEntry>();
+const MAKERS_CACHE_TTL = 30_000; // 30s TTL
+
 /**
  * GET /api/makers?chain=&token=&fromBlock=
  *
@@ -22,6 +29,12 @@ export async function GET(req: Request) {
     const token = addressParam(url.searchParams.get("token"), n.weth);
     const fromBlock = url.searchParams.get("fromBlock");
     const from = fromBlock ? amountParam(fromBlock, 0n) : undefined;
+
+    const cacheKey = `${n.id}:${token.toLowerCase()}:${from ? from.toString() : "head"}`;
+    const hit = makersServerCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < MAKERS_CACHE_TTL) {
+      return j(hit.data);
+    }
 
     // The background index (lib/indexer.ts) answers this exact question --
     // every live strategy's depth for one token -- precomputed on a
@@ -65,7 +78,7 @@ export async function GET(req: Request) {
     const TOKENS = { ...tokensOf(n), ...allTokensFor(n.id) };
     const meta = TOKENS[token.toLowerCase()];
 
-    return j({
+    const payload = {
       // Say which index actually answered, not which one is configured.
       source,
       chain: { id: n.id, label: n.label, testnet: n.testnet, aquaIsOurs: n.aquaIsOurs },
@@ -88,7 +101,14 @@ export async function GET(req: Request) {
           // the interesting column: promised vs deliverable
           shortfall: d.virtual > d.depth ? d.virtual - d.depth : 0n,
         })),
-    });
+    };
+
+    if (makersServerCache.size > 100) {
+      makersServerCache.clear();
+    }
+    makersServerCache.set(cacheKey, { data: payload, at: Date.now() });
+
+    return j(payload);
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
     if ((e as Error).message?.startsWith("unknown chain")) return fail((e as Error).message, 400);

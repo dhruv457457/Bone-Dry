@@ -993,6 +993,9 @@
 .colsSwap { grid-template-columns: minmax(380px, 33%) 1fr; gap: 22px; }
 @media (max-width: 1080px) { .colsSwap { grid-template-columns: 1fr; } }
 .colsSwap .swapCol { width: 100%; }
+/* The Swap page is sized to the viewport, so the 80px run-out under other tabs
+   would be the only thing that scrolls. */
+.main:has(.workspaceCard) { padding-bottom: 20px; }
 
 /* Receipt metadata reads across, not down: pool state beside the book that
    filled. Collapses below 720px where a strip would crush both. */
@@ -1023,3 +1026,492 @@
 @keyframes swapFade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes swapRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .swapModalBackdrop, .swapModal { animation: none; } }
+
+/* Pre-flight Solvency Audit Modal */
+.preflightModalCard {
+  width: min(100%, 480px);
+  padding: 22px 24px;
+}
+
+.modalEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+
+.pipelineContainer {
+  display: flex;
+  flex-direction: column;
+  margin: 14px 0 10px;
+}
+
+.pipelineStep {
+  display: flex;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.stepIconCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 24px;
+}
+
+.stepIndicator {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.stepIdle {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  color: var(--ink3);
+}
+
+.stepLive {
+  background: var(--ink);
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 24, 21, 0.15);
+  animation: pulseDot 1.5s infinite;
+}
+
+.stepDone {
+  background: #1a1815;
+  color: #fff;
+}
+
+.stepWarn {
+  background: var(--warn-ink);
+  color: #fff;
+}
+
+.stepLine {
+  width: 2px;
+  flex: 1;
+  background: var(--hair);
+  margin: 4px 0;
+  transition: background 0.3s ease;
+}
+
+.stepLineFilled {
+  background: var(--ink);
+}
+
+.stepContent {
+  flex: 1;
+  padding-top: 1px;
+}
+
+.stepTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.stepDesc {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--ink2);
+  line-height: 1.35;
+}
+
+.decisionBox {
+  background: var(--sunk);
+  border: 1px solid var(--warn-line);
+  border-radius: 10px;
+  padding: 13px 15px;
+  margin-top: 8px;
+  animation: swapRise 0.25s ease-out;
+}
+
+.decisionHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.decisionGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.decisionCol {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.decisionColHighlight {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+
+.decisionColLabel {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink3);
+  text-transform: uppercase;
+}
+
+.decisionColVal {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.decisionColMeta {
+  font-size: 11px;
+  color: var(--ink2);
+}
+
+.gainPill {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: rgba(186, 74, 24, 0.08);
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--warn-ink);
+  margin-bottom: 12px;
+}
+
+.decisionActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Mirror Loading Shimmer (Swap card inline) */
+.mirrorShimmer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--sunk) 0%, #f4ede1 50%, var(--sunk) 100%);
+  background-size: 200% 100%;
+  animation: shimmerSweep 1.8s infinite;
+  border: 1px solid var(--hair);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  margin-top: 10px;
+}
+
+@keyframes shimmerSweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.solvencySignalPill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  font-size: 11.5px;
+  color: var(--warn-ink);
+  margin-top: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.solvencySignalPill:hover {
+  filter: brightness(0.98);
+}
+
+/* Cross-Chain Solvency Recommendation Card */
+.crossChainCard {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--sunk);
+  border: 1px solid var(--warn-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.crossChainHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.crossChainSignal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--warn-ink);
+}
+
+.crossChainPulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn-ink);
+  animation: pulseDot 2s infinite;
+}
+
+@keyframes pulseDot {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.crossChainBadge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  color: var(--ink3);
+}
+
+.crossChainTitle {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.crossChainCompare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.crossChainCol {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.crossChainColLabel {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink3);
+  text-transform: uppercase;
+}
+
+.crossChainColVal {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.crossChainColMeta {
+  font-size: 11px;
+  color: var(--ink2);
+}
+
+.crossChainFoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 2px;
+}
+
+.crossChainSources {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.crossChainActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-family: var(--body);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+}
+
+.crossChainActionBtn:hover:not(:disabled) {
+  background: var(--warn-ink);
+  border-color: var(--warn-ink);
+  color: #fff;
+}
+
+/* Zero-Scroll Right Column Workspace */
+.workspaceCard {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 680px;
+}
+
+.workspaceHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sunk);
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workspaceTabs {
+  display: inline-flex;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.workspaceTab {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.workspaceTab:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.workspaceTabOn {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.workspaceBody {
+  padding: 16px;
+  min-height: 620px;
+  max-height: 820px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Cross-Chain Matrix styles */
+.matrixGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.matrixCard {
+  background: var(--sunk);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.matrixCardHighlight {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+
+.splitRouteCard {
+  background: var(--sunk);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+
+/* Maker Provide Cross-Chain Inefficiency Banner */
+.makerOppBanner {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--sunk);
+  border: 1px solid var(--tan-line);
+  border-left: 3px solid var(--tan);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.makerSpreadBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(156, 107, 69, 0.12);
+  color: var(--tan);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+

@@ -1,0 +1,29 @@
+/**
+ * Token logos served from /public/tokens, so they load wherever the app loads.
+ * Every image was fetched once from Trust Wallet's asset repo (CoinGecko for cbBTC,
+ * which Trust Wallet does not list) and checked to be a real PNG/WebP. Keyed by
+ * chainId:lowercased address, like the remote lookup it shadows.
+ */
+export const LOCAL_TOKEN_ICONS: Record<string, string> = {
+  "8453:0x4200000000000000000000000000000000000006": "/tokens/8453/0x4200000000000000000000000000000000000006.png",
+  "8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "/tokens/8453/0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.png",
+  "8453:0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca": "/tokens/8453/0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca.png",
+  "8453:0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": "/tokens/8453/0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22.png",
+  "8453:0x50c5725949a6f0c72e6c4a641f24049a917db0cb": "/tokens/8453/0x50c5725949a6f0c72e6c4a641f24049a917db0cb.png",
+  "8453:0xfde4c96c8593536e31f229ea8f37b2ada2699bb2": "/tokens/8453/0xfde4c96c8593536e31f229ea8f37b2ada2699bb2.png",
+  "8453:0x820c137fa70c8691f0e44dc420a5e53c168921dc": "/tokens/8453/0x820c137fa70c8691f0e44dc420a5e53c168921dc.png",
+  "8453:0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "/tokens/8453/0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42.png",
+  "8453:0x940181a94a35a4569e4529a3cdfb74e38fd98631": "/tokens/8453/0x940181a94a35a4569e4529a3cdfb74e38fd98631.png",
+  "8453:0x4ed4e862860bed51a9570b96d89af5e1b0efefed": "/tokens/8453/0x4ed4e862860bed51a9570b96d89af5e1b0efefed.png",
+  "8453:0x532f27101965dd16442e59d40670faf5ebb142e4": "/tokens/8453/0x532f27101965dd16442e59d40670faf5ebb142e4.png",
+  "8453:0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4": "/tokens/8453/0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4.png",
+  "8453:0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b": "/tokens/8453/0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b.png",
+  "8453:0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": "/tokens/8453/0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf.webp",
+  "1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "/tokens/1/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.png",
+  "1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "/tokens/1/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.png",
+  "1:0xdac17f958d2ee523a2206206994597c13d831ec7": "/tokens/1/0xdac17f958d2ee523a2206206994597c13d831ec7.png",
+  "1:0x6b175474e89094c44da98b954eedeac495271d0f": "/tokens/1/0x6b175474e89094c44da98b954eedeac495271d0f.png",
+  "1:0xdc035d45d973e3ec169d2276ddab16f1e407384f": "/tokens/1/0xdc035d45d973e3ec169d2276ddab16f1e407384f.png",
+  "84532:0x4200000000000000000000000000000000000006": "/tokens/84532/0x4200000000000000000000000000000000000006.png",
+  "84532:0x036cbd53842c5426634e7929541ec2318f3dcf7e": "/tokens/84532/0x036cbd53842c5426634e7929541ec2318f3dcf7e.png",
+};

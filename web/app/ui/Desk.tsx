@@ -21,6 +21,8 @@ import {
   type NetworkId,
   type Network,
 } from "@/lib/networks";
+import { getFromCache, setInCache, routeCacheKey, makersCacheKey, prewarmRoute } from "@/lib/cache";
+import { getAlternateChain, findCounterpartToken } from "@/lib/crossChain";
 import {
   pairsFor,
   defaultPairFor,
@@ -252,6 +254,21 @@ export default function Desk({
   // takes chainId as an argument and stays typed.
   const { writeContractAsync } = useWriteContract();
   const wrongChain = isConnected && walletChainId !== undefined && walletChainId !== chainId;
+
+  const handleSwitchChain = useCallback(
+    async (targetChainId: NetworkId) => {
+      if (switchChain) {
+        try {
+          await switchChain({ chainId: targetChainId });
+        } catch {
+          // User rejected prompt or wallet does not support switchChain
+        }
+      }
+      setChainId(targetChainId);
+    },
+    [switchChain]
+  );
+
   const [balance, setBalance] = useState<bigint | null>(null);
   const chainIdRef = useRef<NetworkId>(chainId);
   chainIdRef.current = chainId;
@@ -292,37 +309,64 @@ export default function Desk({
   const gen = useRef(0);
 
   const load = useCallback(async () => {
-    if (!net.hook || !net.wellhead) {
+    const mine = ++gen.current;
+    setError(null);
+
+    const rKey = routeCacheKey(chainId, tokenIn.address, tokenOut.address, amountIn);
+    const mKey = makersCacheKey(chainId, tokenOut.address);
+    const cachedR = getFromCache<RouteResponse>(rKey);
+    const cachedM = getFromCache<MakersResponse>(mKey);
+
+    if (cachedR && cachedM) {
+      setRoute(cachedR.error ? null : cachedR);
+      setMakers(cachedM.error ? null : cachedM);
       setBusy(false);
-      setRoute(null);
-      setMakers(null);
-      setPool(null);
+      // Pre-warm counterpart chain in background
+      const altChain = getAlternateChain(chainId);
+      const altIn = findCounterpartToken(tokenIn, altChain);
+      const altOut = findCounterpartToken(tokenOut, altChain);
+      if (altIn && altOut) {
+        prewarmRoute(altChain, altIn.address, altOut.address, toRaw(input, altIn.decimals));
+      }
       return;
     }
-    const mine = ++gen.current;
+
     setBusy(true);
-    setError(null);
     try {
       const q = `chain=${chainId}&tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${amountIn}`;
-      const [r, m, p] = await Promise.all([
-        getJson<RouteResponse>(`/api/route?${q}`),
-        getJson<MakersResponse>(`/api/makers?chain=${chainId}&token=${tokenOut.address}`),
-        getJson<PoolResponse>(
-          `/api/pool?chain=${chainId}&currency0=${pKey.currency0}&currency1=${pKey.currency1}&fee=${pKey.fee}&tickSpacing=${pKey.tickSpacing}${pKey.hooks ? `&hook=${pKey.hooks}` : ""}`
-        ),
-      ]);
+      const routeP = getJson<RouteResponse>(`/api/route?${q}`);
+      const makersP = getJson<MakersResponse>(`/api/makers?chain=${chainId}&token=${tokenOut.address}`);
+      const poolP =
+        net.hook && net.wellhead
+          ? getJson<PoolResponse>(
+              `/api/pool?chain=${chainId}&currency0=${pKey.currency0}&currency1=${pKey.currency1}&fee=${pKey.fee}&tickSpacing=${pKey.tickSpacing}${pKey.hooks ? `&hook=${pKey.hooks}` : ""}`
+            ).catch(() => null)
+          : Promise.resolve(null);
+
+      const [r, m, p] = await Promise.all([routeP, makersP, poolP]);
       if (mine !== gen.current) return;
-      const bad = r.error ?? m.error ?? p.error;
+      const bad = r.error ?? m.error;
       if (bad) setError(bad);
+      if (r && !r.error) setInCache(rKey, r, 30_000);
+      if (m && !m.error) setInCache(mKey, m, 45_000);
+
       setRoute(r.error ? null : r);
       setMakers(m.error ? null : m);
-      setPool(p.error ? null : p);
+      setPool(p && !p.error ? p : null);
+
+      // Pre-warm counterpart chain in background
+      const altChain = getAlternateChain(chainId);
+      const altIn = findCounterpartToken(tokenIn, altChain);
+      const altOut = findCounterpartToken(tokenOut, altChain);
+      if (altIn && altOut) {
+        prewarmRoute(altChain, altIn.address, altOut.address, toRaw(input, altIn.decimals));
+      }
     } catch (e) {
       if (mine === gen.current) setError((e as Error).message);
     } finally {
       if (mine === gen.current) setBusy(false);
     }
-  }, [tokenIn.address, tokenOut.address, amountIn, pKey, chainId, net.hook, net.wellhead]);
+  }, [tokenIn, tokenOut, amountIn, pKey, chainId, net.hook, net.wellhead, input]);
 
   useEffect(() => {
     const t = setTimeout(load, 250); // debounce keystrokes
@@ -496,7 +540,31 @@ export default function Desk({
         await rpc.waitForTransactionReceipt({ hash: approveHash });
       }
 
-      const quoted = BigInt(route.amountOut);
+      // Re-quote with no cache before signing. The route on screen may have come
+      // from the browser or server cache (up to ~50s old); the hook fills from the
+      // maker list in hookData, so sign the list as it is now, not as it was.
+      const freshRes = await fetch(
+        `/api/route?chain=${forChain}&tokenIn=${tokenIn.address}&tokenOut=${tokenOut.address}&amountIn=${route.amountIn ?? amount}&fresh=1`
+      );
+      const fresh = (await freshRes.json()) as RouteResponse;
+      if (!stillHere()) return;
+      if (!freshRes.ok || fresh.error || !fresh.hookData) {
+        setTxState({ phase: "idle", note: `Could not re-read the makers before signing: ${fresh.error ?? freshRes.status}. Nothing was sent.` });
+        return;
+      }
+      if ((fresh.hook ?? "").toLowerCase() !== (route.hook ?? "").toLowerCase()) {
+        setTxState({ phase: "idle", note: "The best book changed since this quote. Review the new route and press Swap again. Nothing was sent." });
+        return;
+      }
+      if (BigInt(fresh.amountOut) < (BigInt(route.amountOut) * 99n) / 100n) {
+        setTxState({
+          phase: "idle",
+          note: `Makers moved: the quote fell from ${units(BigInt(route.amountOut), tokenOut.decimals, 8)} to ${units(BigInt(fresh.amountOut), tokenOut.decimals, 8)} ${tokenOut.symbol}. Nothing was sent.`,
+        });
+        return;
+      }
+      const signAmount = BigInt(fresh.amountFilled);
+      const quoted = BigInt(fresh.amountOut);
       const minOut = (quoted * 99n) / 100n;
 
       // Derived, never assumed: currency order is determined by token address,
@@ -527,9 +595,9 @@ export default function Desk({
         args: [
           pKey,
           zeroForOne,
-          amount,
+          signAmount,
           minOut,
-          route.hookData as Hex,
+          fresh.hookData as Hex,
         ],
       });
       const receipt = await rpc.waitForTransactionReceipt({ hash });
@@ -597,45 +665,37 @@ export default function Desk({
 
       <main className={s.main}>
         {tab === "swap" && (
-          !net.hook || !net.wellhead ? (
-            <ReadOnlyExplainer
-              netName={net.label}
-              tabName="swap"
-              onSwitchChain={setChainId}
-              onExplore={() => setTab("explore")}
-            />
-          ) : (
-            <Swap
-              finding={finding}
-              chainId={chainId}
-              net={net}
-              tokenIn={tokenIn}
-              tokenOut={tokenOut}
-              input={input}
-              onInput={setInput}
-              balance={balance}
-              route={route}
-              makers={makers}
-              pool={pool}
-              busy={busy}
-              error={error}
-              connected={isConnected}
-              wrongChain={wrongChain}
-              txPhase={txState.phase}
-              txHash={txState.hash}
-              txNote={txState.note}
-              received={txState.received}
-              onSwap={executeSwap}
-              onFlip={() => setFlipped((f) => !f)}
-              onPickToken={(which) => {
-                setSearchTarget(which);
-                setSearchModalOpen(true);
-              }}
-              onExplore={() => setTab("explore")}
-              onLookup={() => setTab("lookup")}
-              quoteStamp={stamp}
-            />
-          )
+          <Swap
+            finding={finding}
+            chainId={chainId}
+            net={net}
+            tokenIn={tokenIn}
+            tokenOut={tokenOut}
+            input={input}
+            onInput={setInput}
+            balance={balance}
+            route={route}
+            makers={makers}
+            pool={pool}
+            busy={busy}
+            error={error}
+            connected={isConnected}
+            wrongChain={wrongChain}
+            txPhase={txState.phase}
+            txHash={txState.hash}
+            txNote={txState.note}
+            received={txState.received}
+            onSwap={executeSwap}
+            onFlip={() => setFlipped((f) => !f)}
+            onPickToken={(which) => {
+              setSearchTarget(which);
+              setSearchModalOpen(true);
+            }}
+            onExplore={() => setTab("explore")}
+            onLookup={() => setTab("lookup")}
+            quoteStamp={stamp}
+            onSwitchChain={handleSwitchChain}
+          />
         )}
 
         {tab === "provide" && (
@@ -648,12 +708,8 @@ export default function Desk({
             />
           ) : (
             <>
-              <FindingLine
-                finding={finding}
-                chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
-                onEvidence={() => setTab("explore")}
-                stamp={stamp}
-              />
+              {/* No finding line on Provide or Portfolio: a maker needs their own book
+                  first, and a network headline above it is one more thing to read. */}
               <Provide
                 net={net}
                 tokenIn={tokenIn}
@@ -672,12 +728,6 @@ export default function Desk({
 
         {tab === "portfolio" && (
           <>
-            <FindingLine
-              finding={finding}
-              chainLabel={net.aquaIsOurs ? NETWORKS[8453].label : net.label}
-              onEvidence={() => setTab("explore")}
-              stamp={stamp}
-            />
             <Portfolio
               chainId={chainId}
               net={net}

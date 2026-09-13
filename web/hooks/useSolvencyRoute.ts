@@ -22,9 +22,9 @@ export function useSolvencyRoute(route: any): SolvencyEngineResult & {
       if (hasGhosts) {
         summaryText = `Protected trade: ${result.ghostCount} ghost maker(s) skipped atomically; filled across ${result.solventCount + result.clampedCount} solvent maker(s).`;
       } else if (result.improvementBps > 0) {
-        summaryText = `Optimal routing: +${result.improvementBps} bps price improvement across ${result.solventCount} makers.`;
+        summaryText = `+${result.improvementBps} bps over the deepest single maker, split across ${result.solventCount + result.clampedCount} wallets.`;
       } else {
-        summaryText = `100% backed fill across ${result.solventCount} maker(s).`;
+        summaryText = `Fully backed fill from ${result.solventCount + result.clampedCount} wallet${result.solventCount + result.clampedCount === 1 ? "" : "s"}.`;
       }
     }
 

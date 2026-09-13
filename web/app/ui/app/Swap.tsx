@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import s from "../app.module.css";
+import { IconBook, IconChains, IconReceipt } from "./Icons";
 import { Bar, Blocked, Shim, Table, Trow, TxSteps, type TxTone } from "./bits";
-import { FindingLine } from "./Shell";
 import { RouteInspector } from "../RouteInspector";
 import { BookDepth } from "./BookDepth";
+import { CrossChainRecommendation } from "./CrossChainRecommendation";
+import { CrossChainMatrix } from "./CrossChainMatrix";
+import { PreflightModal } from "./PreflightModal";
 import { TokenIcon } from "../TokenIcon";
 import { CopyButton } from "../CopyButton";
 import { units, short as shortAddr, toRaw } from "@/lib/format";
@@ -74,9 +77,10 @@ export function Swap({
   onLookup,
   quoteStamp,
   finding,
+  onSwitchChain,
 }: {
   chainId: NetworkId;
-  net: { label: string; explorer?: string; aquaIsOurs?: boolean };
+  net: { label: string; explorer?: string; aquaIsOurs?: boolean; hook?: Address | "" };
   tokenIn: Token;
   tokenOut: Token;
   input: string;
@@ -100,11 +104,14 @@ export function Swap({
   onLookup: () => void;
   quoteStamp: string;
   finding: CoverageResponse | null;
+  onSwitchChain?: (targetChainId: NetworkId) => void;
 }) {
   const [primer, setPrimer] = useState(false);
   const [raw, setRaw] = useState(false);
   const [bookFilter, setBookFilter] = useState<BookFilter>("all");
   const [bookPage, setBookPage] = useState(0);
+  const [rightTab, setRightTab] = useState<"depth" | "matrix" | "receipt">("depth");
+  const [loadedAltRoute, setLoadedAltRoute] = useState<{ route: RouteResponse | null; targetChainId: NetworkId } | null>(null);
   // The swap modal. It opens only when Swap is pressed -- the verification steps
   // used to sit in the card permanently, already "done", before anything had been
   // asked for. animStep paces the replay (null = not replaying); handedOff marks
@@ -219,28 +226,32 @@ export function Swap({
   // than after it silently refuses.
   const wantRaw = toRaw(input, tokenIn.decimals);
   const shortOnBalance = connected && balance !== null && wantRaw > 0n && balance < wantRaw;
+  const isReadOnlyNet = net.hook === "";
 
   const actionLabel = !connected
     ? "Connect wallet to swap"
     : wrongChain
       ? "Switch network to swap"
-      : shortOnBalance
-        ? `Not enough ${tokenIn.symbol}`
-        : txPhase === "approving"
-        ? "Approve in your wallet"
-        : txPhase === "swapping"
-          ? `Filling from ${route?.makersUsed ?? 0} wallets`
-          : txPhase === "done"
-            ? txNote
-              ? "Reverted — try again"
-              : "Filled · swap again"
-            : !quoted
-              ? "No quote available"
-              : "Swap";
+      : isReadOnlyNet
+        ? `Read-only on ${net.label} — no v4 hook`
+        : shortOnBalance
+          ? `Not enough ${tokenIn.symbol}`
+          : txPhase === "approving"
+          ? "Approve in your wallet"
+          : txPhase === "swapping"
+            ? `Filling from ${route?.makersUsed ?? 0} wallets`
+            : txPhase === "done"
+              ? txNote
+                ? "Reverted — try again"
+                : "Filled · swap again"
+              : !quoted
+                ? "No quote available"
+                : "Swap";
 
   const actionDisabled =
     !connected ||
     wrongChain ||
+    isReadOnlyNet ||
     shortOnBalance ||
     txPhase === "approving" ||
     txPhase === "swapping" ||
@@ -336,157 +347,45 @@ export function Swap({
     return steps;
   })();
 
-  // The replay: the same real facts the route already established, revealed one
-  // stage at a time. The facts are real; the pacing is not, and it says so here.
-  const animatingSteps: typeof txSteps | null = (() => {
-    if (animStep === null) return null;
-    const tone = (stage: number): TxTone => (animStep > stage ? "done" : animStep === stage ? "live" : "idle");
-    return [
-      {
-        label: "Read the book",
-        detail: animStep >= 1 && makers ? `${makers.makers.length} live strategies on ${tokenOut.symbol}` : "asking the index",
-        tone: tone(0),
-      },
-      {
-        label: "Re-read every maker on chain",
-        detail:
-          animStep >= 2 && route
-            ? `${route.makersConsidered} checked · ${route.makersSkipped.length} can't pay`
-            : "balance and allowance, not the index",
-        tone: tone(1),
-      },
-      {
-        label: "Route found",
-        detail:
-          animStep >= 3 && route
-            ? `${route.makersUsed} wallet${route.makersUsed === 1 ? "" : "s"} · ${route.bookLabel ?? ""} book${route.opcode35Filled ? " · opcode 35" : ""}`
-            : undefined,
-        tone: tone(2),
-      },
-      {
-        label: "Ready to sign",
-        detail: animStep >= 3 ? (priceSevere ? "check the rate first" : "opening your wallet") : undefined,
-        tone: tone(3),
-      },
-    ];
-  })();
-
-  // Latest onSwap, not the one captured at click time: a quote that refreshes
-  // during the replay must be the one that gets signed.
   const onSwapRef = useRef(onSwap);
   onSwapRef.current = onSwap;
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const clearTimers = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  };
-  useEffect(() => clearTimers, []);
-
-  // The replay hands over to the wallet phases as soon as they start.
-  useEffect(() => {
-    if (txPhase !== "idle") {
-      setAnimStep(null);
-      setHandedOff(false);
-    }
-  }, [txPhase]);
 
   const handleSwapClick = () => {
     if (modalOpen) return;
     setModalOpen(true);
-    setHandedOff(false);
-    setAnimStep(0);
-    clearTimers();
-    timers.current = [
-      setTimeout(() => setAnimStep(1), 750),
-      setTimeout(() => setAnimStep(2), 1500),
-      setTimeout(() => setAnimStep(3), 2250),
-      setTimeout(() => {
-        setAnimStep(null);
-        setHandedOff(true);
-        onSwapRef.current();
-      }, 3000),
-    ];
   };
 
-  const busyInWallet = txPhase === "approving" || txPhase === "swapping";
-  const canClose = animStep === null && !busyInWallet;
   const closeModal = () => {
-    // Closing during the replay cancels it: nothing has been signed yet.
-    clearTimers();
-    setAnimStep(null);
-    setHandedOff(false);
+    if (txPhase === "approving" || txPhase === "swapping") return;
     setModalOpen(false);
   };
 
-  useEffect(() => {
-    if (!modalOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (canClose || animStep !== null)) closeModal();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  const modalSteps: typeof txSteps =
-    animatingSteps ??
-    (busyInWallet || txPhase === "done"
-      ? txSteps
-      : txNote
-        ? [{ label: "Refused before signing", detail: txNote, tone: "bad" as TxTone }]
-        : handedOff
-          ? [
-              { label: "Route verified", tone: "done" as TxTone },
-              { label: "Opening wallet…", tone: "live" as TxTone },
-            ]
-          : []);
-
   return (
     <>
-      {modalOpen ? (
-        <div className={s.swapModalBackdrop} role="presentation" onClick={() => (canClose ? closeModal() : null)}>
-          <div
-            className={s.swapModal}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Swap progress"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className={s.label} style={{ margin: 0 }}>Swap</p>
-            <h3 className={s.display} style={{ fontSize: 24, margin: "6px 0 2px" }}>
-              {input} {tokenIn.symbol} → {tokenOut.symbol}
-            </h3>
-            <p className={s.mono} style={{ margin: "0 0 14px", fontSize: 11, color: "var(--ink3)" }}>
-              {route ? `quoted ${units(route.amountOut, tokenOut.decimals, 8)} ${tokenOut.symbol}` : ""} · on {net.label}
-            </p>
-            <TxSteps steps={modalSteps} />
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-              {animStep !== null ? (
-                <button className={`${s.btn} ${s.btnXs}`} onClick={closeModal}>
-                  Cancel
-                </button>
-              ) : canClose ? (
-                <button className={`${s.btn} ${s.btnSolid}`} onClick={closeModal}>
-                  {txPhase === "done" ? "Done" : "Close"}
-                </button>
-              ) : (
-                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>
-                  continue in your wallet
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <PreflightModal
+        isOpen={modalOpen}
+        onClose={closeModal}
+        onConfirmBaseSwap={() => onSwapRef.current()}
+        onSwitchChain={onSwitchChain}
+        chainId={chainId}
+        net={net}
+        tokenIn={tokenIn}
+        tokenOut={tokenOut}
+        input={input}
+        route={route}
+        makers={makers}
+        altRoute={loadedAltRoute?.route ?? null}
+        altTargetChainId={loadedAltRoute?.targetChainId ?? (chainId === 8453 ? 1 : 8453)}
+        txPhase={txPhase}
+        txHash={txHash}
+        txNote={txNote}
+        received={received}
+      />
       {/* One line, as every other tab uses. The full card put the Swap button
           near y=600 -- below the fold on a laptop -- to repeat a number the rail
           already carries. The histogram version stays on Explore, where the
           distribution is the subject rather than an interruption. */}
-      <FindingLine
-        finding={finding}
-        chainLabel={net.aquaIsOurs ? "Base" : net.label}
-        onEvidence={onExplore}
-        stamp={quoteStamp}
-      />
+      {/* No finding line on Swap: the trade is the subject here; Explore carries the finding. */}
     <div className={`${s.cols} ${s.colsSwap} ${s.in}`}>
       <div className={`${s.colNarrow} ${s.swapCol}`}>
 
@@ -573,7 +472,7 @@ export function Swap({
                 {tokenOut.symbol}
               </button>
             </div>
-            {quoted && BigInt(route!.unfilled) > 0n ? (
+            {quoted && BigInt(route!.unfilled) * 1000n > BigInt(route!.amountIn) && !priceWarn ? (
               <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink3)", lineHeight: 1.4 }}>
                 Only {units(route!.amountOut, tokenOut.decimals, 6)} {tokenOut.symbol} deliverable across {route!.makersUsed} solvent wallet{route!.makersUsed === 1 ? "" : "s"} — the rest of the book cannot pay.
               </div>
@@ -583,26 +482,27 @@ export function Swap({
               <div
                 style={{
                   marginTop: 10,
-                  padding: "8px 10px",
+                  padding: "6px 10px",
                   borderRadius: 6,
-                  background: priceSevere ? "rgba(194, 78, 25, 0.10)" : "var(--sunk)",
-                  border: `1px solid ${priceSevere ? "rgba(194, 78, 25, 0.30)" : "var(--rule)"}`,
+                  background: priceSevere ? "rgba(194, 78, 25, 0.08)" : "var(--sunk)",
+                  border: `1px solid ${priceSevere ? "rgba(194, 78, 25, 0.25)" : "var(--rule)"}`,
                   fontSize: 12,
-                  lineHeight: 1.45,
+                  lineHeight: 1.4,
                   color: priceSevere ? "var(--short)" : "var(--ink2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
                 }}
               >
-                <strong>
-                  {(Math.abs(worstDeviationBps!) / 100).toFixed(priceSevere ? 1 : 2)}% below the Chainlink price
-                </strong>
-                {priceSevere
-                  ? " — this book is solvent but shallow, so the curve prices you out at this size. Try a smaller amount."
-                  : " — solvency is not price; check the rate before signing."}
+                <span>
+                  <strong>{(Math.abs(worstDeviationBps!) / 100).toFixed(1)}% slippage penalty</strong> on this chain
+                </span>
+                <span className={s.mono} style={{ fontSize: 11, color: "var(--ink3)" }}>shallow book</span>
               </div>
             ) : null}
           </div>
 
-          {quoted && improvement > 0 && route!.slices.length > 1 ? (
+          {quoted && improvement > 0 && route!.slices.length > 1 && !priceWarn ? (
             <div className={`${s.splitWin} ${s.in}`}>
               <span className={s.splitFig}>+{improvement}</span>
               <p style={{ margin: 0, fontSize: 13, color: "var(--ink2)", lineHeight: 1.4 }}>
@@ -610,6 +510,19 @@ export function Swap({
               </p>
             </div>
           ) : null}
+
+          <CrossChainRecommendation
+            chainId={chainId}
+            tokenIn={tokenIn}
+            tokenOut={tokenOut}
+            input={input}
+            currentRoute={route}
+            onSwitchChain={onSwitchChain}
+            onInspectMatrix={() => setRightTab("matrix")}
+            onAltRouteLoaded={(altR, tId) => setLoadedAltRoute({ route: altR, targetChainId: tId })}
+            onOpenAudit={handleSwapClick}
+            mode="pill"
+          />
 
           <button
             className={`${s.btnBlock} ${txPhase === "done" && txNote ? s.btnBlockShort : ""}`}
@@ -663,176 +576,179 @@ export function Swap({
         {/* ── route receipt ────────────────────────────────────────────── */}
       </div>
 
-      {/* ── the maker book & route inspector ───────────────────────────── */}
+      {/* ── the maker book & route inspector workspace (zero scroll) ───── */}
       <div className={s.colWide}>
-        {/* The chart the right column needed. 55 bars regardless of what the
-            route did, so this side holds its weight whether one maker fills or
-            fifty -- and it is the project's claim drawn rather than asserted. */}
-        {makers && makers.makers.length > 0 ? (
-          <section className={`${s.card} ${s.cardPad}`} style={{ marginBottom: 20 }}>
-            <BookDepth makers={makers} route={route} tokenOut={tokenOut} />
-          </section>
-        ) : null}
-
-        <RouteInspector
-          route={route}
-          tokenIn={tokenIn}
-          tokenOut={tokenOut}
-          net={net}
-        />
-        {/* Metadata reads after the result, not before it: what filled, then
-            the pool and book it filled through. */}
-        <section className={`${s.card} ${s.cardPad}`}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            <span className={s.label}>Route receipt</span>
-            <span className={s.mono} style={{ fontSize: 9.5, color: "var(--ink3)" }}>
-              PoolManager storage
+        <div className={s.workspaceCard}>
+          <div className={s.workspaceHead}>
+            <div className={s.workspaceTabs}>
+              <button
+                className={`${s.workspaceTab} ${rightTab === "depth" ? s.workspaceTabOn : ""}`}
+                onClick={() => setRightTab("depth")}
+              >
+                <IconBook /> Book
+              </button>
+              <button
+                className={`${s.workspaceTab} ${rightTab === "matrix" ? s.workspaceTabOn : ""}`}
+                onClick={() => setRightTab("matrix")}
+              >
+                <IconChains /> Cross-chain
+              </button>
+              <button
+                className={`${s.workspaceTab} ${rightTab === "receipt" ? s.workspaceTabOn : ""}`}
+                onClick={() => setRightTab("receipt")}
+              >
+                <IconReceipt /> Receipt
+              </button>
+            </div>
+            <span className={s.mono} style={{ fontSize: 10, color: "var(--ink3)" }}>
+              {rightTab === "depth"
+                ? `${makers?.makers?.length ?? 0} live strategies on ${tokenOut.symbol}`
+                : rightTab === "matrix"
+                  ? "Base vs Ethereum comparative depth"
+                  : "PoolManager storage proof"}
             </span>
           </div>
 
-          {!hasAmount ? (
-            <p style={{ margin: 0, fontSize: 14, color: "var(--ink3)" }}>
-              Enter an amount to quote every live maker.
-            </p>
-          ) : busy || !route ? (
-            <div>
-              {[
-                { w: "92%", d: "0s" },
-                { w: "70%", d: ".08s" },
-                { w: "84%", d: ".16s" },
-                { w: "58%", d: ".24s" },
-                { w: "76%", d: ".32s" },
-              ].map((k) => (
-                <Shim key={k.w} w={k.w} delay={k.d} />
-              ))}
-              <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 10, color: "var(--ink3)" }}>
-                quoting {makers?.indexed ?? 0} makers
-              </p>
-            </div>
-          ) : (
-            <div>
-              {/* Side by side at this width. These two are metadata about the
-                  fill -- what the pool holds, and which book it routed through --
-                  and stacking them turned a 920px card into 423px of vertical
-                  scroll for content that fits in a strip. */}
-              {/* The ROUTED THROUGH panel stood here saying what the breakdown's
-                  subtitle says one card up, and what the pipeline's "Route found"
-                  row now says in the swap card itself -- three copies of one fact.
-                  The breakdown keeps it, beside the rows it describes. This card is
-                  left with only what nothing else states: what the pool holds, and
-                  the identifiers. With one cell left there is no grid to make. */}
-              {pool ? (
-                <div className={s.zeroRow} style={{ alignItems: "center" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span className={s.label} style={{ margin: 0, letterSpacing: ".12em" }}>
-                        Pool liquidity
-                      </span>
-                      <span
-                        className={`${s.pill} ${pool.liquidity === "0" ? s.pillShort : ""}`}
-                        style={{ fontSize: 11, padding: "2px 7px" }}
-                      >
-                        {pool.liquidity === "0" ? "0 · by design" : `${units(pool.liquidity, 18, 2)} TVL`}
-                      </span>
-                    </div>
-                    <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink2)" }}>
-                      {pool.state === "bone-dry"
-                        ? "zero is the mechanism, not a fault"
-                        : pool.state === "uninitialized"
-                          ? "this pool has not been initialised here"
-                          : "this pool holds conventional liquidity"}
-                    </p>
+          <div className={s.workspaceBody}>
+            {rightTab === "depth" && (
+              <div>
+                {makers && makers.makers.length > 0 ? (
+                  <div style={{ marginBottom: 16 }}>
+                    <BookDepth makers={makers} route={route} tokenOut={tokenOut} />
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+                <RouteInspector
+                  route={route}
+                  tokenIn={tokenIn}
+                  tokenOut={tokenOut}
+                  net={net}
+                />
+              </div>
+            )}
 
+            {rightTab === "matrix" && (
+              <CrossChainMatrix
+                chainId={chainId}
+                targetChainId={loadedAltRoute?.targetChainId ?? (chainId === 8453 ? 1 : 8453)}
+                tokenIn={tokenIn}
+                tokenOut={tokenOut}
+                input={input}
+                currentRoute={route}
+                altRoute={loadedAltRoute?.route ?? null}
+                onSwitchChain={onSwitchChain}
+              />
+            )}
 
-
-              {(() => {
-                const filledCount = route.makersUsed;
-                const skippedCount = route.makersSkipped.length;
-                const unfillableCount = Math.max(
-                  0,
-                  route.makersConsidered - filledCount - skippedCount
-                );
-                return [
-                  {
-                    label: "Pool ID",
-                    value: pool ? shortAddr(pool.poolId) : "—",
-                    copyValue: pool ? pool.poolId : undefined,
-                    color: "var(--ink3)",
-                  },
-                  // The considered/filled/skipped/unfillable tree lived here and
-                  // in the breakdown's filter pills 400px to the right, same four
-                  // numbers under two headings. The pills won: they are beside the
-                  // rows they filter. Only "unfilled" survives, because nothing
-                  // else on the page says the route could not absorb the input.
-                  {
-                    label: "Unfilled at this size",
-                    value: units(route.unfilled, tokenIn.decimals, 2),
-                    color: route.unfilled === "0" ? "var(--ink)" : "var(--short)",
-                  },
-                ];
-              })().map((r) => (
-                <div className={s.kv} key={r.label}>
-                  <span style={{ color: "var(--ink2)" }}>{r.label}</span>
-                  <span className={s.kvVal} style={{ color: r.color, display: "inline-flex", alignItems: "center" }}>
-                    {r.value}
-                    {r.copyValue ? <CopyButton value={r.copyValue} size={11} /> : null}
+            {rightTab === "receipt" && (
+              <section>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                  <span className={s.label}>Route receipt</span>
+                  <span className={s.mono} style={{ fontSize: 9.5, color: "var(--ink3)" }}>
+                    PoolManager storage
                   </span>
                 </div>
-              ))}
 
-              {route.hookData ? (
-                <>
-                  <button className={s.rawToggle} onClick={() => setRaw((r) => !r)}>
-                    {raw ? "▾ " : "▸ "}raw hook data
-                  </button>
-                  {raw ? (
-                    <pre className={`${s.raw} ${s.in}`}>
-                      {`makers: [${route.slices.map((x) => shortAddr(x.maker)).join(", ")}]
+                {!hasAmount ? (
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--ink3)" }}>
+                    Enter an amount to quote every live maker.
+                  </p>
+                ) : busy || !route ? (
+                  <div>
+                    {[
+                      { w: "92%", d: "0s" },
+                      { w: "70%", d: ".08s" },
+                      { w: "84%", d: ".16s" },
+                      { w: "58%", d: ".24s" },
+                      { w: "76%", d: ".32s" },
+                    ].map((k) => (
+                      <Shim key={k.w} w={k.w} delay={k.d} />
+                    ))}
+                    <p className={s.mono} style={{ margin: "10px 0 0", fontSize: 10, color: "var(--ink3)" }}>
+                      quoting {makers?.indexed ?? 0} makers
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    {pool ? (
+                      <div className={s.zeroRow} style={{ alignItems: "center", marginBottom: 14 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span className={s.label} style={{ margin: 0, letterSpacing: ".12em" }}>
+                              Pool liquidity
+                            </span>
+                            <span
+                              className={`${s.pill} ${pool.liquidity === "0" ? s.pillShort : ""}`}
+                              style={{ fontSize: 11, padding: "2px 7px" }}
+                            >
+                              {pool.liquidity === "0" ? "0 · by design" : `${units(pool.liquidity, 18, 2)} TVL`}
+                            </span>
+                          </div>
+                          <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "var(--ink2)" }}>
+                            {pool.state === "bone-dry"
+                              ? "zero is the mechanism, not a fault"
+                              : pool.state === "uninitialized"
+                                ? "this pool has not been initialised here"
+                                : "this pool holds conventional liquidity"}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {(() => {
+                      return [
+                        {
+                          label: "Pool ID",
+                          value: pool ? shortAddr(pool.poolId) : "—",
+                          copyValue: pool ? pool.poolId : undefined,
+                          color: "var(--ink3)",
+                        },
+                        {
+                          label: "Unfilled at this size",
+                          value: units(route.unfilled, tokenIn.decimals, 2),
+                          color: route.unfilled === "0" ? "var(--ink)" : "var(--short)",
+                        },
+                      ];
+                    })().map((r) => (
+                      <div className={s.kv} key={r.label}>
+                        <span style={{ color: "var(--ink2)" }}>{r.label}</span>
+                        <span className={s.kvVal} style={{ color: r.color, display: "inline-flex", alignItems: "center" }}>
+                          {r.value}
+                          {r.copyValue ? <CopyButton value={r.copyValue} size={11} /> : null}
+                        </span>
+                      </div>
+                    ))}
+
+                    {route.hookData ? (
+                      <div style={{ marginTop: 12 }}>
+                        <button className={s.rawToggle} onClick={() => setRaw((r) => !r)}>
+                          {raw ? "▾ " : "▸ "}raw hook data
+                        </button>
+                        {raw ? (
+                          <pre className={`${s.raw} ${s.in}`}>
+                            {`makers: [${route.slices.map((x) => shortAddr(x.maker)).join(", ")}]
 amounts: [${route.slices.map((x) => units(x.amountIn, tokenIn.decimals, 6)).join(", ")}]
 hookData: ${route.hookData}`}
-                    </pre>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          )}
-        </section>
-        {/* The 55-row maker book lived here: 1,113px of a 1,636px page, and since
-            the router started choosing between books it was listing the EVIDENCE
-            book's wallets under a trade filled from the Bone Dry book, with
-            nothing saying they were different. It also duplicated Explore's
-            "Coverage per maker", which does the same job across every token with
-            network totals and a distribution beside it.
+                          </pre>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
 
-            So the rows moved to the tab that already had them, and the number --
-            which is the finding, and the reason this project exists -- stays here
-            as one line. */}
-        {makers && makers.makers.length > 0 ? (
-          <section className={`${s.card} ${s.cardPad}`} style={{ marginTop: 20 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-              <span className={s.label}>The rest of the book</span>
-              <span style={{ fontSize: 14, color: "var(--ink2)" }}>
-                <strong style={{ color: "var(--ink)" }}>{enrichedRows.length}</strong> wallets quote{" "}
-                {tokenOut.symbol} on {net.label}
-                {(() => {
-                  const short = enrichedRows.filter((r) => !r.m.solvent).length;
-                  return short > 0 ? (
-                    <>
-                      {" · "}
-                      <strong style={{ color: "var(--short)" }}>{short}</strong> can&apos;t deliver what they promised
-                    </>
-                  ) : null;
-                })()}
-              </span>
-              <button className={s.btnQuiet} onClick={onExplore} style={{ marginLeft: "auto" }}>
-                See the evidence →
-              </button>
-            </div>
-          </section>
-        ) : null}
+                {makers && makers.makers.length > 0 ? (
+                  <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--hair)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, color: "var(--ink2)" }}>
+                      <strong>{enrichedRows.length}</strong> wallets quote {tokenOut.symbol}
+                    </span>
+                    <button className={s.btnQuiet} onClick={onExplore}>
+                      See the evidence →
+                    </button>
+                  </div>
+                ) : null}
+              </section>
+            )}
+          </div>
+        </div>
       </div>
     </div>
     </>

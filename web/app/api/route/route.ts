@@ -11,6 +11,13 @@ import { decodeAbiParameters, parseAbiParameters, type Hex } from "viem";
 
 export const dynamic = "force-dynamic";
 
+type RouteCacheEntry = {
+  data: Record<string, unknown>;
+  at: number;
+};
+const routeServerCache = new Map<string, RouteCacheEntry>();
+const ROUTE_CACHE_TTL = 20_000; // 20s TTL
+
 /**
  * GET /api/route?tokenIn=&tokenOut=&amountIn=
  *
@@ -27,6 +34,15 @@ export async function GET(req: Request) {
     const tokenOut = addressParam(url.searchParams.get("tokenOut"), n.weth);
     const amountIn = amountParam(url.searchParams.get("amountIn"), 100_000_000n);
     distinct(tokenIn, tokenOut);
+
+    const cacheKey = `${n.id}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}:${amountIn.toString()}`;
+    // fresh=1 is what the Swap button sends before signing: a cached plan carries
+    // a maker list that can be up to ROUTE_CACHE_TTL old, and hookData is what the
+    // hook will actually try to fill from.
+    const hit = url.searchParams.get("fresh") === "1" ? undefined : routeServerCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < ROUTE_CACHE_TTL) {
+      return j(hit.data);
+    }
 
     // Each Aqua app is its own book, and they cannot be merged.
     //
@@ -212,7 +228,7 @@ export async function GET(req: Request) {
     const improvementBps =
       single.amountOut > 0n ? ((plan.amountOut - single.amountOut) * 10_000n) / single.amountOut : 0n;
 
-    return j({
+    const payload = {
       source,
       /** The Aqua app this plan fills from, and the v4 hook that can reach it.
        *  The taker must build its poolKey from THIS hook: a plan is only
@@ -261,7 +277,14 @@ export async function GET(req: Request) {
       // the plan was built on and the hook silently re-splits by different
       // weights than the quote assumed.
       hookData: encodeHookData(plan.candidates),
-    });
+    };
+
+    if (routeServerCache.size > 200) {
+      routeServerCache.clear();
+    }
+    routeServerCache.set(cacheKey, { data: payload, at: Date.now() });
+
+    return j(payload);
   } catch (e) {
     if (e instanceof BadInput) return fail(e.message, 400);
     if ((e as Error).message?.startsWith("unknown chain")) return fail((e as Error).message, 400);
