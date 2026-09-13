@@ -429,7 +429,9 @@ export function BookHistogram({
           {model.backing > 0n ? (
             <>
               <line x1={L} x2={R} y1={ceilingY} y2={ceilingY} stroke="var(--warn-ink)" strokeDasharray="2 4" opacity={0.7} />
-              <text x={R} y={ceilingY - 4} textAnchor="end" fontSize="10" fill="var(--warn-ink)" fontFamily="var(--mono)">
+              {/* Below its line: the ceiling sits just under backing, and above it the
+                  label was drawn straight through by the backing line. */}
+              <text x={R} y={ceilingY + 13} textAnchor="end" fontSize="10" fill="var(--warn-ink)" fontFamily="var(--mono)">
                 refusal ceiling {maxUtilBps / 100}%
               </text>
               <line x1={L} x2={R} y1={backingY} y2={backingY} stroke="var(--ink)" strokeDasharray="6 4" />

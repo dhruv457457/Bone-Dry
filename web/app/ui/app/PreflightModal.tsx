@@ -7,6 +7,7 @@ import { NETWORKS, type NetworkId } from "@/lib/networks";
 import {
   evaluateCrossChainAdvantage,
   type CrossChainComparison,
+  formatMultiplier,
 } from "@/lib/crossChain";
 import type { MakerRow, MakersResponse, RouteResponse } from "../types";
 
@@ -126,7 +127,7 @@ export function PreflightModal({
     curDevBps === null
       ? ""
       : curDevBps < 0
-        ? `${(Math.abs(curDevBps) / 100).toFixed(0)}% below oracle`
+        ? `${Math.abs(curDevBps) >= 9_950 ? (Math.abs(curDevBps) / 100).toFixed(2) : (Math.abs(curDevBps) / 100).toFixed(0)}% below oracle`
         : `+${(curDevBps / 100).toFixed(1)}% vs oracle`;
 
   const curOutStr = route?.amountOut
@@ -194,10 +195,10 @@ export function PreflightModal({
               <div className={`${s.stepLine} ${animStep >= 1 ? s.stepLineFilled : ""}`} />
             </div>
             <div className={s.stepContent}>
-              <p className={s.stepTitle}>Scan Aqua Strategy Book</p>
+              <p className={s.stepTitle}>Read the Aqua book</p>
               <p className={s.stepDesc}>
                 {animStep >= 1
-                  ? `✓ ${makers?.makers?.length ?? 0} strategies indexed on ${net.label}`
+                  ? `✓ ${route?.makersConsidered ?? 0} strategies in the ${route?.bookLabel ?? ""} book on ${net.label}`
                   : `Querying active SwapVM offers for ${tokenOut.symbol}…`}
               </p>
             </div>
@@ -216,11 +217,11 @@ export function PreflightModal({
               <div className={`${s.stepLine} ${animStep >= 2 ? s.stepLineFilled : ""}`} />
             </div>
             <div className={s.stepContent}>
-              <p className={s.stepTitle}>Opcode-35 Encumbrance Audit</p>
+              <p className={s.stepTitle}>Check every maker against its wallet</p>
               <p className={s.stepDesc}>
                 {animStep >= 2
                   ? route
-                    ? `✓ ${route.makersConsidered} makers audited · ${route.clamped?.length ?? 0} clamped to real reserves`
+                    ? `✓ ${route.makersConsidered} strategies checked · ${route.clamped?.length ?? 0} capped at min(balance, allowance)${route.opcode35Filled ? " · opcode 35 in the fill" : ""}`
                     : "✓ Solvency verification complete"
                   : animStep === 1
                     ? "Measuring real wallet balances & allowance caps…"
@@ -251,7 +252,7 @@ export function PreflightModal({
               <p className={s.stepDesc}>
                 {animStep >= 3
                   ? hasSevereDiscrepancy
-                    ? `⚠ High disparity detected: ${adv.multiplier.toFixed(1)}× more output on ${targetNet.label}`
+                    ? `${formatMultiplier(adv.multiplier)}× better price on ${targetNet.label}${adv.altPartial ? `, for ${(adv.altFilledShareBps / 100).toFixed(adv.altFilledShareBps >= 100 ? 0 : 2)}% of this size` : ""}`
                     : `✓ ${targetNet.label} verified · active chain rate is optimal`
                   : animStep === 2
                     ? `Checking comparative depth on ${targetNet.label}…`
@@ -274,7 +275,7 @@ export function PreflightModal({
             </div>
 
             <p style={{ margin: "4px 0 10px", fontSize: 12, color: "var(--ink2)", lineHeight: 1.4 }}>
-              This chain quotes far below the oracle for this size. {targetNet.label} fills the same trade from {adv.altMakers} wallet{adv.altMakers === 1 ? "" : "s"}.
+              {adv.detail}
             </p>
 
             <div className={s.decisionGrid}>
@@ -282,24 +283,25 @@ export function PreflightModal({
                 <span className={s.decisionColLabel}>{net.label} (Current)</span>
                 <span className={s.decisionColVal}>{curOutStr}</span>
                 <span className={s.decisionColMeta}>
-                  {adv.currentMakers} maker{adv.currentMakers === 1 ? "" : "s"} {curDevStr ? `· ${curDevStr}` : ""}
+                  {adv.currentMakers} wallet{adv.currentMakers === 1 ? "" : "s"} filling · fills 100% {curDevStr ? `· ${curDevStr}` : ""}
                 </span>
               </div>
 
               <div className={`${s.decisionCol} ${s.decisionColHighlight}`}>
                 <span className={s.decisionColLabel} style={{ color: "var(--warn-ink)", fontWeight: 600 }}>
-                  {targetNet.label} (Recommended)
+                  {targetNet.label} {adv.altPartial ? "(better price, partial)" : "(better price)"}
                 </span>
                 <span className={s.decisionColVal} style={{ color: "var(--warn-ink)", fontSize: 14 }}>
                   {altOutStr}
                 </span>
                 <span className={s.decisionColMeta} style={{ color: "var(--warn-ink)" }}>
-                  {adv.altMakers} wallet{adv.altMakers === 1 ? "" : "s"} filling · <strong>{adv.multiplier.toFixed(1)}× output</strong>
+                  {adv.altMakers} wallet{adv.altMakers === 1 ? "" : "s"} filling · <strong>{formatMultiplier(adv.multiplier)}× price</strong>
+                  {adv.altPartial ? ` · only ${(adv.altFilledShareBps / 100).toFixed(adv.altFilledShareBps >= 100 ? 0 : 2)}% fills` : ""}
                 </span>
               </div>
             </div>
 
-            {gainStr ? (
+            {gainStr && !adv.altPartial ? (
               <div className={s.gainPill}>
                 <span>Net deliverable gain:</span>
                 <strong>{gainStr}</strong>
@@ -308,12 +310,13 @@ export function PreflightModal({
 
             <div className={s.decisionActions}>
               <button
-                className={s.crossChainActionBtn}
+                className={adv.altPartial ? s.btnQuiet : s.crossChainActionBtn}
                 onClick={handleSwitch}
                 disabled={switching}
                 style={{ width: "100%", justifyContent: "center", padding: "8px 14px", fontSize: 13 }}
+                title={adv.altPartial ? `Only ${(adv.altFilledShareBps / 100).toFixed(2)}% of this trade can fill on ${targetNet.label}` : undefined}
               >
-                {switching ? "Switching…" : `Switch to ${targetNet.label} (${adv.multiplier.toFixed(0)}×) ↗`}
+                {switching ? "Switching…" : adv.altPartial ? `Switch to ${targetNet.label} and trade a smaller amount ↗` : `Switch to ${targetNet.label} ↗`}
               </button>
               <button
                 className={s.btnQuiet}

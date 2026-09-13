@@ -33,8 +33,13 @@ export function CrossChainMatrix({
   const curOut = currentRoute?.amountOut ? BigInt(currentRoute.amountOut) : 0n;
   const altOut = altRoute?.amountOut ? BigInt(altRoute.amountOut) : 0n;
 
-  const curMakers = currentRoute?.makersConsidered ?? currentRoute?.makersUsed ?? 0;
-  const altMakers = altRoute?.makersConsidered ?? altRoute?.makersUsed ?? 0;
+  // Wallets filling, not strategies considered.
+  const curMakers = currentRoute?.makersUsed ?? 0;
+  const altMakers = altRoute?.makersUsed ?? 0;
+  const fillShare = (r: RouteResponse | null) =>
+    r && BigInt(r.amountIn ?? "0") > 0n ? Number((BigInt(r.amountFilled ?? "0") * 10_000n) / BigInt(r.amountIn)) / 100 : 0;
+  const curFillPct = fillShare(currentRoute);
+  const altFillPct = fillShare(altRoute);
 
   const curDevBps = currentRoute?.slices?.[0]?.oracleDeviationBps
     ? Number(currentRoute.slices[0].oracleDeviationBps)
@@ -46,7 +51,12 @@ export function CrossChainMatrix({
   const curOutFormatted = curOut > 0n ? `${units(curOut, tokenOut.decimals, 6)} ${tokenOut.symbol}` : "0";
   const altOutFormatted = altOut > 0n ? `${units(altOut, tokenOut.decimals, 6)} ${tokenOut.symbol}` : "0";
 
-  const multiplier = curOut > 0n ? Number((altOut * 100n) / curOut) / 100 : 0;
+  // Kept for anything still reading it, but as a price ratio per unit filled, not an
+  // output ratio: the two chains can fill very different amounts of the same trade.
+  const multiplier =
+    curOut > 0n && altRoute && currentRoute && BigInt(altRoute.amountFilled ?? "0") > 0n
+      ? Number((altOut * BigInt(currentRoute.amountFilled) * 100n) / (curOut * BigInt(altRoute.amountFilled))) / 100
+      : 0;
 
   // Read from each chain's current gas price, not written in.
   const curGas = useSwapGas(chainId);
@@ -81,7 +91,7 @@ export function CrossChainMatrix({
               {currentNet.label.toUpperCase()} (ACTIVE)
             </span>
             <span className={s.pill} style={{ fontSize: 10, padding: "1px 6px" }}>
-              {curMakers} maker{curMakers === 1 ? "" : "s"}
+              {curMakers} wallet{curMakers === 1 ? "" : "s"}
             </span>
           </div>
           <div>
@@ -89,7 +99,7 @@ export function CrossChainMatrix({
               {curOutFormatted}
             </span>
             <div style={{ fontSize: 11, color: "var(--short)", marginTop: 2 }}>
-              {curOut === 0n ? "nothing fillable" : devLabel(curDevBps, "no oracle reading")}
+              {curOut === 0n ? "nothing fillable" : `${devLabel(curDevBps, "no oracle reading")} · fills ${curFillPct >= 1 ? curFillPct.toFixed(0) : curFillPct.toFixed(2)}%`}
             </div>
           </div>
           <div style={{ fontSize: 11, color: "var(--ink3)", borderTop: "1px solid var(--hair)", paddingTop: 6 }}>
@@ -104,7 +114,7 @@ export function CrossChainMatrix({
               {targetNet.label.toUpperCase()} (ALTERNATE)
             </span>
             <span className={s.pill} style={{ fontSize: 10, padding: "1px 6px", background: "var(--surface)" }}>
-              {altMakers} makers
+              {altMakers} wallet{altMakers === 1 ? "" : "s"}
             </span>
           </div>
           <div>
@@ -112,7 +122,7 @@ export function CrossChainMatrix({
               {altOutFormatted}
             </span>
             <div style={{ fontSize: 11, color: "var(--ink2)", marginTop: 2 }}>
-              {altOut === 0n ? "nothing fillable" : devLabel(altDevBps, "no oracle reading")}
+              {altOut === 0n ? "nothing fillable" : `${devLabel(altDevBps, "no oracle reading")} · fills ${altFillPct >= 1 ? altFillPct.toFixed(0) : altFillPct.toFixed(2)}%`}
             </div>
           </div>
           <div style={{ fontSize: 11, color: "var(--ink3)", borderTop: "1px solid var(--warn-line)", paddingTop: 6 }}>
@@ -127,7 +137,7 @@ export function CrossChainMatrix({
             className={s.crossChainActionBtn}
             onClick={() => onSwitchChain(targetChainId)}
           >
-            Switch wallet to {targetNet.label} & execute ↗
+            Switch wallet to {targetNet.label} ↗
           </button>
         </div>
       ) : null}

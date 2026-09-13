@@ -14,6 +14,7 @@ import {
   evaluateCrossChainAdvantage,
   type CrossChainComparison,
 } from "@/lib/crossChain";
+import { formatMultiplier } from "@/lib/crossChain";
 import { getFromCache, setInCache, routeCacheKey } from "@/lib/cache";
 import type { RouteResponse } from "../types";
 
@@ -169,7 +170,7 @@ export function CrossChainRecommendation({
             <span className={s.crossChainPulse} />
             <strong style={{ whiteSpace: "nowrap" }}>Solvency signal:</strong>
             <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-              {adv.multiplier >= 1.2 ? `${adv.multiplier.toFixed(1)}× more on ${targetNet.label}` : adv.title}
+              {adv.multiplier >= 1.2 ? `${formatMultiplier(adv.multiplier)}× better price on ${targetNet.label}${adv.altPartial ? ` · fills ${(adv.altFilledShareBps / 100).toFixed(adv.altFilledShareBps >= 100 ? 0 : 2)}% of this size` : ""}` : adv.title}
             </span>
           </div>
           <span style={{ fontSize: 11, textDecoration: "underline", fontWeight: 600, flexShrink: 0 }}>
@@ -216,11 +217,9 @@ export function CrossChainRecommendation({
       ? `+${units(gain, altTokenOut?.decimals ?? 18, 6)} ${altTokenOut?.symbol ?? tokenOut.symbol}`
       : null;
 
-  const buttonLabel = switching
-    ? "Switching…"
-    : adv.multiplier >= 1.3
-      ? `Switch to ${targetNet.label} (${adv.multiplier.toFixed(0)}×) ↗`
-      : `Switch to ${targetNet.label} ↗`;
+  // No multiplier on the button: when the other chain can take only part of the
+  // trade, "8x" on a switch button promises an outcome the switch cannot deliver.
+  const buttonLabel = switching ? "Switching…" : `Switch to ${targetNet.label} ↗`;
 
 
   const handleSwitch = async () => {
@@ -269,12 +268,14 @@ export function CrossChainRecommendation({
             {altOutStr}
           </span>
           <span className={s.crossChainColMeta}>
-            {adv.altMakers} wallet{adv.altMakers === 1 ? "" : "s"} filling {altDevStr ? `· ${altDevStr}` : ""}
+            {adv.altMakers} wallet{adv.altMakers === 1 ? "" : "s"} filling
+            {adv.altPartial ? ` · only ${(adv.altFilledShareBps / 100).toFixed(adv.altFilledShareBps >= 100 ? 0 : 2)}% of this size` : ""}
+            {altDevStr ? ` · ${altDevStr}` : ""}
           </span>
         </div>
       </div>
 
-      {gainStr && adv.multiplier >= 1.2 ? (
+      {gainStr && adv.multiplier >= 1.2 && !adv.altPartial ? (
         <div
           style={{
             display: "flex",
@@ -289,7 +290,7 @@ export function CrossChainRecommendation({
           }}
         >
           <span>Net deliverable gain:</span>
-          <strong>{gainStr} ({adv.multiplier.toFixed(1)}× more tokens)</strong>
+          <strong>{gainStr} ({formatMultiplier(adv.multiplier)}× better price)</strong>
         </div>
       ) : null}
 
