@@ -1197,7 +1197,15 @@ export function Provide({
                     <span className={s.label} style={{ fontSize: 10 }}>Haircut</span>
                     <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
                       {/* "-0 bps" read as a negative number; zero has no sign. */}
-                      {currentHaircutBps === 0 ? "0 bps" : `−${currentHaircutBps} bps`}
+                      {/* At or past the ceiling the contract reverts EncumbranceExceeded
+                          (Encumbrance.sol:206) before any haircut is computed, so a
+                          haircut figure there is meaningless -- util 24,603,063% printed
+                          "-123,015,318 bps". Say what actually happens. */}
+                      {currentUtilPct >= maxUtilBps / 100
+                        ? "refuses"
+                        : currentHaircutBps === 0
+                          ? "0 bps"
+                          : `−${currentHaircutBps} bps`}
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -1207,7 +1215,9 @@ export function Provide({
                         price -- which described neither. */}
                     <span className={s.label} style={{ fontSize: 10 }}>Taker keeps</span>
                     <span className={s.mono} style={{ fontWeight: 600, color: "var(--ink)" }}>
-                      {(currentQuoteVal * 100).toFixed(2)}% of {tokenOut.symbol} out
+                      {currentUtilPct >= maxUtilBps / 100
+                        ? "nothing — fill refused"
+                        : `${(currentQuoteVal * 100).toFixed(2)}% of ${tokenOut.symbol} out`}
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
